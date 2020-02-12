@@ -5,9 +5,9 @@ import numpy as np
 import scipy.ndimage
 import xarray as xr
 
-from names import LAT_STR, SIGMA_STR
-from nb_utils import (
-    interpolate,
+from .names import LAT_STR, SIGMA_STR
+from .interp import interpolate
+from .nb_utils import (
     max_and_argmax,
     max_and_argmax_along_dim,
 )
