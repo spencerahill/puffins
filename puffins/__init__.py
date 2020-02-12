@@ -5,6 +5,7 @@ from . import dynamics
 from . import eq_area
 from . import fixed_temp_tropo
 from . import grad_bal
+from . import had_cell_edges
 from . import held_hou_1980
 from . import hides
 from . import interp
