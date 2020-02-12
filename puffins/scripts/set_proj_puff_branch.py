@@ -34,6 +34,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "branch_name",
         action="store",
+        nargs="?",
         default="master",
         type=str,
         help="Name of the puffins git branch to be checked out.",
