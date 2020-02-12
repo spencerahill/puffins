@@ -16,7 +16,7 @@ setuptools.setup(
         'scipy',
         'xarray',
     ],
-    scripts=["puffins/scripts/set_puff_branch_for_proj.py"],
+    scripts=["puffins/scripts/set_proj_puff_branch.py"],
     license="Apache",
     keywords="climate science",
     url="https://github.com/spencerahill/puffins",
