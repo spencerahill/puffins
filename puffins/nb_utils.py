@@ -1,10 +1,38 @@
 #! /usr/bin/env python
 """Utility functions useful for interactive work."""
 
+from subprocess import PIPE, Popen
+import warnings.warn
+
 import numpy as np
 import xarray as xr
 
 from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
+
+
+# Quality control for production notebooks
+def check_nb_unused_imports(nb_path):
+    """List all instances of unused imports in the given Jupyter notebook
+
+    Adapted from:
+    - https://stackoverflow.com/a/56591258
+    - https://stackoverflow.com/a/15100663
+
+    """
+    p1 = Popen(f"jupyter nbconvert {nb_path} --stdout --to python".split(),
+               stdout=PIPE)
+    p2 = Popen("flake8 - --select=F401".split(), stdin=p1.stdout,
+               stdout=PIPE)
+    p1.stdout.close()
+    return p2.communicate()[0].decode("utf-8")
+
+
+def warn_if_unused_imports(nb_path):
+    """Issue warning if unused imports are found in this notebook."""
+    warnlog = check_nb_unused_imports(nb_path)
+    if warnlog:
+        warnings.warn("This notebook has the following unused imports: "
+                      f"\n\n{warnlog}")
 
 
 # Coordinate arrays.
