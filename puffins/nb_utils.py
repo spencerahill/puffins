@@ -1,8 +1,8 @@
 #! /usr/bin/env python
-"""Utility functions useful for interactive work."""
+"""Utility functions useful for interactive work in Jupyter notebooks."""
 
 from subprocess import PIPE, Popen
-import warnings.warn
+import warnings
 
 import numpy as np
 import xarray as xr
