@@ -4,6 +4,7 @@
 from subprocess import PIPE, Popen
 import warnings
 
+from IPython.display import display, Javascript
 import numpy as np
 import xarray as xr
 
@@ -11,6 +12,15 @@ from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
 
 
 # Quality control for production notebooks
+def save_jupyter_nb():
+    """From within a Jupyter notebook, save that notebook.
+
+    https://stackoverflow.com/a/57814673/
+
+    """
+    display(Javascript('IPython.notebook.save_checkpoint();'))
+
+
 def check_nb_unused_imports(nb_path):
     """List all instances of unused imports in the given Jupyter notebook
 

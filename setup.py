@@ -11,6 +11,7 @@ setuptools.setup(
         "faceted",
         "gitpython",
         "indiff",
+        "ipython",
         "matplotlib",
         'numpy',
         'scipy',
