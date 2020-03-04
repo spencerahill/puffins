@@ -15,6 +15,16 @@ _DEGR_S = _DEGR + 'S'
 _DEGR_N = _DEGR + 'N'
 
 
+def default_gca(func):
+    """If no axes object is given, use gca() to find the active one."""
+    def func_default_gca(*args, **kwargs):
+        ax = kwargs.get('ax', None)
+        if ax is None:
+            kwargs['ax'] = plt.gca()
+        return func(*args, **kwargs)
+    return func_default_gca
+
+
 def _left_bottom_spines_only(ax, displace=False):
     """Don't plot top or right border."""
     ax.spines['right'].set_visible(False)
@@ -118,6 +128,43 @@ def panel_label(ax, panel_num, x=0.03, y=0.95, extra_text=None,
     if extra_text is not None:
         label += ' {}'.format(extra_text)
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
+
+
+@default_gca
+def mark_x0(ax=None, linestyle='--', color='0.5', **kwargs):
+    """Mark the x intercept line on the given axis."""
+    return ax.axvline(x=0, linestyle=linestyle, color=color, **kwargs)
+
+
+@default_gca
+def mark_y0(ax=None, linestyle='--', color='0.5', **kwargs):
+    """Mark the y intercept on the given axis."""
+    return ax.axhline(y=0, linestyle=linestyle, color=color, **kwargs)
+
+
+@default_gca
+def mark_one2one(ax=None, *line_args, linestyle='--', color='0.5',
+                 **line_kwargs):
+    """Mark the identity line, y=x, on the given axis.
+
+    From https://stackoverflow.com/a/28216751/1706640.
+
+    """
+    identity, = ax.plot([], [], *line_args, linestyle=linestyle,
+                        color=color, **line_kwargs)
+
+    def callback(axes):
+        low_x, high_x = axes.get_xlim()
+        low_y, high_y = axes.get_ylim()
+        low = max(low_x, low_y)
+        high = min(high_x, high_y)
+        identity.set_data([low, high], [low, high])
+
+    callback(ax)
+    ax.callbacks.connect('xlim_changed', callback)
+    ax.callbacks.connect('ylim_changed', callback)
+    return ax
+
 
 
 PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
