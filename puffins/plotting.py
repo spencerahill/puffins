@@ -26,7 +26,7 @@ def _left_bottom_spines_only(ax, displace=False):
     ax.yaxis.set_ticks_position('left')
 
 
-def _sinlat_xaxis(ax, start_lat=0, end_lat=90):
+def sinlat_xaxis(ax, start_lat=0, end_lat=90):
     """Make the x-axis be in sin of latitude."""
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
     ax.set_xticks(sindeg(np.arange(start_lat, end_lat + 1, 10)))
@@ -87,7 +87,7 @@ def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
         ax = plt.gca()
     if sinlat:
         lat = sindeg(arr_plot[lat_str])
-        _sinlat_xaxis(ax, start_lat=start_lat, end_lat=end_lat)
+        sinlat_xaxis(ax, start_lat=start_lat, end_lat=end_lat)
     else:
         lat = arr_plot[lat_str]
         lat_xaxis(ax, start_lat=start_lat, end_lat=end_lat)
