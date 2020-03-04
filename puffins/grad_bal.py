@@ -12,6 +12,7 @@ from .constants import (
     R_V,
     RAD_EARTH,
     ROT_RATE_EARTH,
+    THETA_REF,
 )
 from .names import LAT_STR
 from .nb_utils import cosdeg, sindeg
@@ -25,6 +26,36 @@ def u_ang_mom_cons(lats, max_lat, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Angular momentum conserving zonal wind."""
     coslat = cosdeg(lats)
     return rot_rate*radius*coslat*((cosdeg(max_lat) / coslat)**2 - 1)
+
+
+def u_given_ro(lat, lat_ascent, ross_num,
+               rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Absolute angular momentum for a given Rossby number."""
+    return ross_num*u_ang_mom_cons(lat, lat_ascent,
+                                   rot_rate=rot_rate,
+                                   radius=radius)
+
+
+def abs_ang_mom_given_ro(lat, lat_ascent, ross_num,
+                         rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Absolute angular momentum for a given Rossby number."""
+    return rot_rate*radius**2*((1 - ross_num)*cosdeg(lat)**2 +
+                               ross_num*cosdeg(lat_ascent)**2)
+
+
+def pot_temp_avg_given_ro(lat, lat_ascent, pot_temp_ascent, ross_num,
+                          height=10e3, theta_ref=THETA_REF,
+                          rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
+                          grav=GRAV_EARTH):
+    """Potential temperature in gradient balance with fixed-Ro u wind."""
+    prefactor = ross_num*rot_rate**2*radius**2 / (2*grav*height)
+    coslat = cosdeg(lat)
+    cosascent = cosdeg(lat_ascent)
+    cos_ratio = cosascent / coslat
+    return pot_temp_ascent - theta_ref*prefactor*(
+        (2 - ross_num)*coslat**2 + cosascent**2*(
+            4*(1 - ross_num)*np.log(cos_ratio) +
+            ross_num*(cos_ratio)**2 - 2))
 
 
 # Boussinesq atmospheres.
