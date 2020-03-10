@@ -8,6 +8,7 @@ from IPython.display import display, Javascript
 import numpy as np
 import xarray as xr
 
+from .constants import RAD_EARTH
 from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
 
 
@@ -161,9 +162,33 @@ def max_and_argmax_along_dim(dataset, dim, do_min=False):
 
 
 # Array zero crossings.
+def first_zero_cross_bounds(arr, dim):
+    """Find the values bounding an array's first zero crossing."""
+    sign_switch = np.sign(arr).diff(dim)
+    switch_val = arr[dim].where(sign_switch, drop=True)[0]
+    return arr.sel(**{dim: [0.999*switch_val, 1.001*switch_val],
+                      "method": "backfill"})
+
+
 def zero_cross_nh(arr, lat_str=LAT_STR):
     lats = arr[lat_str]
     return lats[np.abs(arr.where(lats > 0)).argmin()]
+
+
+# Misc.
+def lat_area_weight(lat, radius=RAD_EARTH):
+    """Geometric factor corresponding to surface area at each latitude."""
+    return 2.*np.pi*radius*cosdeg(lat)
+
+
+def to_pascal(arr, is_dp=False):
+    """Force data with units either hPa or Pa to be in Pa."""
+    threshold = 400 if is_dp else 1200
+    if np.max(np.abs(arr)) < threshold:
+        warn_msg = "Conversion applied: hPa -> Pa to array: {}".format(arr)
+        warnings.warn(warn_msg)
+        return arr * 100.0
+    return arr
 
 
 if __name__ == '__main__':
