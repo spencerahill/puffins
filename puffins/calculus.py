@@ -5,9 +5,9 @@ from indiff.diff import BwdDiff, CenDiff
 import numpy as np
 import xarray as xr
 
-from .constants import RAD_EARTH
+from .constants import GRAV_EARTH, RAD_EARTH
 from .names import LAT_STR, LEV_STR, Z_STR
-from .nb_utils import cosdeg, sindeg
+from .nb_utils import cosdeg, sindeg, to_pascal
 
 
 # Derivatives.
@@ -25,6 +25,31 @@ def z_deriv(arr, z, z_str=Z_STR):
 
 def bwd_deriv(arr):
     return BwdDiff(arr, LAT_STR).diff() / BwdDiff(arr[LAT_STR], LAT_STR).diff()
+
+
+# Vertical integrals and averages.
+def integrate(arr, ddim, dim="plev"):
+    """Integrate along the given dimension."""
+    return (arr * ddim).sum(dim=dim)
+
+
+def int_dp_g(arr, dp, dim="plev", grav=GRAV_EARTH):
+    """Mass weighted integral."""
+    return integrate(arr, to_pascal(dp, is_dp=True), dim=dim) / grav
+
+
+def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
+    """Impoze zero column integral by subtracting column average at each level.
+
+    Used e.g. for computing the zonally integrated mass flux.  In the time-mean
+    and neglecting tendencies in column mass, the column integrated meridional
+    mass transport should be zero at each latitude; otherwise there would be a
+    build up of mass on one side.
+
+    """
+    col_avg = (int_dp_g(arr, dp, dim=dim, grav=grav) /
+               int_dp_g(1.0, dp, dim=dim, grav=grav))
+    return arr - col_avg
 
 
 # Meridional integrals and averages.
