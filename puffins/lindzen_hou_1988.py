@@ -17,7 +17,7 @@ from .constants import (
     THETA_REF,
 )
 from .names import LAT_STR
-from .nb_utils import cosdeg, sindeg, zero_cross_nh
+from .nb_utils import cosdeg, sin2deg, sindeg, zero_cross_nh
 from .dynamics import abs_vort_from_u, therm_ross_num
 from .fixed_temp_tropo import (
     DTHETA_DTS_MOIST,
@@ -34,13 +34,14 @@ def pot_temp_rce_lh88(lats, lat_max, z=0.5*HEIGHT_TROPO, theta_ref=THETA_REF,
                       (z/height - 0.5)*delta_v)
 
 
-def dtheta_rce_lh88_dlat(lats, lat_max, delta_h):
+def dtheta_rce_lh88_dlat(lats, lat_max, delta_h, theta_ref=THETA_REF):
     """Meridional derivative of RCE potential temperature.
 
     Note that this includes the 1/theta_ref factor.
 
     """
-    return -2 * delta_h * cosdeg(lats) * (sindeg(lats) - sindeg(lat_max))
+    return (-2*delta_h*cosdeg(lats) *
+            (sindeg(lats) - sindeg(lat_max))) / theta_ref
 
 
 def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH,
@@ -48,6 +49,26 @@ def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH,
     """Gradient balance wind for the Lindzen and Hou 1988 forcing."""
     return ((((1 + 2*thermal_ro*(1 - sindeg(lat_max) / sindeg(lats))) ** 0.5)
              - 1)*rot_rate*radius*cosdeg(lats))
+
+
+def ang_mom_rce_lh88_zero(lat_max, thermal_ro):
+    """LH88 forcing abs. vort. zero cross approx."""
+    return sin2deg(sindeg(lat_max)*(2*thermal_ro) / (2*thermal_ro + 1))
+
+
+def ang_mom_rce_lh88_zero_small_r(lat_max, thermal_ro):
+    """LH88 forcing abs. vort. zero cross approx; small thermal Ro."""
+    return sin2deg(2*thermal_ro*sindeg(lat_max))
+
+
+def ang_mom_rce_lh88_zero_unity_r(lat_max, thermal_ro):
+    """LH88 forcing abs. vort. zero cross approx; unity thermal Ro."""
+    return sin2deg(2./3.*sindeg(lat_max))
+
+
+def ang_mom_rce_lh88_zero_large_r(lat_max, thermal_ro=None):
+    """LH88 forcing abs. vort. zero cross approx; large thermal Ro."""
+    return lat_max
 
 
 def crit_vort_metric_rce_lh88(lat, ascent_lat, delta_h, height,
@@ -62,9 +83,9 @@ def crit_vort_metric_rce_lh88(lat, ascent_lat, delta_h, height,
                              (3 + sinlat ** -2))))
 
 
-def abs_vort_norm_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
-                           grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
-                           radius=RAD_EARTH, thermal_ro=None):
+def abs_vort_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
+                      grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
+                      radius=RAD_EARTH, thermal_ro=None):
     """Analytical solution for absolute vorticity of LH88 forcing."""
     if thermal_ro is None:
         thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
@@ -72,37 +93,30 @@ def abs_vort_norm_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
     sinlat = sindeg(lat)
     sin_latmax = sindeg(lat_max)
     power_arg = 1 + 2*thermal_ro*(1 - sin_latmax / sinlat)
-    term1 = power_arg**0.5
+    term1 = 2*rot_rate*power_arg**0.5
     term2 = 2*sinlat - (thermal_ro*(coslat**2)*sin_latmax /
                         ((sinlat**2)*power_arg))
     return term1*term2
 
 
-def eta_rce_lh88_zero_cross(lats, lat_max, delta_h=DELTA_H,
-                            height=HEIGHT_TROPO, rot_rate=ROT_RATE_EARTH,
-                            radius=RAD_EARTH, grav=GRAV_EARTH,
-                            lat_str=LAT_STR):
-    thermal_ro = therm_ross_num(
-        delta_h,
-        height,
+def abs_vort_rce_lh88_zero(lats, lat_max, delta_h=DELTA_H, height=HEIGHT_TROPO,
+                           rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
+                           grav=GRAV_EARTH, lat_str=LAT_STR):
+    abs_vort = abs_vort_rce_lh88(
+        lats, lat_max,
+        delta_h=delta_h,
+        height=height,
         grav=grav,
-        rot_rate=rot_rate,
-        radius=radius,
-    )
-    u_rce = u_rce_lh88(
-        lats,
-        lat_max,
-        thermal_ro,
-        rot_rate=rot_rate,
-        radius=radius,
-    )
-    eta_rce = abs_vort_from_u(
-        u_rce,
         rot_rate=rot_rate,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross_nh(eta_rce, lat_str=lat_str)
+    return zero_cross_nh(abs_vort, lat_str=lat_str)
+
+
+def abs_vort_rce_lh88_zero_maxlat_pole_small_therm_ro(therm_ro):
+    """LH88 RCE abs vort=0 approx; small angle and R; maxlat=pi/2."""
+    return np.rad2deg((0.5*therm_ro)**(1./3))
 
 
 def lapse_rate_rce_lh88(lat, lat_max, z, theta_ref=THETA_REF,
@@ -137,7 +151,6 @@ def pressure_rce_lh88(lat, lat_max, z, theta_ref=THETA_REF,
     return p0*(1 - leading_factor*np.log(pot_temp / pot_temp_z0))**kappa_inv
 
 
-# Modified by assuming fixed lapse rate and/or tropopause temperature.
 def u_rce_lh88_fixed_trop_temp(lats, lat_max, theta_ref=THETA_REF,
                                delta_h=DELTA_H, temp_tropo=TEMP_TROPO,
                                gamma=GAMMA_MOIST, dtheta_dts=DTHETA_DTS_MOIST,
