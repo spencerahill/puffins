@@ -10,7 +10,7 @@ from . import dynamics
 from . import grad_bal
 from . import eq_area
 from . import fixed_temp_tropo
-from . import had_cell_edges
+from . import had_cell
 from . import hides
 from . import thermodynamics
 from . import tropopause

@@ -1,24 +1,61 @@
 """Functionality related to determining overturning cell edges."""
-from __future__ import absolute_import, division
-
 import numpy as np
 import scipy.ndimage
 import xarray as xr
 
+from .calculus import subtract_col_avg
+from .constants import GRAV_EARTH
 from .names import LAT_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
+    first_zero_cross_bounds,
+    lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
+    to_pascal,
 )
 
 
-def had_cell_strength(streamfunc, dim=None):
-    """Hadley cell strength, as maximum of streamtfunction.
+def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
+                     lat_str="lat", lon_str="lon", p_str="plev"):
+    """Meridional mass streamfunction.
 
-    If a dimension is given, compute the strength separately
-    at each value of that dimension.  Otherwise find the global
-    extremum of the whole given array.
+    Parameters
+    ----------
+    v : xarray.DataArray
+        Meridional wind field.
+    dp : xarray.DataArray
+        Pressure thickness of each gridbox, in Pascal
+
+    Returns
+    -------
+    xarray.DataArray
+        The meridional mass streamfunction.
+    """
+    # Zonally average v and dp.
+    v_znl_mean = v.mean(dim=lon_str)
+    if lon_str in dp.dims:
+        dp_znl_mean = to_pascal(dp, is_dp=True).mean(dim=lon_str)
+    else:
+        dp_znl_mean = dp
+    # If desired, Impose zero net mass flux at each level.
+    if impose_zero_col_flux:
+        v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean,
+                                      dim=p_str, grav=grav)
+    # At each vertical level, integrate from TOA to that level.
+    streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=p_str) / grav
+    # Weight by surface area to get a mass overturning rate.
+    lats = v[lat_str]
+    return lat_area_weight(lats) * streamfunc
+
+
+def had_cell_strength(streamfunc, dim=None):
+    """Hadley cell strength, as maximum of streamfunction.
+
+    If a dimension is given, compute the strength separately at each value of
+    that dimension.  Otherwise find the global extremum of the whole given
+    array.
+
     """
     if dim is None:
         return max_and_argmax(streamfunc)
@@ -26,9 +63,146 @@ def had_cell_strength(streamfunc, dim=None):
         return max_and_argmax_along_dim(streamfunc, dim)
 
 
-def cell_edges(streamfunc, thresh_frac=0.1, center_min_sigma=0.1,
-               center_max_sigma=1, cell_min_sigma_depth=0.3,
-               lat_str=LAT_STR, sigma_str=SIGMA_STR):
+def had_cell_strengths(strmfunc, lat_str=LAT_STR, lev_str="plev"):
+    """Location and signed magnitude of both Hadley cell centers."""
+    lat = strmfunc[lat_str]
+
+    # Sometimes the winter Ferrel cell is stronger than the summer Hadley cell.
+    # So find the global extremal negative and positive values as well as the
+    # opposite-signed cell on either side.  The Hadley cells will be the two of
+    # these whose centers are nearest the equator.
+    cell_pos_max_strength = had_cell_strength(strmfunc)
+    lat_pos_max = cell_pos_max_strength.coords[lat_str]
+
+    cell_south_of_pos_strength = -1*had_cell_strength(
+        -1*strmfunc.where(lat < lat_pos_max))
+    cell_north_of_pos_strength = -1*had_cell_strength(
+        -1*strmfunc.where(lat > lat_pos_max))
+
+    cell_neg_max_strength = had_cell_strength(-1*strmfunc)
+    lat_neg_max = cell_neg_max_strength.coords[lat_str]
+
+    cell_south_of_neg_strength = had_cell_strength(strmfunc.where(
+        lat < lat_neg_max))
+    cell_north_of_neg_strength = had_cell_strength(strmfunc.where(
+        lat > lat_neg_max))
+
+    # The above procedure generats 6 cells, of which 2 are duplicates.  Now,
+    # get rid of the duplicates.
+    strengths = [
+        cell_pos_max_strength,
+        cell_south_of_pos_strength,
+        cell_north_of_pos_strength,
+        cell_neg_max_strength,
+        cell_south_of_neg_strength,
+        cell_north_of_neg_strength,
+    ]
+    cell_strengths = xr.concat(strengths, dim=lat_str)
+    dupes = cell_strengths.get_index(LAT_STR).duplicated()
+    cell_strengths = cell_strengths[~dupes]
+
+    # Pick the two cells closest to the equator.
+    center_lats = cell_strengths[lat_str]
+    hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
+
+    # Order the cells from south to north.
+    return hc_strengths.sortby(hc_strengths[lat_str])
+
+
+def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str="plev"):
+    """Streamfunction at the average level of the two Hadley cell centers."""
+    lev_sh_max = hc_strengths[lev_str][0]
+    lev_nh_max = hc_strengths[lev_str][1]
+    lev = strmfunc[lev_str]
+    lev_avg = lev.sel(**{lev_str: 0.5*(lev_sh_max + lev_nh_max),
+                         "method": "nearest"})
+    return strmfunc.sel(**{lev_str: lev_avg})
+
+
+def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str="plev"):
+    """Latitude of shared inner edge of Hadley cells."""
+    lat = strmfunc[lat_str]
+    hc_strengths = had_cell_strengths(strmfunc, lat_str=lat_str,
+                                      lev_str=lev_str)
+    lat_sh_max = hc_strengths[lat_str][0]
+    lat_nh_max = hc_strengths[lat_str][1]
+
+    sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
+    sf_max2max = sf_at_max.where((lat > lat_sh_max) & (lat < lat_nh_max),
+                                 drop=True)
+
+    sf_edge_bounds = first_zero_cross_bounds(sf_max2max, lat_str)
+    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
+                       0, lat_str)[lat_str]
+
+
+def had_cells_outer_edge(strmfunc, north=True, frac_thresh=0.1,
+                         lat_str=LAT_STR, lev_str="plev"):
+    """Latitude of poleward edge of either the NH or SH Hadley cell."""
+    hc_strengths = had_cell_strengths(strmfunc, lat_str=lat_str,
+                                      lev_str=lev_str)
+
+    # Find first zero crossing of streamfunction north of NH cell.
+    lat = strmfunc[lat_str]
+    if north:
+        lat_max = hc_strengths[lat_str][1]
+        lev_max = float(hc_strengths[1][lev_str])
+        lat_compar = lat > lat_max
+        lat_slice = slice(None, None, None)
+    else:
+        lat_max = hc_strengths[lat_str][0]
+        lev_max = float(hc_strengths[0][lev_str])
+        lat_compar = lat < lat_max
+        lat_slice = slice(None, None, -1)
+
+    sf_at_max = strmfunc.sel(**{lev_str: lev_max, "method": "nearest"})
+    sf_one_hem = sf_at_max.where(lat_compar, drop=True)
+
+    sf_edge_bounds = first_zero_cross_bounds(sf_one_hem[lat_slice], lat_str)
+    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
+                       float(hc_strengths[1])*frac_thresh, lat_str)[lat_str]
+
+
+def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
+                         lev_str="plev"):
+    """Latitude of southern edge of southern Hadley cell."""
+    return had_cells_outer_edge(
+        strmfunc,
+        north=False,
+        frac_thresh=frac_thresh,
+        lat_str=lat_str,
+        lev_str=lev_str,
+    )
+
+
+def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
+                         lev_str="plev"):
+    """Latitude of northern edge of northern Hadley cell."""
+    return had_cells_outer_edge(
+        strmfunc,
+        north=True,
+        frac_thresh=frac_thresh,
+        lat_str=lat_str,
+        lev_str=lev_str,
+    )
+
+
+def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
+                    lev_str="plev"):
+    """Southern, shared inner, and northern edge of the Hadley cells."""
+    kwargs = [dict(frac_thresh=frac_thresh), {}, dict(frac_thresh=frac_thresh)]
+    funcs = [had_cells_south_edge, had_cells_shared_edge, had_cells_north_edge]
+    return [func(
+        strmfunc,
+        lat_str=lat_str,
+        lev_str=lev_str,
+        **kw,
+    ) for func, kw in zip(funcs, kwargs)]
+
+
+def cell_edges_sigma(streamfunc, thresh_frac=0.1, center_min_sigma=0.1,
+                     center_max_sigma=1, cell_min_sigma_depth=0.3,
+                     lat_str=LAT_STR, sigma_str=SIGMA_STR):
     """Compute edges of all contiguous streamfunction overturning cells."""
     # Discard values in the boundary layer and stratosphere (if specified).
     sigma = streamfunc[sigma_str]
