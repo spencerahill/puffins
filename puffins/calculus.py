@@ -14,13 +14,17 @@ from .nb_utils import cosdeg, sindeg, to_pascal
 def lat_deriv(arr, lats=None, lat_str=LAT_STR):
     if lats is None:
         lats = arr[lat_str]
-    return (CenDiff(arr, lat_str, fill_edge='both').diff() /
-            CenDiff(np.deg2rad(lats), lat_str, fill_edge='both').diff())
+    return (
+        CenDiff(arr, lat_str, fill_edge='both').diff() /
+        CenDiff(np.deg2rad(lats), lat_str, fill_edge='both').diff()
+    ).transpose(*arr.dims)
 
 
 def z_deriv(arr, z, z_str=Z_STR):
-    return (CenDiff(arr, z_str, fill_edge='both').diff() /
-            CenDiff(z, z_str, fill_edge='both').diff())
+    return (
+        CenDiff(arr, z_str, fill_edge='both').diff() /
+        CenDiff(z, z_str, fill_edge='both').diff()
+    ).transpose(*arr.dims)
 
 
 def bwd_deriv(arr):
