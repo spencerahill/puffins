@@ -47,9 +47,11 @@ def warn_if_unused_imports(nb_path):
 
 
 # Coordinate arrays.
-def coord_arr_1d(start, stop, spacing, dim):
+def coord_arr_1d(start, stop, spacing, dim, dtype=None):
     """Create xr.DataArray of an evenly spaced 1D coordinate ."""
     arr_np = np.arange(start, stop + 0.1*spacing, spacing)
+    if dtype is not None:
+        arr_np = arr_np.astype(dtype)
     return xr.DataArray(arr_np, name=dim, dims=[dim],
                         coords={dim: arr_np})
 
