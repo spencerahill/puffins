@@ -3,6 +3,7 @@
 DAY_STR = "day"
 DAY_OF_YEAR_STR = "day_of_year"
 LAT_STR = "lat"
+LON_STR = "lon"
 LEV_STR = "plev"
 SIGMA_STR = "sigma"
 TIME_STR = "time"
