@@ -193,5 +193,15 @@ def to_pascal(arr, is_dp=False):
     return arr
 
 
+def drop_dupes(sequence):
+    """Drop duplicate elements from a list or other sequence.
+
+    C.f. https://stackoverflow.com/a/7961390
+
+    """
+    orig_type = type(sequence)
+    return orig_type(list(dict.fromkeys(sequence)))
+
+
 if __name__ == '__main__':
     pass
