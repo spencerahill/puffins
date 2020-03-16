@@ -140,6 +140,19 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
 
 
 # Pressure spacing and averages.
+def dp_from_pfull(pfull, p_str="plev", p_top=0., p_bot=1012.5e2):
+    """Pressure thickness of levels given pressures at level centers."""
+    if pfull[0] < pfull[1]:
+        p_first = p_top
+        p_last = p_bot
+    else:
+        p_first = p_bot
+        p_last = p_top
+    p_half_inner_vals = 0.5*(pfull.values[1:] + pfull.values[:-1])
+    p_half_vals = np.concatenate([[p_first], p_half_inner_vals, [p_last]])
+    return np.abs(xr.ones_like(pfull) * np.diff(p_half_vals))
+
+
 def dp_from_p_half(p_half, pressure):
     """Pressure thickness of vertical levels given interface pressures."""
     dp_vals = p_half.values[1:] - p_half.values[:-1]

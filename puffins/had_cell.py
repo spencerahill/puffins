@@ -5,7 +5,7 @@ import xarray as xr
 
 from .calculus import subtract_col_avg
 from .constants import GRAV_EARTH
-from .names import LAT_STR, SIGMA_STR
+from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
     first_zero_cross_bounds,
@@ -17,7 +17,7 @@ from .nb_utils import (
 
 
 def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
-                     lat_str="lat", lon_str="lon", p_str="plev"):
+                     lat_str=LAT_STR, lon_str=LON_STR, lev_str=LEV_STR):
     """Meridional mass streamfunction.
 
     Parameters
@@ -41,12 +41,12 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
     # If desired, Impose zero net mass flux at each level.
     if impose_zero_col_flux:
         v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean,
-                                      dim=p_str, grav=grav)
+                                      dim=lev_str, grav=grav)
     # At each vertical level, integrate from TOA to that level.
-    streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=p_str) / grav
+    streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
     lats = v[lat_str]
-    return lat_area_weight(lats) * streamfunc
+    return (lat_area_weight(lats) * streamfunc).transpose(lev_str, lat_str)
 
 
 def had_cell_strength(streamfunc, dim=None):
@@ -63,7 +63,7 @@ def had_cell_strength(streamfunc, dim=None):
         return max_and_argmax_along_dim(streamfunc, dim)
 
 
-def had_cell_strengths(strmfunc, lat_str=LAT_STR, lev_str="plev"):
+def had_cells_strength(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -109,7 +109,11 @@ def had_cell_strengths(strmfunc, lat_str=LAT_STR, lev_str="plev"):
     return hc_strengths.sortby(hc_strengths[lat_str])
 
 
-def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str="plev"):
+# For backward compatibility.
+had_cell_strengths = had_cells_strength
+
+
+def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     """Streamfunction at the average level of the two Hadley cell centers."""
     lev_sh_max = hc_strengths[lev_str][0]
     lev_nh_max = hc_strengths[lev_str][1]
@@ -119,10 +123,10 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str="plev"):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str="plev"):
+def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
-    hc_strengths = had_cell_strengths(strmfunc, lat_str=lat_str,
+    hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
                                       lev_str=lev_str)
     lat_sh_max = hc_strengths[lat_str][0]
     lat_nh_max = hc_strengths[lat_str][1]
@@ -137,9 +141,9 @@ def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str="plev"):
 
 
 def had_cells_outer_edge(strmfunc, north=True, frac_thresh=0.1,
-                         lat_str=LAT_STR, lev_str="plev"):
+                         lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
-    hc_strengths = had_cell_strengths(strmfunc, lat_str=lat_str,
+    hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
                                       lev_str=lev_str)
 
     # Find first zero crossing of streamfunction north of NH cell.
@@ -164,7 +168,7 @@ def had_cells_outer_edge(strmfunc, north=True, frac_thresh=0.1,
 
 
 def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
-                         lev_str="plev"):
+                         lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cells_outer_edge(
         strmfunc,
@@ -176,7 +180,7 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
 
 
 def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
-                         lev_str="plev"):
+                         lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cells_outer_edge(
         strmfunc,
@@ -188,7 +192,7 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
 
 
 def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
-                    lev_str="plev"):
+                    lev_str=LEV_STR):
     """Southern, shared inner, and northern edge of the Hadley cells."""
     kwargs = [dict(frac_thresh=frac_thresh), {}, dict(frac_thresh=frac_thresh)]
     funcs = [had_cells_south_edge, had_cells_shared_edge, had_cells_north_edge]
