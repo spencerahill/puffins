@@ -46,7 +46,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
     streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
     lats = v[lat_str]
-    return (lat_area_weight(lats) * streamfunc).transpose(lev_str, lat_str)
+    return (lat_area_weight(lats) * streamfunc).transpose(*v_znl_mean.dims)
 
 
 def had_cell_strength(streamfunc, dim=None):
