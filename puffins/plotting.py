@@ -15,6 +15,17 @@ _DEGR_S = _DEGR + 'S'
 _DEGR_N = _DEGR + 'N'
 
 
+plt_rc_params_custom = {
+    "axes.spines.top": False,  # Turn off top spine in plots.
+    "axes.spines.right": False,  # Turn off right spine in plots.
+    "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
+    "font.family": "Helvetica",  # Use Helvetica font.
+    "legend.frameon": False,  # Turn off box around legend.
+    "mathtext.fontset": "cm",  # Use serifed font in equations.
+    "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
+}
+
+
 def default_gca(func):
     """If no axes object is given, use gca() to find the active one."""
     def func_default_gca(*args, **kwargs):
