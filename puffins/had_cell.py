@@ -33,7 +33,10 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
         The meridional mass streamfunction.
     """
     # Zonally average v and dp.
-    v_znl_mean = v.mean(dim=lon_str)
+    if lon_str in v.dims:
+        v_znl_mean = v.mean(dim=lon_str)
+    else:
+        v_znl_mean = v
     if lon_str in dp.dims:
         dp_znl_mean = to_pascal(dp, is_dp=True).mean(dim=lon_str)
     else:
