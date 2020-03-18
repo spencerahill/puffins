@@ -8,25 +8,26 @@ setuptools.setup(
     author_email="shill@ldeo.columbia.edu",
     description="Functions for computing things in climate science",
     install_requires=[
+        "eofs",
         "faceted",
         "gitpython",
         "indiff",
         "ipython",
         "matplotlib",
-        'numpy',
-        'scipy',
-        'xarray',
+        "numpy",
+        "scipy",
+        "xarray",
     ],
     scripts=["puffins/scripts/set_proj_puff_branch.py"],
     license="Apache",
     keywords="climate science",
     url="https://github.com/spencerahill/puffins",
     classifiers=[
-        'Development Status :: 2 - Pre-Alpha',
-        'Intended Audience :: Science/Research',
-        'License :: OSI Approved :: Apache Software License',
-        'Natural Language :: English',
-        'Programming Language :: Python :: 3',
-        'Topic :: Scientific/Engineering :: Atmospheric Science'
+        "Development Status :: 2 - Pre-Alpha",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: Apache Software License",
+        "Natural Language :: English",
+        "Programming Language :: Python :: 3",
+        "Topic :: Scientific/Engineering :: Atmospheric Science"
     ]
 )

@@ -8,6 +8,7 @@ from . import interp
 
 from . import dynamics
 from . import grad_bal
+from . import eofs
 from . import eq_area
 from . import fixed_temp_tropo
 from . import had_cell
