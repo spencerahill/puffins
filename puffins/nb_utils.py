@@ -179,7 +179,29 @@ def zero_cross_nh(arr, lat_str=LAT_STR):
 
 # Data processing and cleaning.
 def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
-    """Symmetrize data about the equator."""
+    """Symmetrize data about the equator.
+
+    Parameters
+    ----------
+
+    ds : xr.Dataset
+        Dataset to be symmetrized
+
+    vars_to_flip_sign: None or sequence of strings, default None
+        List of variables, (typically those involving meridional wind), which
+        are mirror-symmetric about the equator, rather than just symmetric.  So
+        we have to multiply their SH values by -1 before symmetrizing,
+        otherwise the results end up being nearly zero.
+    lat_str : str, default ``names.LAT_STR``
+
+    Returns
+    -------
+
+    ds_symm : xr.Dataset
+        Dataset with the variables from the original dataset symmetrized about
+        the equator
+
+    """
     lats = ds[lat_str]
     north_hem = ds.where(lats > 0, drop=True)
     south_hem = ds.where(lats < 0, drop=True).isel(lat=slice(-1, None, -1))
