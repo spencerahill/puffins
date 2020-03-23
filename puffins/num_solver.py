@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 """Numerical solvers."""
 
+
 import numpy as np
 import scipy
 import xarray as xr
@@ -76,6 +77,76 @@ def brentq_solver_sweep_param(func, param_range, init_guess, bound_guess_range,
         dims = None
         coords = None
     return xr.DataArray(solutions, dims=dims, coords=coords)
+
+
+def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
+    """
+    Successive over-relaxation numerical solver.
+
+    Parameters
+    ----------
+
+    A : nxn matrix
+        Matrix in the equation A*phi=b to be solved
+    b : length-n vector
+        Range of values of the given parameter over which to sweep
+    inititial_guess : length-n vector
+        Initial guess for the solution
+    omega : scalar
+        Value of `omega` parameter in the SOR solver.  If value is one,
+        algorithm is identical to Gauss-Seidel
+    conv_crit : float
+        Maximum acceptable error in numerical solution; algorithm stops
+        once this threshold is passed
+    verbose : bool
+        Whether or not to print the residual after each iteration
+
+    Returns
+    -------
+
+    phi : length-n vector
+        The numerical solution to the given equation A*phi=b
+
+    Notes
+    -----
+
+    Adapted from
+    https://en.wikipedia.org/wiki/Successive_over-relaxation#Example
+
+    """
+    phi = initial_guess.copy()[:]
+    initial_residual = np.linalg.norm(np.matmul(A, phi) - b)
+    residual = initial_residual
+    if verbose:
+        print('Initial residual: {0:10.6g}'.format(residual))
+    while residual > conv_crit:
+        for i in range(A.shape[0]):
+            j_neq_i = np.ones(A.shape[0])
+            j_neq_i[i] = 0
+            sigma = np.sum(A[i]*phi*j_neq_i)
+            phi[i] = (1 - omega) * phi[i] + (omega / A[i, i]) * (b[i] - sigma)
+        residual = np.linalg.norm(np.matmul(A, phi) - b)
+        if verbose:
+            print('Residual: {0:10.6g}'.format(residual))
+    return phi
+
+
+def n_from_kj(k, j, num_y):
+    """Convert 2D coordinates to scalar for converting to matrix."""
+    return np.rint(k*num_y + j)
+
+
+def kj_from_n(n, num_y):
+    """Given scalar form of 2D coordinates, get the 2D pair."""
+    return n // num_y, n % num_y
+
+
+def setup_bc_row(matrix, n, bc=0.):
+    """Setup row of matrix corresponding to boundary condition."""
+    bc_row = matrix[n]
+    bc_row[:] = bc
+    bc_row[n] = 1.
+    return bc_row
 
 
 if __name__ == '__main__':

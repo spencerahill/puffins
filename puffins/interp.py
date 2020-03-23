@@ -4,7 +4,7 @@
 import numpy as np
 import xarray as xr
 
-from .names import LAT_STR, LEV_STR
+from .names import LAT_STR, LEV_STR, P_SFC_STR, SIGMA_STR
 
 
 P_INTERP_VALS = np.arange(0, 1000.5, 1.)
@@ -77,6 +77,32 @@ def interpolate(x, y, x_target, dim):
     y_target = xr.ones_like(x[0])*y_target_vals
     y_target[dim].values = y_target_vals
     return y_target
+
+
+def interp_ds_sigma_to_p(ds, plevs, method="cubic", p_sfc_str=P_SFC_STR,
+                         sigma_str=SIGMA_STR, lev_str=LEV_STR,
+                         lat_str=LAT_STR):
+    """Interpolate Dataset with sigma corodinates to uniform pressures."""
+    if isinstance(plevs, int):
+        p_sfc_min = 1000.e2  # float(ds[sigma_str].max()*p_sfc.min())
+        p_top_max = 10.e2  # float(ds[sigma_str].min()*p_sfc.max())
+        p_fixed_vals = np.linspace(p_top_max, p_sfc_min, plevs)
+    else:
+        p_fixed_vals = plevs
+    p_fixed = xr.DataArray(p_fixed_vals, dims=[sigma_str],
+                           coords={sigma_str: p_fixed_vals}, name="p")
+    sigma_fixed = p_fixed / ds[p_sfc_str]
+
+    interped = []
+    lats = ds[lat_str]
+    for j, lat in enumerate(lats):
+        ds_tmp = ds.isel(**{lat_str: j}, drop=True).interp(
+            **{sigma_str: sigma_fixed.isel(lat=j, drop=True)},
+            method=method)
+        interped.append(ds_tmp.assign_coords(
+            **{sigma_str: p_fixed}).rename(**{sigma_str: lev_str}))
+
+    return xr.concat(interped, dim=lats).transpose(lev_str, lat_str)
 
 
 if __name__ == '__main__':

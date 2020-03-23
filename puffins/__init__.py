@@ -13,6 +13,7 @@ from . import eq_area
 from . import fixed_temp_tropo
 from . import had_cell
 from . import hides
+from . import kuo_el
 from . import thermodynamics
 from . import tropopause
 

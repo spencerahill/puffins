@@ -64,21 +64,29 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90):
 
 
 def lat_xaxis(ax, start_lat=-90, end_lat=90):
-    """Make the x-axis be in sin of latitude."""
+    """Make the x-axis be latitude."""
     ax.set_xlim([start_lat, end_lat])
-    ax.set_xticks(np.arange(start_lat, end_lat + 1, 10))
+
     if start_lat == 0 and end_lat == 90:
+        ax.set_xticks([0, 30, 60, 90])
+        ax.set_xticks([10, 20, 40, 50, 70, 80], minor=True)
         ax.set_xticklabels(['EQ', '', '', '30' + _DEGR, '', '',
                             '60' + _DEGR, '', '', '90' + _DEGR])
     elif start_lat == -90 and end_lat == 90:
-        ax.set_xticklabels(['-90' + _DEGR, '', '', '-60' + _DEGR, '', '',
-                            '-30' + _DEGR, '', '', 'EQ', '', '', '30' + _DEGR,
-                            '', '', '60' + _DEGR, '', '', '90' + _DEGR])
+        ax.set_xticks([-90, -60, -30, 0, 30, 60, 90])
+        minorticks = [-80, -70, -50, -40, -20, -10,
+                      10, 20, 40, 50, 70, 80]
+        ax.set_xticks(minorticks, minor=True)
+        ax.set_xticklabels([f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
+                            "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}",
+                            f"90{_DEGR_N}"])
+    else:
+        ax.set_xticks(np.arange(start_lat, end_lat + 1, 10))
     ax.set_xlabel(" ")
 
 
 def lat_yaxis(ax, start_lat=-90, end_lat=90):
-    """Make the y-axis be in sin of latitude."""
+    """Make the y-axis be latitude."""
     ax.set_ylim([start_lat, end_lat])
     ax.set_yticks(np.arange(start_lat, end_lat + 1, 10))
     if start_lat == 0 and end_lat == 90:
@@ -135,8 +143,10 @@ def _plot_cutoff_ends(lats, arr, ax=None, **kwargs):
     ax.plot(lats[2:-2], arr[2:-2], **kwargs)
 
 
-def panel_label(ax, panel_num, x=0.03, y=0.9, extra_text=None,
+def panel_label(panel_num, ax=None, x=0.03, y=0.9, extra_text=None,
                 **text_kwargs):
+    if ax is None:
+        ax = plt.gca()
     letters = 'abcdefghijklmnopqrstuvwxyz'
     label = '({})'.format(letters[panel_num])
     if extra_text is not None:

@@ -177,6 +177,56 @@ def zero_cross_nh(arr, lat_str=LAT_STR):
     return lats[np.abs(arr.where(lats > 0)).argmin()]
 
 
+# Data processing and cleaning.
+def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
+    """Symmetrize data about the equator.
+
+    Parameters
+    ----------
+
+    ds : xr.Dataset
+        Dataset to be symmetrized
+
+    vars_to_flip_sign: None or sequence of strings, default None
+        List of variables, (typically those involving meridional wind), which
+        are mirror-symmetric about the equator, rather than just symmetric.  So
+        we have to multiply their SH values by -1 before symmetrizing,
+        otherwise the results end up being nearly zero.
+    lat_str : str, default ``names.LAT_STR``
+
+    Returns
+    -------
+
+    ds_symm : xr.Dataset
+        Dataset with the variables from the original dataset symmetrized about
+        the equator
+
+    """
+    lats = ds[lat_str]
+    north_hem = ds.where(lats > 0, drop=True)
+    south_hem = ds.where(lats < 0, drop=True).isel(lat=slice(-1, None, -1))
+
+    if vars_to_flip_sign is None:
+        vars_to_flip_sign = []
+    for varname in vars_to_flip_sign:
+        south_hem[varname] = -1*south_hem[varname]
+
+    south_hem[lat_str] = north_hem[lat_str]
+    ds_hem_avg = 0.5*(south_hem + north_hem)
+
+    ds_opp = ds_hem_avg.copy(deep=True)
+    ds_opp = ds_opp.isel(lat=slice(-1, None, -1))
+
+    # Note: because of an xarray bug, can't use `ds_opp[lat_str] *= -1` here,
+    # because in that case it also multiplies `ds_avg[lat_str]` by -1.
+    ds_opp[lat_str] = ds_opp[lat_str]*-1
+    ds_symm = xr.concat([ds_opp, ds_hem_avg], dim=lat_str)
+
+    for varname in vars_to_flip_sign:
+        ds_symm[varname] = ds_symm[varname]*np.sign(ds_symm[lat_str])
+    return ds_symm
+
+
 # Misc.
 def lat_area_weight(lat, radius=RAD_EARTH):
     """Geometric factor corresponding to surface area at each latitude."""
