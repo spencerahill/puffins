@@ -83,15 +83,16 @@ def interp_ds_sigma_to_p(ds, plevs, method="cubic", p_sfc_str=P_SFC_STR,
                          sigma_str=SIGMA_STR, lev_str=LEV_STR,
                          lat_str=LAT_STR):
     """Interpolate Dataset with sigma corodinates to uniform pressures."""
+    p_sfc = ds[p_sfc_str]
     if isinstance(plevs, int):
-        p_sfc_min = 1000.e2  # float(ds[sigma_str].max()*p_sfc.min())
-        p_top_max = 10.e2  # float(ds[sigma_str].min()*p_sfc.max())
+        p_sfc_min = float(ds[sigma_str].max()*p_sfc.min())
+        p_top_max = float(ds[sigma_str].min()*p_sfc.max())
         p_fixed_vals = np.linspace(p_top_max, p_sfc_min, plevs)
     else:
         p_fixed_vals = plevs
     p_fixed = xr.DataArray(p_fixed_vals, dims=[sigma_str],
                            coords={sigma_str: p_fixed_vals}, name="p")
-    sigma_fixed = p_fixed / ds[p_sfc_str]
+    sigma_fixed = p_fixed / p_sfc
 
     interped = []
     lats = ds[lat_str]
