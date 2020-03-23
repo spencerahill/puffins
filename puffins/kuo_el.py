@@ -4,9 +4,10 @@ import xarray as xr
 
 
 from .calculus import lat_deriv, z_deriv
-from .constants import GRAV_EARTH, RAD_EARTH, ROT_RATE_EARTH
+from .constants import C_P, GRAV_EARTH, P0, R_D, RAD_EARTH, ROT_RATE_EARTH
 from .dynamics import coriolis_param
-from .names import LAT_STR, LEV_STR
+from .names import LAT_STR, LEV_STR, SIGMA_STR
+from .num_solver import kj_from_n, setup_bc_row, sor_solver
 from .nb_utils import coord_arr_1d, cosdeg, sindeg
 
 
@@ -30,6 +31,40 @@ def kuo_el_eddy_mom_term(u_merid_flux_eddy, p_sfc=None, is_sigma=True,
         d2uv_eddy_cos2lat_dp_dlat /= p_sfc
     return (2*rot_rate*sindeg(lat) * d2uv_eddy_cos2lat_dp_dlat /
             (radius * coslat**2)).transpose(*u_merid_flux_eddy.dims)
+
+
+def kuo_el_eddy_temp_term(temp, temp_eddy_merid_flux, pressure, r_d=R_D,
+                          radius=RAD_EARTH, lat_str=LAT_STR):
+    """Eddy heat flux term on the RHS of the Kuo-Eliassen equation.
+
+    Note that `temp_merid_flux_eddy` should include a cos(lat)
+    factor, i.e. it should be v'T'cos(lat).
+
+    """
+    if isinstance(pressure, str):
+        pressure = temp[pressure]
+    dtemp_eddy_merid_flux_dlat = lat_deriv(temp_eddy_merid_flux,
+                                           lat_str=lat_str)
+    coslat = cosdeg(temp[lat_str])
+    d2temp_eddy_flux_dlat2_term = lat_deriv(dtemp_eddy_merid_flux_dlat /
+                                            coslat, lat_str=lat_str)
+    return -r_d / (pressure*radius**2)*d2temp_eddy_flux_dlat2_term
+
+
+def kuo_el_fric_term(zonal_friction, pressure, rot_rate=ROT_RATE_EARTH,
+                     vert_str=SIGMA_STR, lat_str=LAT_STR):
+    """Zonal friction term on the RHS of the Kuo-Eliassen equation."""
+    d_zonal_fric_dp = z_deriv(zonal_friction, pressure, z_str=vert_str)
+    return -d_zonal_fric_dp*coriolis_param(zonal_friction[lat_str],
+                                           rot_rate=rot_rate)
+
+
+def kuo_el_diab_term(diab_heat, pressure, r_d=R_D, c_p=C_P,
+                     radius=RAD_EARTH, p0=P0, lat_str=LAT_STR):
+    """Diabatic heating term on the RHS of the Kuo-Eliassen equation."""
+    kappa = r_d / c_p
+    return (r_d*pressure**(kappa-1)*lat_deriv(diab_heat, lat_str=lat_str) /
+            (radius*p0**kappa))
 
 
 def _kuo_el_matrix(pot_temp, spec_vol, grav=GRAV_EARTH, radius=RAD_EARTH,
@@ -123,7 +158,7 @@ def _kuo_el_apply_bc(arr, lat_str=LAT_STR, lev_str=LEV_STR, bc=0.):
 
 
 def kuo_el_solver(pot_temp, spec_vol, forcing, init_guess=None, omega=1.2,
-                  conv_crit=1e-14, grav=GRAV_EARTH, radius=RAD_EARTH,
+                  conv_crit=1e-13, grav=GRAV_EARTH, radius=RAD_EARTH,
                   rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR, lev_str=LEV_STR,
                   verbose=True):
     """Numerical solver of Kuo-Eliassen equation.
