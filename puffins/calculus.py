@@ -12,6 +12,7 @@ from .nb_utils import cosdeg, sindeg, to_pascal
 
 # Derivatives.
 def lat_deriv(arr, lats=None, lat_str=LAT_STR):
+    """Meridional derivative approximated by centered differencing."""
     if lats is None:
         lats = arr[lat_str]
     return (
@@ -20,15 +21,30 @@ def lat_deriv(arr, lats=None, lat_str=LAT_STR):
     ).transpose(*arr.dims)
 
 
-def z_deriv(arr, z, z_str=Z_STR):
+def z_deriv(arr, z=None, z_str=Z_STR):
+    """Vertical derivative approximated by centered differencing."""
+    if z is None:
+        z = arr[z_str]
     return (
         CenDiff(arr, z_str, fill_edge='both').diff() /
         CenDiff(z, z_str, fill_edge='both').diff()
     ).transpose(*arr.dims)
 
 
-def bwd_deriv(arr):
-    return BwdDiff(arr, LAT_STR).diff() / BwdDiff(arr[LAT_STR], LAT_STR).diff()
+def bwd_deriv(arr, dim):
+    """Derivative approximated by one-sided backwards differencing."""
+    return BwdDiff(arr, dim).diff() / BwdDiff(arr[dim], dim).diff()
+
+
+def flux_div(arr_merid_flux, arr_vert_flux, vert_coord=None, vert_str=LEV_STR,
+             lat_str=LAT_STR, radius=RAD_EARTH):
+    """Horizontal plus vertical flux divergence of a given field."""
+    if vert_coord is None:
+        vert_coord = arr_vert_flux[vert_str]
+    merid_flux_div = (lat_deriv(arr_merid_flux, lat_str=lat_str) /
+                               (radius*cosdeg(arr_merid_flux[lat_str])))
+    vert_flux_div = z_deriv(arr_vert_flux, vert_coord, z_str=vert_str)
+    return merid_flux_div + vert_flux_div
 
 
 # Vertical integrals and averages.
