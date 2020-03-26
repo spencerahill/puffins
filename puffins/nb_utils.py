@@ -117,7 +117,8 @@ def _func_arrs_to_ds(func, args=None, kwargs=None):
 
 
 def groupby_apply_func(func, arrs, groupby_dims,
-                       func_args=None, func_kwargs=None):
+                       func_args=None, func_kwargs=None,
+                       stacked_dim="dummy_stacked_dim"):
     """Apply a function via 'groupby' over the given dimensions."""
     ds = _arrs_to_ds(arrs)
     func_on_ds = _func_arrs_to_ds(func, args=func_args,
@@ -125,9 +126,8 @@ def groupby_apply_func(func, arrs, groupby_dims,
     if isinstance(groupby_dims, str):
         groupby_dims = (groupby_dims,)
 
-    # Stack/unstack to iterate over all dims that are to be
-    # grouped/applied over.
-    stacked_dim = 'dummy_stacked_dim'
+    # Stack/unstack to iterate over all dims that are to be grouped/applied
+    # over.
     assert stacked_dim not in ds.dims
     return ds.stack(**{stacked_dim: groupby_dims}).groupby(
         stacked_dim).apply(func_on_ds).unstack(stacked_dim)

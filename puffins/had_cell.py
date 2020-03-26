@@ -100,7 +100,7 @@ def had_cells_strength(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
         cell_south_of_neg_strength,
         cell_north_of_neg_strength,
     ]
-    cell_strengths = xr.concat(strengths, dim=lat_str)
+    cell_strengths = xr.concat(strengths, dim=lat_str, coords=[lev_str])
     dupes = cell_strengths.get_index(LAT_STR).duplicated()
     cell_strengths = cell_strengths[~dupes]
 
@@ -109,11 +109,22 @@ def had_cells_strength(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
     hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
 
     # Order the cells from south to north.
-    return hc_strengths.sortby(hc_strengths[lat_str])
+    hc_strengths = hc_strengths.sortby(hc_strengths[lat_str])
 
-
-# For backward compatibility.
-had_cell_strengths = had_cells_strength
+    # Create DataArray with one label for each cell, the cell strengths
+    # as the values, and the cell center latitudes and levels as coords.
+    coords_out = {"cell": ["had_cell_sh", "had_cell_nh"]}
+    ds_strengths = xr.Dataset(coords=coords_out)
+    arr_lat_center = xr.DataArray(hc_strengths[lat_str].values,
+                                  dims=["cell"], coords=coords_out)
+    arr_lev_center = xr.DataArray(hc_strengths[lev_str].values,
+                                  dims=["cell"], coords=coords_out)
+    arr_strength = xr.DataArray(hc_strengths.values,
+                                dims=["cell"], coords=coords_out)
+    ds_strengths.coords[lat_str] = arr_lat_center
+    ds_strengths.coords[lev_str] = arr_lev_center
+    ds_strengths["cell_strength"] = arr_strength
+    return ds_strengths["cell_strength"]
 
 
 def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
