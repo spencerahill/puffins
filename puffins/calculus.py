@@ -5,8 +5,8 @@ from indiff.diff import BwdDiff, CenDiff
 import numpy as np
 import xarray as xr
 
-from .constants import GRAV_EARTH, RAD_EARTH
-from .names import LAT_STR, LEV_STR, Z_STR
+from .constants import GRAV_EARTH, P0, RAD_EARTH
+from .names import LAT_STR, LEV_STR, PHALF_STR, Z_STR
 from .nb_utils import cosdeg, sindeg, to_pascal
 
 
@@ -73,7 +73,8 @@ def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
 
 
 # Meridional integrals and averages.
-def merid_integral_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
+                              lat_str=LAT_STR):
     """Area-weighted meridional integral for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -85,12 +86,14 @@ def merid_integral_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     lat = arr[lat_str]
     masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
     dlat = lat.diff(lat_str)
-    if not np.isclose(dlat.min(), dlat.max()):
-        raise ValueError("Uniform latitude spacing required; not uniform.")
+    if (dlat.max() - dlat.min())/dlat.mean() > unif_thresh:
+        raise ValueError("Uniform latitude spacing required; given values "
+                         "are not sufficiently uniform.")
     return (masked*cosdeg(lat)*np.deg2rad(dlat)).sum(lat_str)
 
 
-def merid_avg_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
+                         lat_str=LAT_STR):
     """Area-weighted meridional average for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -99,9 +102,10 @@ def merid_avg_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     implemented in the function ``merid_average_grid_data``.
 
     """
-    return (merid_integral_point_data(arr, min_lat, max_lat, lat_str) /
+    return (merid_integral_point_data(arr, min_lat, max_lat,
+                                      unif_thresh, lat_str) /
             merid_integral_point_data(xr.ones_like(arr), min_lat,
-                                      max_lat, lat_str))
+                                      max_lat, unif_thresh, lat_str))
 
 
 def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
@@ -179,6 +183,44 @@ def dlogp_from_p_half(p_half, pressure):
     """Pressure thickness of vertical levels given interface pressures."""
     dlogp_vals = np.log(p_half.values[1:]/p_half.values[:-1])
     return xr.ones_like(pressure)*dlogp_vals
+
+
+def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
+    """Compute pressure at full levels using Simmons-Burridge spacing.
+
+    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
+    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
+    Monthly Weather Review, 109(4), 758-766.
+
+    """
+    dp_vals = phalf.diff(phalf_str).values
+    # Above means vertically above (i.e. lower pressure).
+    phalf_above = phalf.isel(phalf=slice(None, -1))
+    phalf_below = phalf.isel(phalf=slice(1, None))
+
+    dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
+    phalf_over_dp_vals = phalf_above.values / dp_vals
+
+    alpha_vals = 1. - phalf_over_dp_vals*dlog_phalf_vals
+
+    ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
+    pfull_vals = np.exp(ln_pfull_vals)
+    top_lev_factor = float(pfull_ref[0] / phalf_ref[1])
+    pfull_vals[0] = phalf.isel(phalf=1)*top_lev_factor
+    return pfull_vals
+
+
+def pfull_simm_burr(arr_template, phalf, phalf_ref, pfull_ref,
+                    phalf_str=PHALF_STR):
+    """Compute pressure at full levels using Simmons-Burridge spacing.
+
+    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
+    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
+    Monthly Weather Review, 109(4), 758-766.
+
+    """
+    pfull_vals = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str)
+    return xr.ones_like(arr_template)*pfull_vals
 
 
 def _flip_dim(arr, dim):
