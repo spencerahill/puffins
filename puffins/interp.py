@@ -4,7 +4,7 @@
 import numpy as np
 import xarray as xr
 
-from .names import LAT_STR, LEV_STR, P_SFC_STR, SIGMA_STR
+from .names import LAT_STR, LEV_STR, P_SFC_STR, PFULL_STR, SIGMA_STR
 
 
 P_INTERP_VALS = np.arange(0, 1000.5, 1.)
@@ -82,7 +82,7 @@ def interpolate(x, y, x_target, dim):
 def interp_ds_sigma_to_p(ds, plevs, method="cubic", p_sfc_str=P_SFC_STR,
                          sigma_str=SIGMA_STR, lev_str=LEV_STR,
                          lat_str=LAT_STR):
-    """Interpolate Dataset with sigma corodinates to uniform pressures."""
+    """Interpolate Dataset with sigma coordinates to uniform pressures."""
     p_sfc = ds[p_sfc_str]
     if isinstance(plevs, int):
         p_sfc_min = float(ds[sigma_str].max()*p_sfc.min())
@@ -103,7 +103,23 @@ def interp_ds_sigma_to_p(ds, plevs, method="cubic", p_sfc_str=P_SFC_STR,
         interped.append(ds_tmp.assign_coords(
             **{sigma_str: p_fixed}).rename(**{sigma_str: lev_str}))
 
-    return xr.concat(interped, dim=lats).transpose(lev_str, lat_str)
+    return xr.concat(interped, dim=lats).transpose(lev_str, lat_str, ...)
+
+
+def interp_ds_p_to_p(ds, plevs, method="cubic", pfull_str=PFULL_STR,
+                     lev_str=LEV_STR, lat_str=LAT_STR):
+    """Interpolate Dataset with varying-p to uniform-p coordinates."""
+    p_fixed = xr.DataArray(plevs, dims=[pfull_str],
+                           coords={pfull_str: plevs}, name="p")
+    interped = []
+    lats = ds[lat_str]
+    for j, lat in enumerate(lats):
+        ds_tmp = ds.isel(**{lat_str: j}, drop=True).interp(
+            **{pfull_str: p_fixed}, method=method)
+        interped.append(ds_tmp.assign_coords(
+            **{pfull_str: p_fixed}).rename(**{pfull_str: lev_str}))
+
+    return xr.concat(interped, dim=lats).transpose(lev_str, lat_str, ...)
 
 
 if __name__ == '__main__':

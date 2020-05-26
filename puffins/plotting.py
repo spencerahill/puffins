@@ -193,5 +193,11 @@ def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
     return ax
 
 
+def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
+    if fig is None:
+        fig = plt.gcf()
+    fig.savefig(os.path.join(fig_dir, name), **kwargs)
+
+
 if __name__ == '__main__':
     pass

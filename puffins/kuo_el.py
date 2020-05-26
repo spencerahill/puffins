@@ -61,7 +61,11 @@ def kuo_el_fric_term(zonal_friction, pressure, rot_rate=ROT_RATE_EARTH,
 
 def kuo_el_diab_term(diab_heat, pressure, r_d=R_D, c_p=C_P,
                      radius=RAD_EARTH, p0=P0, lat_str=LAT_STR):
-    """Diabatic heating term on the RHS of the Kuo-Eliassen equation."""
+    """Diabatic heating term on the RHS of the Kuo-Eliassen equation.
+
+    diab_heat : (p_0/p)^\kappa*\bar Q / c_p
+
+    """
     kappa = r_d / c_p
     return (r_d*pressure**(kappa-1)*lat_deriv(diab_heat, lat_str=lat_str) /
             (radius*p0**kappa))

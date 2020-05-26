@@ -9,12 +9,17 @@ R_D = 287.06  # Gas constant of dry air.
 C_VD = C_PD - R_D  # Specific heat of dry air at constant volume.
 KAPPA = R_D / C_PD
 
-# Water vapor.
+# Water.
+L_F = 3.34e5  # Latent heat of fusion.
 L_V = 2.5e6  # Latent heat of vaporization.
+C_VL = 4216.  # Specific heat of liquid water at constant volume.
+C_VS = 2106.  # Specific heat of solid water at constant volume.
 C_VV = 1418.  # Specific heat of water vapor at constant volume.
 R_V = 461.4  # Gas constant of water vapor.
 C_PV = C_VV + R_V  # Specific heat of water vapor at constant pressure.
 EPSILON = R_D / R_V  # Ratio of dry air and vapor gas constants.
+P_TRIP = 611.65  # Pressure of water triple point.
+T_TRIP = 273.16  # Temperature of water triple point.
 
 # Earth's solid body and orbit.
 GRAV_EARTH = 9.81
