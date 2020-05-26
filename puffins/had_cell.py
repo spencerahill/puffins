@@ -218,7 +218,7 @@ def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
     ) for func, kw in zip(funcs, kwargs)]
 
 
-def cell_edges_sigma(streamfunc, thresh_frac=0.1, center_min_sigma=0.1,
+def cell_edges_sigma(streamfunc, frac_thresh=0.1, center_min_sigma=0.1,
                      center_max_sigma=1, cell_min_sigma_depth=0.3,
                      lat_str=LAT_STR, sigma_str=SIGMA_STR):
     """Compute edges of all contiguous streamfunction overturning cells."""
@@ -233,13 +233,19 @@ def cell_edges_sigma(streamfunc, thresh_frac=0.1, center_min_sigma=0.1,
     cells = []
     for n in indices:
         try:
-            cells.append(_find_cell_and_edges(
-                streamfunc, labels, n, thresh_frac=thresh_frac,
+            candidate = _find_cell_and_edges(
+                streamfunc, labels, n, frac_thresh=frac_thresh,
                 cell_min_sigma_depth=cell_min_sigma_depth,
                 lat_str=lat_str, sigma_str=sigma_str
-            ))
-        except ValueError:
-            pass
+            )
+        except ValueError as error:
+            if str(error) == "Cell is insufficiently deep.":
+                pass
+            else:
+                raise error
+        else:
+            cells.append(candidate)
+
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim='cell')
     # Restrict to Hadley and Ferrel cells.
@@ -247,7 +253,7 @@ def cell_edges_sigma(streamfunc, thresh_frac=0.1, center_min_sigma=0.1,
 
 
 def _find_cell_and_edges(streamfunc, labels, n, cell_min_sigma_depth=0.3,
-                         thresh_frac=0.1, lat_str=LAT_STR,
+                         frac_thresh=0.1, lat_str=LAT_STR,
                          sigma_str=SIGMA_STR):
     """Find the cell with a given label and determine its edges."""
     # Isolate the cell labeled by 'n' and make it positive.
@@ -270,12 +276,12 @@ def _find_cell_and_edges(streamfunc, labels, n, cell_min_sigma_depth=0.3,
                     lat_str=lat_str):
         raise ValueError("Cell is not physically meaningful.")
     lat_max = float(sf_max[lat_str].values)
-    edges = _one_cell_edges(sf_and_opp_sign, cell_sign, thresh_frac,
+    edges = _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh,
                             lat_max, lat_str, sigma_str)
     # Convert to a single DataArray with the cell center included.
     edges.insert(-1, sf_max[lat_str])
     edges_arr = xr.concat(edges, dim=lat_str)
-    edges_arr[lat_str].values = ['edge_south', 'center', 'edge_north']
+    edges_arr[lat_str] = ['edge_south', 'center', 'edge_north']
     edges_arr.coords['cell_strength'] = float(sf_max*cell_sign)
     return edges_arr
 
@@ -324,7 +330,7 @@ def _cell_is_bad(sf_max, lats, sf_and_opp_sign, min_width=3, lat_str=LAT_STR):
     return center_at_pole or cell_too_narrow
 
 
-def _one_cell_edges(sf_and_opp_sign, cell_sign, thresh_frac, lat_max,
+def _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh, lat_max,
                     lat_str=LAT_STR, sigma_str=SIGMA_STR):
     """Compute northern and southern edges of a cell.
 
@@ -335,7 +341,7 @@ def _one_cell_edges(sf_and_opp_sign, cell_sign, thresh_frac, lat_max,
     for sign_factor in [1, -1]:
         sf_cell = sf_and_opp_sign.copy()
         sf_max_mag = sf_cell.max()
-        threshold = float(sf_max_mag*thresh_frac)
+        threshold = float(sf_max_mag*frac_thresh)
         assert threshold > 0
         # Flip the sign and the indexing if looking for southern edge.
         lat_cell = sf_cell[lat_str]*sign_factor
