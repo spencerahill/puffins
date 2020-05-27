@@ -1,12 +1,22 @@
 #! /usr/bin/env python
 """Derivatives, integrals, and averages."""
 
+import aospy
 from indiff.diff import BwdDiff, CenDiff
 import numpy as np
 import xarray as xr
 
-from .constants import GRAV_EARTH, P0, RAD_EARTH
-from .names import LAT_STR, LEV_STR, PHALF_STR, Z_STR
+from .constants import GRAV_EARTH, RAD_EARTH
+from .names import (
+    BOUNDS_STR,
+    LAT_BOUNDS_STR,
+    LAT_STR,
+    LON_BOUNDS_STR,
+    LON_STR,
+    LEV_STR,
+    PHALF_STR,
+    Z_STR,
+)
 from .nb_utils import cosdeg, sindeg, to_pascal
 
 
@@ -157,6 +167,55 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     return (merid_integral_point_data(arr, min_lat, max_lat, lat_str) /
             merid_integral_point_data(xr.ones_like(arr), min_lat,
                                       max_lat, lat_str))
+
+
+# Surface area of lat-lon data.
+# TODO: add check that spacing is (nearly) uniform.
+def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR):
+    """Requires that array be evenly spaced (up to an error threshold)."""
+    arr_vals = arr.values
+    midpoint_vals = 0.5*(arr_vals[:-1] + arr_vals[1:])
+
+    bound_left = arr_vals[0] - (midpoint_vals[0] - arr_vals[0])
+    bound_right = arr_vals[-1] + (arr_vals[-1] - midpoint_vals[-1])
+
+    bounds_left_vals = np.concatenate(([bound_left], midpoint_vals))
+    bounds_right_vals = np.concatenate((midpoint_vals, [bound_right]))
+
+    bounds_vals = np.array([bounds_left_vals, bounds_right_vals]).transpose()
+
+    if dim_bounds is None:
+        bounds_arr_name = dim + '_bounds'
+    else:
+        bounds_arr_name = dim_bounds
+    return xr.DataArray(bounds_vals, dims=[dim, bounds_str],
+                        coords={dim: arr}, name=bounds_arr_name)
+
+
+def add_lat_lon_bounds(arr, lat_str=LAT_STR, lon_str=LON_STR,
+                       lat_bounds_str=LAT_BOUNDS_STR,
+                       lon_bounds_str=LON_BOUNDS_STR):
+    """Add bounding arrays to lat and lon arrays."""
+    if isinstance(arr, xr.DataArray):
+        ds = arr.to_dataset()
+    else:
+        ds = arr
+    lon_bounds = infer_bounds(ds[lon_str], lon_str, lon_bounds_str)
+    lat_bounds = infer_bounds(ds[lat_str], lat_str, lat_bounds_str)
+    ds.coords[lon_bounds_str] = lon_bounds
+    ds.coords[lat_bounds_str] = lat_bounds
+    return ds
+
+
+def sfc_area_latlon_box(ds, lat_str=LAT_STR, lon_str=LON_STR,
+                        lat_bounds_str=LAT_BOUNDS_STR,
+                        lon_bounds_str=LON_BOUNDS_STR):
+    """Calculate surface area of each grid cell in a lon-lat grid."""
+    lon = ds[lon_str]
+    lat = ds[lat_str]
+    lon_bounds = ds[lon_bounds_str]
+    lat_bounds = ds[lat_bounds_str]
+    return aospy.model._grid_sfc_area(lon, lat, lon_bounds, lat_bounds)
 
 
 # Pressure spacing and averages.
