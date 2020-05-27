@@ -1,6 +1,7 @@
 """puffins: tools for large-scale atmospheric and climate dynamics research"""
 from . import names
 from . import constants
+from . import dates
 from . import num_solver
 from . import calculus
 from . import nb_utils
