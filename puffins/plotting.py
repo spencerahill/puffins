@@ -2,6 +2,7 @@
 """Helper functions for creating plots."""
 
 from collections import namedtuple
+import os.path
 
 from faceted import faceted
 from matplotlib import pyplot as plt
@@ -190,8 +191,14 @@ def mark_one2one(ax=None, *line_args, linestyle='--', color='0.5',
     return ax
 
 
+def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
+    if fig is None:
+        fig = plt.gcf()
+    fig.savefig(os.path.join(fig_dir, name), **kwargs)
+
 
 PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
+
 
 if __name__ == '__main__':
     pass
