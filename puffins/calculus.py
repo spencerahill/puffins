@@ -150,9 +150,9 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     ``merid_avg_point_data`` should be used.
 
     """
-    return (merid_integral_point_data(arr, min_lat, max_lat, lat_str) /
-            merid_integral_point_data(xr.ones_like(arr), min_lat,
-                                      max_lat, lat_str))
+    return (merid_integral_grid_data(arr, min_lat, max_lat, lat_str) /
+            merid_integral_grid_data(xr.ones_like(arr), min_lat,
+                                     max_lat, lat_str))
 
 
 # Pressure spacing and averages.
