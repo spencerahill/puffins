@@ -10,6 +10,7 @@ setuptools.setup(
     install_requires=[
         "eofs",
         "faceted",
+        "flake8",
         "gitpython",
         "indiff",
         "ipython",
