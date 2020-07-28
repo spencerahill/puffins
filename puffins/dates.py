@@ -59,12 +59,14 @@ seasons_6mon = dict(
     jjason=[6, 7, 8, 9, 10, 11],
     jasond=[7, 8, 9, 10, 11, 12],
 )
+ann = dict(ann=range(1, 13))
 _ann_subs = (
     months,
     seasons_3mon,
     seasons_4mon,
     seasons_5mon,
     seasons_6mon,
+    ann,
 )
 ann_subsets = {}
 [ann_subsets.update(d) for d in _ann_subs]
@@ -75,6 +77,8 @@ def subset_ann(arr, months, dim_time=TIME_STR):
 
     """
     if isinstance(months, str):
+        if months == "ann":
+            return arr
         months = ann_subsets[months]
     time = arr[dim_time]
     return arr.where((time.dt.month >= np.min(months)) &
