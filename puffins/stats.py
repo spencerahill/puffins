@@ -4,7 +4,7 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 
-from .names import LAT_STR, YEAR_STR
+from .names import LAT_STR, LON_STR, YEAR_STR
 from .nb_utils import cosdeg
 
 
@@ -65,6 +65,20 @@ def corr_where_overlap(arr1, arr2, dim):
     """Compute corr. coeff. for overlapping portion of the two arrays."""
     arr1_shared, arr2_shared = sel_shared_vals(arr1, arr2, dim)
     return scipy.stats.pearsonr(arr1_shared, arr2_shared)[0]
+
+
+def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
+                                dim_lon=LON_STR, dim_time=YEAR_STR):
+    """Correlation of 1D-arr w/ a (time, lat, lon)-arr at each (lat, lon)."""
+    corrs = []
+    for lat in arr_sweep[dim_lat]:
+        corrs.append([scipy.stats.pearsonr(
+            arr_sweep.fillna(0.).sel(lat=lat).sel(lon=lon),
+            arr)[0] for lon in arr_sweep[dim_lon]
+        ])
+    arr_sweep_0 = arr_sweep.isel(**{dim_time: 0}, drop=True)
+    return (xr.ones_like(arr_sweep_0) *
+            np.array(corrs).reshape(arr_sweep_0.shape))
 
 
 # Empirical orthogonal functions (EOFs)
