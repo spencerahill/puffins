@@ -2,6 +2,7 @@
 """Helper functions for creating plots."""
 
 from collections import namedtuple
+import os
 
 from faceted import faceted
 from matplotlib import pyplot as plt
