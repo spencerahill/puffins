@@ -207,7 +207,7 @@ def grad_wind_bouss_fixed_temp_tropo(
     else:
         temp_sfc = pot_temp_avg
         temp_drop = pot_temp_avg - temp_tropo
-    dtemp_sfc_dlat = lat_deriv(temp_sfc, lat_str=lat_str)
+    dtemp_sfc_dlat = lat_deriv(temp_sfc, lat_str)
 
     pot_temp_tropo = pot_temp_tropopause_fixed_tt(
         temp_sfc,
@@ -215,7 +215,7 @@ def grad_wind_bouss_fixed_temp_tropo(
         gamma=gamma,
     )
     pot_temp_drop = pot_temp_tropo - pot_temp_avg
-    dtheta_dlat = lat_deriv(pot_temp_avg, lat_str=lat_str)
+    dtheta_dlat = lat_deriv(pot_temp_avg, lat_str)
 
     coslat = cosdeg(lat)
     leading_factor = c_p / (

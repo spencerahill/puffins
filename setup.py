@@ -11,7 +11,6 @@ setuptools.setup(
         "eofs",
         "faceted",
         "gitpython",
-        "indiff",
         "ipython",
         "matplotlib",
         "numpy",

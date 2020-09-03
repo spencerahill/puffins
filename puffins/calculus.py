@@ -1,8 +1,6 @@
 #! /usr/bin/env python
 """Derivatives, integrals, and averages."""
-
 import aospy
-from indiff.diff import BwdDiff, CenDiff
 import numpy as np
 import xarray as xr
 
@@ -15,45 +13,24 @@ from .names import (
     LON_STR,
     LEV_STR,
     PHALF_STR,
-    Z_STR,
 )
 from .nb_utils import cosdeg, sindeg, to_pascal
 
 
 # Derivatives.
-def lat_deriv(arr, lats=None, lat_str=LAT_STR):
+def lat_deriv(arr, lat_str=LAT_STR):
     """Meridional derivative approximated by centered differencing."""
-    if lats is None:
-        lats = arr[lat_str]
-    return (
-        CenDiff(arr, lat_str, fill_edge='both').diff() /
-        CenDiff(np.deg2rad(lats), lat_str, fill_edge='both').diff()
-    ).transpose(*arr.dims)
+    # Latitude is in degrees but in the denominator, so using `np.rad2deg`
+    # gives the correct conversion from degrees to radians.
+    return np.rad2deg(arr.differentiate(lat_str))
 
 
-def z_deriv(arr, z=None, z_str=Z_STR):
-    """Vertical derivative approximated by centered differencing."""
-    if z is None:
-        z = arr[z_str]
-    return (
-        CenDiff(arr, z_str, fill_edge='both').diff() /
-        CenDiff(z, z_str, fill_edge='both').diff()
-    ).transpose(*arr.dims)
-
-
-def bwd_deriv(arr, dim):
-    """Derivative approximated by one-sided backwards differencing."""
-    return BwdDiff(arr, dim).diff() / BwdDiff(arr[dim], dim).diff()
-
-
-def flux_div(arr_merid_flux, arr_vert_flux, vert_coord=None, vert_str=LEV_STR,
+def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
              lat_str=LAT_STR, radius=RAD_EARTH):
     """Horizontal plus vertical flux divergence of a given field."""
-    if vert_coord is None:
-        vert_coord = arr_vert_flux[vert_str]
-    merid_flux_div = (lat_deriv(arr_merid_flux, lat_str=lat_str) /
+    merid_flux_div = (lat_deriv(arr_merid_flux, lat_str) /
                                (radius*cosdeg(arr_merid_flux[lat_str])))
-    vert_flux_div = z_deriv(arr_vert_flux, vert_coord, z_str=vert_str)
+    vert_flux_div = arr_vert_flux.differentiate(vert_str)
     return merid_flux_div + vert_flux_div
 
 
@@ -306,7 +283,7 @@ def avg_logp_weighted(arr, p_half, pressure, p_str=LEV_STR):
 
 def col_extrema(arr, p_str=LEV_STR):
     """Locations and values of local extrema within each column."""
-    darr_dp = z_deriv(arr, arr[p_str], z_str=p_str)
+    darr_dp = arr.differentiate(p_str)
     sign_change = np.sign(darr_dp).diff(p_str)
     return arr.where(sign_change)
 

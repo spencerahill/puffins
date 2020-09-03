@@ -4,7 +4,7 @@
 from .constants import GRAV_EARTH, RAD_EARTH, ROT_RATE_EARTH, THETA_REF
 from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg
-from .calculus import lat_deriv, z_deriv
+from .calculus import lat_deriv
 
 
 def therm_ross_num(delta_h, height, grav=GRAV_EARTH,
@@ -22,8 +22,8 @@ def abs_ang_mom(u, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
 
 def abs_vort_vert_comp(abs_ang_mom, radius=RAD_EARTH, lat_str=LAT_STR):
     """Vertical component of absolute vorticity (in axisymmetric case)."""
-    lats = abs_ang_mom[lat_str]
-    return -1*lat_deriv(abs_ang_mom, lats) / (radius**2 * cosdeg(lats))
+    return (-1*lat_deriv(abs_ang_mom, lat_str) /
+            (radius**2 * cosdeg(abs_ang_mom[lat_str])))
 
 
 def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
@@ -32,7 +32,7 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
     lats = u[lat_str]
     sinlat = sindeg(lats)
     coslat = cosdeg(lats)
-    return ((u*sinlat)/(radius*coslat) - lat_deriv(u)/radius +
+    return ((u*sinlat)/(radius*coslat) - lat_deriv(u, lat_str)/radius +
             2*rot_rate*sinlat)
 
 
@@ -53,18 +53,14 @@ def coriolis_param(lat, rot_rate=ROT_RATE_EARTH):
 
 
 def zonal_fric_inferred_steady(u_merid_flux, u_vert_flux, vwind,
-                               vert_coord=None, radius=RAD_EARTH,
-                               rot_rate=ROT_RATE_EARTH, vert_str=LEV_STR,
-                               lat_str=LAT_STR):
+                               radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
+                               vert_str=LEV_STR, lat_str=LAT_STR):
     """Steady-state zonal friction inferred from flux div + Coriolis."""
     lats = u_merid_flux[lat_str]
     coslat = cosdeg(lats)
-    duv_dlat_term = (lat_deriv(u_merid_flux*coslat, lat_str=lat_str) /
+    duv_dlat_term = (lat_deriv(u_merid_flux*coslat, lat_str) /
                      (radius*coslat**2))
-
-    if vert_coord is None:
-        vert_coord = u_vert_flux[vert_str]
-    duw_dvert_term = z_deriv(u_vert_flux, vert_coord, z_str=vert_str)
+    duw_dvert_term = u_vert_flux.differentiate(vert_str)
 
     u_flux_div = duv_dlat_term + duw_dvert_term
     f = coriolis_param(lats, rot_rate=rot_rate)
