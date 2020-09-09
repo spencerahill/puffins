@@ -13,10 +13,12 @@ def therm_ross_num(delta_h, height, grav=GRAV_EARTH,
     return delta_h * height * grav / (rot_rate * radius)**2
 
 
-def abs_ang_mom(u, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
+def abs_ang_mom(u, lat=None, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
                 lat_str=LAT_STR):
     """Absolute angular momentum."""
-    coslat = cosdeg(u[lat_str])
+    if lat is None:
+        lat = u[lat_str]
+    coslat = cosdeg(lat)
     return radius*coslat*(rot_rate*radius*coslat + u)
 
 
