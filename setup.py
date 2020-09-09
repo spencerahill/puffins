@@ -15,6 +15,7 @@ setuptools.setup(
         "matplotlib",
         "numpy",
         "scipy",
+        "sklearn",
         "xarray",
     ],
     scripts=["puffins/scripts/set_proj_puff_branch.py"],

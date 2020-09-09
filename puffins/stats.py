@@ -1,6 +1,7 @@
 """Functionality relating to statistics, timeseries, etc."""
 from eofs.xarray import Eof
 import numpy as np
+import sklearn.metrics
 import scipy.stats
 import xarray as xr
 
@@ -45,7 +46,7 @@ def run_mean_anom(arr, n=10, dim="time", center=True, **kwargs):
     return arr - run_mean(arr, n, dim, center=center, **kwargs)
 
 
-# Correlations.
+# Correlations and linear regression.
 def sel_shared_vals(arr1, arr2, dim):
     """Restrict two arrays to their shared values along a dimension.
 
@@ -79,6 +80,54 @@ def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
     arr_sweep_0 = arr_sweep.isel(**{dim_time: 0}, drop=True)
     return (xr.ones_like(arr_sweep_0) *
             np.array(corrs).reshape(arr_sweep_0.shape))
+
+
+def lin_regress(arr1, arr2, dim):
+    """Use xr.apply_ufunc to broadcast scipy.stats.linregress.
+
+    For example, over latitude and longitude.
+
+    Adapated from
+    https://github.com/pydata/xarray/issues/1815#issuecomment-614216243.
+
+    """
+    def _linregress(x, y):
+        """Wrapper around scipy.stats.linregress to use in apply_ufunc."""
+        slope, intercept, r_val, p_val, std_err = scipy.stats.linregress(x, y)
+        return np.array([slope, intercept, r_val, p_val, std_err])
+
+    # TODO: create parameter coord with the names of each parameter.
+    arr = xr.apply_ufunc(
+        _linregress,
+        arr1,
+        arr2,
+        input_core_dims=[[dim], [dim]],
+        output_core_dims=[["parameter"]],
+        vectorize=True,
+        dask="parallelized",
+        output_dtypes=['float64'],
+        output_sizes={"parameter": 5},
+    )
+    arr.coords["parameter"] = xr.DataArray(
+        ["slope", "intercept", "r_value", "p_value", "std_err"],
+        dims=["parameter"],
+    )
+    return arr
+
+
+def rmse(arr1, arr2, dim):
+    """Root mean square error using xr.apply_ufunc to broadcast.
+
+    Adapated from
+    https://github.com/pydata/xarray/issues/1815#issuecomment-614216243.
+
+    """
+    def _rmse(x, y):
+        """Wrapper around scipy.stats.linregress to use in apply_ufunc."""
+        return sklearn.metrics.mean_squared_error(x, y, squared=False)
+
+    return xr.apply_ufunc(_rmse, arr1, arr2, input_core_dims=[[dim], [dim]],
+                          vectorize=True, dask="parallelized")
 
 
 # Empirical orthogonal functions (EOFs)
