@@ -41,7 +41,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
         dp_znl_mean = to_pascal(dp, is_dp=True).mean(dim=lon_str)
     else:
         dp_znl_mean = dp
-    # If desired, Impose zero net mass flux at each level.
+    # If desired, impose zero net mass flux at each level.
     if impose_zero_col_flux:
         v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean,
                                       dim=lev_str, grav=grav)
