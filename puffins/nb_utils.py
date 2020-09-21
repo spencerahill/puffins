@@ -19,7 +19,7 @@ def save_jupyter_nb():
     https://stackoverflow.com/a/57814673/
 
     """
-    display(Javascript('IPython.notebook.save_checkpoint();'))
+    display(Javascript('Jupyter.notebook.save_checkpoint();'))
 
 
 def check_nb_unused_imports(nb_path):
