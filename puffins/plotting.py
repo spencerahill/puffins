@@ -16,6 +16,9 @@ _DEGR_S = _DEGR + 'S'
 _DEGR_N = _DEGR + 'N'
 
 
+PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
+
+
 plt_rc_params_custom = {
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
@@ -168,8 +171,8 @@ def mark_y0(ax=None, linewidth=0.5, color='0.5', **kwargs):
 
 
 @default_gca
-def mark_one2one(ax=None, *line_args, linestyle='--', color='0.5',
-                 **line_kwargs):
+def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
+                 linewidth=0.8, **line_kwargs):
     """Mark the identity line, y=x, on the given axis.
 
     From https://stackoverflow.com/a/28216751/1706640.
@@ -195,9 +198,6 @@ def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
     if fig is None:
         fig = plt.gcf()
     fig.savefig(os.path.join(fig_dir, name), **kwargs)
-
-
-PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
 
 
 if __name__ == '__main__':

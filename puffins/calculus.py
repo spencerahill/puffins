@@ -1,49 +1,36 @@
 #! /usr/bin/env python
 """Derivatives, integrals, and averages."""
-
-from indiff.diff import BwdDiff, CenDiff
+import aospy
 import numpy as np
 import xarray as xr
 
 from .constants import GRAV_EARTH, RAD_EARTH
-from .names import LAT_STR, LEV_STR, Z_STR
+from .names import (
+    BOUNDS_STR,
+    LAT_BOUNDS_STR,
+    LAT_STR,
+    LON_BOUNDS_STR,
+    LON_STR,
+    LEV_STR,
+    PHALF_STR,
+)
 from .nb_utils import cosdeg, sindeg, to_pascal
 
 
 # Derivatives.
-def lat_deriv(arr, lats=None, lat_str=LAT_STR):
+def lat_deriv(arr, lat_str=LAT_STR):
     """Meridional derivative approximated by centered differencing."""
-    if lats is None:
-        lats = arr[lat_str]
-    return (
-        CenDiff(arr, lat_str, fill_edge='both').diff() /
-        CenDiff(np.deg2rad(lats), lat_str, fill_edge='both').diff()
-    ).transpose(*arr.dims)
+    # Latitude is in degrees but in the denominator, so using `np.rad2deg`
+    # gives the correct conversion from degrees to radians.
+    return np.rad2deg(arr.differentiate(lat_str))
 
 
-def z_deriv(arr, z=None, z_str=Z_STR):
-    """Vertical derivative approximated by centered differencing."""
-    if z is None:
-        z = arr[z_str]
-    return (
-        CenDiff(arr, z_str, fill_edge='both').diff() /
-        CenDiff(z, z_str, fill_edge='both').diff()
-    ).transpose(*arr.dims)
-
-
-def bwd_deriv(arr, dim):
-    """Derivative approximated by one-sided backwards differencing."""
-    return BwdDiff(arr, dim).diff() / BwdDiff(arr[dim], dim).diff()
-
-
-def flux_div(arr_merid_flux, arr_vert_flux, vert_coord=None, vert_str=LEV_STR,
+def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
              lat_str=LAT_STR, radius=RAD_EARTH):
     """Horizontal plus vertical flux divergence of a given field."""
-    if vert_coord is None:
-        vert_coord = arr_vert_flux[vert_str]
-    merid_flux_div = (lat_deriv(arr_merid_flux, lat_str=lat_str) /
+    merid_flux_div = (lat_deriv(arr_merid_flux, lat_str) /
                                (radius*cosdeg(arr_merid_flux[lat_str])))
-    vert_flux_div = z_deriv(arr_vert_flux, vert_coord, z_str=vert_str)
+    vert_flux_div = arr_vert_flux.differentiate(vert_str)
     return merid_flux_div + vert_flux_div
 
 
@@ -73,7 +60,8 @@ def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
 
 
 # Meridional integrals and averages.
-def merid_integral_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
+                              lat_str=LAT_STR):
     """Area-weighted meridional integral for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -85,12 +73,14 @@ def merid_integral_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     lat = arr[lat_str]
     masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
     dlat = lat.diff(lat_str)
-    if not np.isclose(dlat.min(), dlat.max()):
-        raise ValueError("Uniform latitude spacing required; not uniform.")
+    if (dlat.max() - dlat.min())/dlat.mean() > unif_thresh:
+        raise ValueError("Uniform latitude spacing required; given values "
+                         "are not sufficiently uniform.")
     return (masked*cosdeg(lat)*np.deg2rad(dlat)).sum(lat_str)
 
 
-def merid_avg_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
+                         lat_str=LAT_STR):
     """Area-weighted meridional average for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -99,9 +89,10 @@ def merid_avg_point_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     implemented in the function ``merid_average_grid_data``.
 
     """
-    return (merid_integral_point_data(arr, min_lat, max_lat, lat_str) /
+    return (merid_integral_point_data(arr, min_lat, max_lat,
+                                      unif_thresh, lat_str) /
             merid_integral_point_data(xr.ones_like(arr), min_lat,
-                                      max_lat, lat_str))
+                                      max_lat, unif_thresh, lat_str))
 
 
 def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
@@ -155,6 +146,55 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
                                      max_lat, lat_str))
 
 
+# Surface area of lat-lon data.
+# TODO: add check that spacing is (nearly) uniform.
+def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR):
+    """Requires that array be evenly spaced (up to an error threshold)."""
+    arr_vals = arr.values
+    midpoint_vals = 0.5*(arr_vals[:-1] + arr_vals[1:])
+
+    bound_left = arr_vals[0] - (midpoint_vals[0] - arr_vals[0])
+    bound_right = arr_vals[-1] + (arr_vals[-1] - midpoint_vals[-1])
+
+    bounds_left_vals = np.concatenate(([bound_left], midpoint_vals))
+    bounds_right_vals = np.concatenate((midpoint_vals, [bound_right]))
+
+    bounds_vals = np.array([bounds_left_vals, bounds_right_vals]).transpose()
+
+    if dim_bounds is None:
+        bounds_arr_name = dim + '_bounds'
+    else:
+        bounds_arr_name = dim_bounds
+    return xr.DataArray(bounds_vals, dims=[dim, bounds_str],
+                        coords={dim: arr}, name=bounds_arr_name)
+
+
+def add_lat_lon_bounds(arr, lat_str=LAT_STR, lon_str=LON_STR,
+                       lat_bounds_str=LAT_BOUNDS_STR,
+                       lon_bounds_str=LON_BOUNDS_STR):
+    """Add bounding arrays to lat and lon arrays."""
+    if isinstance(arr, xr.DataArray):
+        ds = arr.to_dataset()
+    else:
+        ds = arr
+    lon_bounds = infer_bounds(ds[lon_str], lon_str, lon_bounds_str)
+    lat_bounds = infer_bounds(ds[lat_str], lat_str, lat_bounds_str)
+    ds.coords[lon_bounds_str] = lon_bounds
+    ds.coords[lat_bounds_str] = lat_bounds
+    return ds
+
+
+def sfc_area_latlon_box(ds, lat_str=LAT_STR, lon_str=LON_STR,
+                        lat_bounds_str=LAT_BOUNDS_STR,
+                        lon_bounds_str=LON_BOUNDS_STR):
+    """Calculate surface area of each grid cell in a lon-lat grid."""
+    lon = ds[lon_str]
+    lat = ds[lat_str]
+    lon_bounds = ds[lon_bounds_str]
+    lat_bounds = ds[lat_bounds_str]
+    return aospy.model._grid_sfc_area(lon, lat, lon_bounds, lat_bounds)
+
+
 # Pressure spacing and averages.
 def dp_from_pfull(pfull, p_str="plev", p_top=0., p_bot=1012.5e2):
     """Pressure thickness of levels given pressures at level centers."""
@@ -181,6 +221,44 @@ def dlogp_from_p_half(p_half, pressure):
     return xr.ones_like(pressure)*dlogp_vals
 
 
+def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
+    """Compute pressure at full levels using Simmons-Burridge spacing.
+
+    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
+    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
+    Monthly Weather Review, 109(4), 758-766.
+
+    """
+    dp_vals = phalf.diff(phalf_str).values
+    # Above means vertically above (i.e. lower pressure).
+    phalf_above = phalf.isel(phalf=slice(None, -1))
+    phalf_below = phalf.isel(phalf=slice(1, None))
+
+    dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
+    phalf_over_dp_vals = phalf_above.values / dp_vals
+
+    alpha_vals = 1. - phalf_over_dp_vals*dlog_phalf_vals
+
+    ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
+    pfull_vals = np.exp(ln_pfull_vals)
+    top_lev_factor = float(pfull_ref[0] / phalf_ref[1])
+    pfull_vals[0] = phalf.isel(phalf=1)*top_lev_factor
+    return pfull_vals
+
+
+def pfull_simm_burr(arr_template, phalf, phalf_ref, pfull_ref,
+                    phalf_str=PHALF_STR):
+    """Compute pressure at full levels using Simmons-Burridge spacing.
+
+    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
+    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
+    Monthly Weather Review, 109(4), 758-766.
+
+    """
+    pfull_vals = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str)
+    return xr.ones_like(arr_template)*pfull_vals
+
+
 def _flip_dim(arr, dim):
     return arr.isel(**{dim: slice(None, None, -1)})
 
@@ -205,7 +283,7 @@ def avg_logp_weighted(arr, p_half, pressure, p_str=LEV_STR):
 
 def col_extrema(arr, p_str=LEV_STR):
     """Locations and values of local extrema within each column."""
-    darr_dp = z_deriv(arr, arr[p_str], z_str=p_str)
+    darr_dp = arr.differentiate(p_str)
     sign_change = np.sign(darr_dp).diff(p_str)
     return arr.where(sign_change)
 

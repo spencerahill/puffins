@@ -51,6 +51,13 @@ def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH,
              - 1)*rot_rate*radius*cosdeg(lats))
 
 
+def ang_mom_rce_lh88(lat, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH,
+                     radius=RAD_EARTH):
+    """Angular momentum under the Lindzen and Hou 1988 forcing."""
+    sqrt_arg = 1. + 2 * thermal_ro * (1 - sindeg(lat_max) / sindeg(lat))
+    return rot_rate * radius**2 * cosdeg(lat)**2 * np.sqrt(sqrt_arg)
+
+
 def ang_mom_rce_lh88_zero(lat_max, thermal_ro):
     """LH88 forcing abs. vort. zero cross approx."""
     return sin2deg(sindeg(lat_max)*(2*thermal_ro) / (2*thermal_ro + 1))

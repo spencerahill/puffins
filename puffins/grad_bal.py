@@ -14,7 +14,7 @@ from .constants import (
     ROT_RATE_EARTH,
     THETA_REF,
 )
-from .names import LAT_STR
+from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg
 from .calculus import avg_logp_weighted, lat_deriv
 from .dynamics import abs_vort_from_u
@@ -97,7 +97,6 @@ def u_rce_minus_u_amc_bouss(lats, lat_max, height, theta_ref, dtheta_dlat,
 
 # Convective quasi-equilibrium (CQE) atmospheres.
 def grad_wind_cqe(
-    lats,
     theta_b,
     temp_tropo=None,
     const_stab=False,
@@ -113,6 +112,7 @@ def grad_wind_cqe(
     l_v=L_V,
     r_d=R_D,
     r_v=R_V,
+    lat_str=LAT_STR,
 ):
     """Gradient balanced zonal wind in convective quasi-equilibrium atmosphere.
 
@@ -128,20 +128,20 @@ def grad_wind_cqe(
         else:
             temp_sfc = theta_b
         numer = c_p*(temp_sfc - temp_tropo)
+    lats = theta_b[lat_str]
     coslat = cosdeg(lats)
     denom = coslat*sindeg(lats)*rot_rate**2*radius**2
-    sqrt_term = (1 - (numer/denom)*lat_deriv(np.log(theta_b), lats))**0.5
+    sqrt_term = (1 - (numer/denom)*lat_deriv(np.log(theta_b), lat_str))**0.5
     return rot_rate*radius*coslat*(-1 + sqrt_term)
 
 
-def abs_vort_zero_cross_cqe(lats, theta_b, temp_tropo=None, const_stab=False,
+def abs_vort_zero_cross_cqe(theta_b, temp_tropo=None, const_stab=False,
                             c_p=C_P, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
                             compute_temp_sfc=False, rel_hum=0.7, pressure=P0,
                             p0=P0, tot_wat_mix_ratio=None, c_liq=4185.5,
                             l_v=L_V, r_d=R_D, r_v=R_V, lat_str=LAT_STR):
     """Zero crossing of absolute vorticity in CQE atmosphere."""
     u = grad_wind_cqe(
-        lats,
         theta_b,
         temp_tropo=temp_tropo,
         const_stab=const_stab,
@@ -157,6 +157,7 @@ def abs_vort_zero_cross_cqe(lats, theta_b, temp_tropo=None, const_stab=False,
         l_v=l_v,
         r_d=r_d,
         r_v=r_v,
+        lat_str=lat_str
     )
     eta = abs_vort_from_u(
         u,
@@ -183,17 +184,26 @@ def pot_temp_amc_cqe(lat, lat_max, pot_temp_max, vert_temp_diff,
     return arr
 
 
-def u_rce_minus_u_amc_cqe(lat_max, lats, theta_b, temp_tropo=None,
+def u_rce_minus_u_amc_cqe(lat_max, theta_b, temp_tropo=None,
                           const_stab=False, c_p=C_P, rot_rate=ROT_RATE_EARTH,
-                          radius=RAD_EARTH, plus_solution=True):
+                          radius=RAD_EARTH, plus_solution=True,
+                          lat_str=LAT_STR):
     """Criticality in terms of zonal wind for continuous, CQE fluid.
 
     Assumes surface temperature equals theta_b.
 
     """
-    u_rce = grad_wind_cqe(lats, theta_b, temp_tropo=temp_tropo,
-                          const_stab=const_stab, c_p=c_p, rot_rate=rot_rate,
-                          radius=radius, plus_solution=plus_solution)
+    lats = theta_b[lat_str]
+    u_rce = grad_wind_cqe(
+        theta_b,
+        temp_tropo=temp_tropo,
+        const_stab=const_stab,
+        c_p=c_p,
+        rot_rate=rot_rate,
+        radius=radius,
+        plus_solution=plus_solution,
+        lat_str=lat_str,
+    )
     u_amc = u_ang_mom_cons(lats, lat_max, rot_rate, radius)
     return u_rce - u_amc
 
@@ -203,16 +213,17 @@ def thermal_wind_p_coords(temp_avg, pressure, p0=1e3, lat_str=LAT_STR,
                           radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
     if np.max(pressure) > 2e3:
         pressure *= 1e-2
-    return (-r_d*lat_deriv(temp_avg, lat_str=lat_str)*np.log(p0/pressure) /
+    return (-r_d*lat_deriv(temp_avg, lat_str)*np.log(p0/pressure) /
             (2*rot_rate*radius*sindeg(temp_avg[lat_str])))
 
 
 def grad_wind_p_coords(temp, p_half, pressure, p0=1e3, lat_str=LAT_STR,
-                       radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
+                       p_str=LEV_STR, radius=RAD_EARTH,
+                       rot_rate=ROT_RATE_EARTH, r_d=R_D):
     lat = temp[lat_str]
     coslat = cosdeg(lat)
-    temp_avg = avg_logp_weighted(temp, p_half, pressure)
-    dtemp_avg_dlat = lat_deriv(temp_avg, lat_str=lat_str)
+    temp_avg = avg_logp_weighted(temp, p_half, pressure, p_str=p_str)
+    dtemp_avg_dlat = lat_deriv(temp_avg, lat_str)
     if pressure.max() > 1e4:
         raise ValueError("Expected pressures in hPa; got Pa")
     sqrt_arg = 1 - (r_d*np.log(p0/pressure)*dtemp_avg_dlat /

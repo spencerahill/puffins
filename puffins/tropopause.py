@@ -7,7 +7,6 @@ import xarray as xr
 from .constants import GRAV_EARTH, R_D
 from .names import LAT_STR, LEV_STR
 from .nb_utils import apply_maybe_groupby
-from .calculus import z_deriv
 from .interp import drop_nans_and_interp
 
 
@@ -109,14 +108,14 @@ def tropopause_cold_point(temp, interpolate=True,
 def _tropo_max_vert_curv(temp, z, interpolate=True, max_pressure=500,
                          p_str=LEV_STR, lat_str=LAT_STR):
     """Tropopause defined as where d^2T/dz^2 maximizes."""
-    temp_arr, z_arr = drop_nans_and_interp(
-        [temp, z],  do_interp=interpolate, p_str=p_str)
-    d2temp_dz2 = z_deriv(z_deriv(temp_arr, z_arr, p_str), z_arr, p_str)
-    d2temp_dz2 = d2temp_dz2.where(z_arr[p_str] < max_pressure,
-                                  drop=True)
+    temp_arr, z_arr = drop_nans_and_interp([temp, z], do_interp=interpolate,
+                                           p_str=p_str)
+    temp_arr["z"] = z_arr
+    d2temp_dz2 = temp_arr.differentiate("z").differentiate("z")
+    d2temp_dz2 = d2temp_dz2.where(z_arr[p_str] < max_pressure, drop=True)
     d2temp_dz2_max_ind = d2temp_dz2.argmax(p_str)
-    return temp_arr[{p_str: d2temp_dz2_max_ind}].interp(
-        **{lat_str: temp[lat_str]})
+    return temp_arr[{p_str: d2temp_dz2_max_ind}].interp(**{lat_str:
+                                                           temp[lat_str]})
 
 
 def tropopause_max_vert_curv(temp, z, interpolate=True, max_pressure=500,
