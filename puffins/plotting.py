@@ -159,15 +159,15 @@ def panel_label(panel_num, ax=None, x=0.03, y=0.9, extra_text=None,
 
 
 @default_gca
-def mark_x0(ax=None, linewidth=0.5, color='0.5', **kwargs):
+def mark_x0(ax=None, linewidth=0.5, color='0.5', x0=0, **kwargs):
     """Mark the x intercept line on the given axis."""
-    return ax.axvline(x=0, linewidth=linewidth, color=color, **kwargs)
+    return ax.axvline(x=x0, linewidth=linewidth, color=color, **kwargs)
 
 
 @default_gca
-def mark_y0(ax=None, linewidth=0.5, color='0.5', **kwargs):
+def mark_y0(ax=None, linewidth=0.5, color='0.5', y0=0, **kwargs):
     """Mark the y intercept on the given axis."""
-    return ax.axhline(y=0, linewidth=linewidth, color=color, **kwargs)
+    return ax.axhline(y=y0, linewidth=linewidth, color=color, **kwargs)
 
 
 @default_gca
