@@ -113,8 +113,11 @@ def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
     dlat_mean = dlat.mean(lat_str)
     dlat_frac_var = (dlat - dlat_mean) / dlat_mean
     if np.any(np.abs(dlat_frac_var) > dlat_var_tol):
-        raise ValueError("Uniform latitude spacing required; given "
-                         "latitudes not sufficiently uniform.")
+        max_frac_var = np.max(np.abs(dlat_frac_var))
+        raise ValueError(
+            f"Uniform latitude spacing required to within {dlat_frac_var}.  "
+            f"Actual max fractional deviation from uniform: {max_frac_var}"
+        )
 
     # Given uniform latitude spacing, find bounding latitudes.
     assert lat[0] < lat[1]
@@ -132,7 +135,8 @@ def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
     return (arr_masked*area_masked).sum(lat_str)
 
 
-def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_avg_grid_data(arr, lat=None, min_lat=-90, max_lat=90,
+                        lat_str=LAT_STR):
     """Area-weighted meridional average for data on finite grid cells.
 
     As opposed to data defined at individual latitudes, wherein the quantity at

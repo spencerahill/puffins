@@ -19,7 +19,7 @@ def save_jupyter_nb():
     https://stackoverflow.com/a/57814673/
 
     """
-    display(Javascript('IPython.notebook.save_checkpoint();'))
+    display(Javascript('Jupyter.notebook.save_checkpoint();'))
 
 
 def check_nb_unused_imports(nb_path):
@@ -47,9 +47,13 @@ def warn_if_unused_imports(nb_path):
 
 
 # Coordinate arrays.
-def coord_arr_1d(start, stop, spacing, dim, dtype=None):
+def coord_arr_1d(start=None, stop=None, spacing=None, dim=None, values=None,
+                 dtype=None):
     """Create xr.DataArray of an evenly spaced 1D coordinate ."""
-    arr_np = np.arange(start, stop + 0.1*spacing, spacing)
+    if values is None:
+        arr_np = np.arange(start, stop + 0.1*spacing, spacing)
+    else:
+        arr_np = np.asarray(values)
     if dtype is not None:
         arr_np = arr_np.astype(dtype)
     return xr.DataArray(arr_np, name=dim, dims=[dim],
@@ -168,8 +172,9 @@ def first_zero_cross_bounds(arr, dim):
     """Find the values bounding an array's first zero crossing."""
     sign_switch = np.sign(arr).diff(dim)
     switch_val = arr[dim].where(sign_switch, drop=True)[0]
-    return arr.sel(**{dim: [0.999*switch_val, 1.001*switch_val],
-                      "method": "backfill"})
+    lower_bound = max(0.999*switch_val, np.min(arr[dim]))
+    upper_bound = min(1.001*switch_val, np.max(arr[dim]))
+    return arr.sel(**{dim: [lower_bound, upper_bound], "method": "backfill"})
 
 
 def zero_cross_nh(arr, lat_str=LAT_STR):
@@ -233,12 +238,13 @@ def lat_area_weight(lat, radius=RAD_EARTH):
     return 2.*np.pi*radius*cosdeg(lat)
 
 
-def to_pascal(arr, is_dp=False):
+def to_pascal(arr, is_dp=False, warn=False):
     """Force data with units either hPa or Pa to be in Pa."""
     threshold = 400 if is_dp else 1200
     if np.max(np.abs(arr)) < threshold:
-        warn_msg = "Conversion applied: hPa -> Pa to array: {}".format(arr)
-        warnings.warn(warn_msg)
+        if warn:
+            warn_msg = "Conversion applied: hPa -> Pa to array: {}".format(arr)
+            warnings.warn(warn_msg)
         return arr * 100.0
     return arr
 
