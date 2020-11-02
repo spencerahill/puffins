@@ -8,6 +8,7 @@ from .constants import GRAV_EARTH
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
+    cosdeg,
     first_zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
@@ -49,10 +50,13 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
     streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
     lats = v[lat_str]
-    return (lat_area_weight(lats) * streamfunc).transpose(*v_znl_mean.dims)
+    # Leading minus sign results in southern hemisphere cell
+    # (i.e. counter-clockwise circulation in lat-height plane) being positive.
+    return -(lat_area_weight(lats) * streamfunc).transpose(*v_znl_mean.dims)
 
 
-def had_cell_strength(streamfunc, dim=None):
+def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
+                      lev_str=LEV_STR):
     """Hadley cell strength, as maximum of streamfunction.
 
     If a dimension is given, compute the strength separately at each value of
@@ -60,13 +64,24 @@ def had_cell_strength(streamfunc, dim=None):
     array.
 
     """
-    if dim is None:
-        return max_and_argmax(streamfunc)
+    if min_plev is None and max_plev is None:
+        sf_valid = streamfunc
     else:
-        return max_and_argmax_along_dim(streamfunc, dim)
+        sf_valid = streamfunc.copy(deep=True)
+        lev = streamfunc[lev_str]
+
+    if min_plev:
+        sf_valid = sf_valid.where(lev >= min_plev, drop=True)
+    if max_plev:
+        sf_valid = sf_valid.where(lev <= max_plev, drop=True)
+
+    if dim is None:
+        return max_and_argmax(sf_valid)
+    return max_and_argmax_along_dim(sf_valid, dim)
 
 
-def had_cells_strength(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_strength(strmfunc, min_plev=None, max_plev=None, lat_str=LAT_STR,
+                       lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -74,7 +89,9 @@ def had_cells_strength(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
     # So find the global extremal negative and positive values as well as the
     # opposite-signed cell on either side.  The Hadley cells will be the two of
     # these whose centers are nearest the equator.
-    cell_pos_max_strength = had_cell_strength(strmfunc)
+    cell_pos_max_strength = had_cell_strength(
+        strmfunc, min_plev=min_plev, max_plev=max_plev, lev_str=lev_str
+    )
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
 
     cell_south_of_pos_strength = -1*had_cell_strength(
@@ -137,7 +154,8 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, frac_thresh=0., lat_str=LAT_STR,
+                          lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
@@ -146,47 +164,78 @@ def had_cells_shared_edge(strmfunc, lat_str=LAT_STR, lev_str=LEV_STR):
     lat_nh_max = hc_strengths[lat_str][1]
 
     sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
-    sf_max2max = sf_at_max.where((lat > lat_sh_max) & (lat < lat_nh_max),
+    sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max),
                                  drop=True)
+    sf_norm_thresh = sf_max2max / np.abs(sf_max2max.max()) - frac_thresh
+    sf_interped = sf_norm_thresh.interp(
+        **{lat_str:np.arange(lat_sh_max, lat_nh_max + 0.005, 0.05)}
+    )
+    return sf_interped[lat_str][np.abs(sf_interped).argmin(lat_str)]
+    # sf_edge_bounds = first_zero_cross_bounds(sf_max2max, lat_str)
+    # return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
+                       # 0, lat_str)[lat_str]
 
-    sf_edge_bounds = first_zero_cross_bounds(sf_max2max, lat_str)
-    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
-                       0, lat_str)[lat_str]
 
-
-def had_cells_outer_edge(strmfunc, north=True, frac_thresh=0.1,
-                         lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
+                  cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
                                       lev_str=lev_str)
-
-    # Find first zero crossing of streamfunction north of NH cell.
-    lat = strmfunc[lat_str]
-    if north:
-        lat_max = hc_strengths[lat_str][1]
-        lev_max = float(hc_strengths[1][lev_str])
-        lat_compar = lat > lat_max
-        lat_slice = slice(None, None, None)
+    if cell == "north":
+        label = "had_cell_nh"
+    elif cell == "south":
+        label = "had_cell_sh"
     else:
-        lat_max = hc_strengths[lat_str][0]
-        lev_max = float(hc_strengths[0][lev_str])
-        lat_compar = lat < lat_max
-        lat_slice = slice(None, None, -1)
+        raise ValueError("`cell` must be either 'north' or 'south'; "
+                         f"got {cell}.")
 
-    sf_at_max = strmfunc.sel(**{lev_str: lev_max, "method": "nearest"})
-    sf_one_hem = sf_at_max.where(lat_compar, drop=True)
+    # Restrict to streamfunction at level of the specified cell's maximum.
+    cell_max = hc_strengths.sel(cell=label)
+    lat_max = cell_max[lat_str]
+    lev_max = cell_max[lev_str]
+    sf_at_max = strmfunc.sel(**{lev_str: float(lev_max), "method": "nearest"})
 
-    sf_edge_bounds = first_zero_cross_bounds(sf_one_hem[lat_slice], lat_str)
-    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
-                       float(hc_strengths[1])*frac_thresh, lat_str)[lat_str]
+    # Restrict to the latitudes north or south of the max, as specified.
+    lat = strmfunc[lat_str]
+    if edge == "north":
+        lat_compar = lat >= lat_max
+    elif edge == "south":
+        lat_compar = lat <= lat_max
+    else:
+        raise ValueError("`edge` must be either 'north' or 'south'; "
+                         f"got {cell}.")
+    sf_one_side = sf_at_max.where(lat_compar, drop=True)
+
+    # Apply cubic interpolation in latitude to a refined mesh.  Otherwise, the
+    # cell edge can (unphysically) vary non-monotonically with `frac_thresh`.
+    lats_interp = np.arange(sf_one_side[lat_str].min(),
+                            sf_one_side[lat_str].max() + 0.01, 0.05)
+    sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp},
+                                            method="cubic")
+
+    # Find where the streamfunction crosses the specified fractional threshold,
+    # using the Singh 2019 cosine weighting if specified.
+    if cos_factor:
+        sf_norm = ((sf_one_side_interp / cosdeg(sf_one_side_interp[lat_str])) /
+                   (cell_max / cosdeg(lat_max)))
+    else:
+        sf_norm = sf_one_side_interp / cell_max
+
+    sf_thresh_diff = sf_norm - frac_thresh
+    sf_edge_bounds = first_zero_cross_bounds(sf_thresh_diff, lat_str)
+
+    # Interpolate between the bounding points to the crossing.
+    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0,
+                       lat_str)[lat_str]
 
 
 def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
                          lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
-    return had_cells_outer_edge(
+    return had_cell_edge(
         strmfunc,
-        north=False,
+        cell="south",
+        edge="south",
         frac_thresh=frac_thresh,
         lat_str=lat_str,
         lev_str=lev_str,
@@ -196,9 +245,10 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
 def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
                          lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
-    return had_cells_outer_edge(
+    return had_cell_edge(
         strmfunc,
-        north=True,
+        cell="north",
+        edge="north",
         frac_thresh=frac_thresh,
         lat_str=lat_str,
         lev_str=lev_str,
@@ -208,14 +258,23 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
 def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
                     lev_str=LEV_STR):
     """Southern, shared inner, and northern edge of the Hadley cells."""
-    kwargs = [dict(frac_thresh=frac_thresh), {}, dict(frac_thresh=frac_thresh)]
-    funcs = [had_cells_south_edge, had_cells_shared_edge, had_cells_north_edge]
-    return [func(
+    func_and_kwargs = [
+        (had_cell_edge, dict(cell="south", edge="south",
+                             frac_thresh=frac_thresh)),
+        (had_cell_edge, dict(cell="south", edge="north",
+                             frac_thresh=frac_thresh)),
+        (had_cells_shared_edge, {}),
+        (had_cell_edge, dict(cell="north", edge="south",
+                             frac_thresh=frac_thresh)),
+        (had_cell_edge, dict(cell="north", edge="north",
+                             frac_thresh=frac_thresh)),
+         ]
+    return [f_kw[0](
         strmfunc,
         lat_str=lat_str,
         lev_str=lev_str,
-        **kw,
-    ) for func, kw in zip(funcs, kwargs)]
+        **f_kw[1],
+    ) for f_kw in func_and_kwargs]
 
 
 def cell_edges_sigma(streamfunc, frac_thresh=0.1, center_min_sigma=0.1,
@@ -272,7 +331,7 @@ def _find_cell_and_edges(streamfunc, labels, n, cell_min_sigma_depth=0.3,
     sf_and_opp_sign = _cell_and_opp_sign_cells(sf_at_max, labels, n,
                                                sigma_str)
     # If identified cell is physically meaningful, find its edges.
-    if _cell_is_bad(sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=3,
+    if _cell_is_bad(sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=1,
                     lat_str=lat_str):
         raise ValueError("Cell is not physically meaningful.")
     lat_max = float(sf_max[lat_str].values)
