@@ -9,7 +9,7 @@ from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
     cosdeg,
-    first_zero_cross_bounds,
+    zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
@@ -171,7 +171,7 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., lat_str=LAT_STR,
         **{lat_str:np.arange(lat_sh_max, lat_nh_max + 0.005, 0.05)}
     )
     return sf_interped[lat_str][np.abs(sf_interped).argmin(lat_str)]
-    # sf_edge_bounds = first_zero_cross_bounds(sf_max2max, lat_str)
+    # sf_edge_bounds = zero_cross_bounds(sf_max2max, lat_str, 0)
     # return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
                        # 0, lat_str)[lat_str]
 
@@ -198,13 +198,19 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     # Restrict to the latitudes north or south of the max, as specified.
     lat = strmfunc[lat_str]
     if edge == "north":
+        which_zero = 0
         lat_compar = lat >= lat_max
     elif edge == "south":
+        which_zero = -1
         lat_compar = lat <= lat_max
     else:
         raise ValueError("`edge` must be either 'north' or 'south'; "
                          f"got {cell}.")
     sf_one_side = sf_at_max.where(lat_compar, drop=True)
+
+    # Restrict to the latitudes from the max to the nearest point with
+    # opposite-signed value.
+
 
     # Apply cubic interpolation in latitude to a refined mesh.  Otherwise, the
     # cell edge can (unphysically) vary non-monotonically with `frac_thresh`.
@@ -222,7 +228,7 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
         sf_norm = sf_one_side_interp / cell_max
 
     sf_thresh_diff = sf_norm - frac_thresh
-    sf_edge_bounds = first_zero_cross_bounds(sf_thresh_diff, lat_str)
+    sf_edge_bounds = zero_cross_bounds(sf_thresh_diff, lat_str, which_zero)
 
     # Interpolate between the bounding points to the crossing.
     return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0,
@@ -261,11 +267,11 @@ def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
     func_and_kwargs = [
         (had_cell_edge, dict(cell="south", edge="south",
                              frac_thresh=frac_thresh)),
-        (had_cell_edge, dict(cell="south", edge="north",
-                             frac_thresh=frac_thresh)),
+        # (had_cell_edge, dict(cell="south", edge="north",
+                             # frac_thresh=frac_thresh)),
         (had_cells_shared_edge, {}),
-        (had_cell_edge, dict(cell="north", edge="south",
-                             frac_thresh=frac_thresh)),
+        # (had_cell_edge, dict(cell="north", edge="south",
+                             # frac_thresh=frac_thresh)),
         (had_cell_edge, dict(cell="north", edge="north",
                              frac_thresh=frac_thresh)),
          ]
