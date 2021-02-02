@@ -168,13 +168,23 @@ def max_and_argmax_along_dim(dataset, dim, do_min=False):
 
 
 # Array zero crossings.
-def first_zero_cross_bounds(arr, dim):
-    """Find the values bounding an array's first zero crossing."""
+def zero_cross_bounds(arr, dim, num_cross):
+    """Find the values bounding an array's zero crossing."""
     sign_switch = np.sign(arr).diff(dim)
-    switch_val = arr[dim].where(sign_switch, drop=True)[0]
+    switch_val = arr[dim].where(sign_switch, drop=True)[num_cross]
     lower_bound = max(0.999*switch_val, np.min(arr[dim]))
     upper_bound = min(1.001*switch_val, np.max(arr[dim]))
     return arr.sel(**{dim: [lower_bound, upper_bound], "method": "backfill"})
+
+
+def first_zero_cross_bounds(arr, dim):
+    """Find the values bounding an array's first zero crossing."""
+    return zero_cross_bounds(arr, dim, 0)
+
+
+def last_zero_cross_bounds(arr, dim):
+    """Find the values bounding an array's last zero crossing."""
+    return zero_cross_bounds(arr, dim, -1)
 
 
 def zero_cross_nh(arr, lat_str=LAT_STR):
