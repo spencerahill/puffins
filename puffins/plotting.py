@@ -67,25 +67,31 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90):
                             '30' + _DEGR_N, " ", '90' + _DEGR_N])
 
 
-def lat_xaxis(ax, start_lat=-90, end_lat=90):
+def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
     """Make the x-axis be latitude."""
     ax.set_xlim([start_lat, end_lat])
 
     if start_lat == 0 and end_lat == 90:
-        ax.set_xticks([0, 30, 60, 90])
-        ax.set_xticks([10, 20, 40, 50, 70, 80], minor=True)
-        ax.set_xticklabels(['EQ', '', '', '30' + _DEGR, '', '',
-                            '60' + _DEGR, '', '', '90' + _DEGR])
+        ticks = [0, 30, 60, 90]
+        minor_ticks = [10, 20, 40, 50, 70, 80]
+        if degr_symbol:
+            ticklabels = ['EQ', '30' + _DEGR, '60' + _DEGR, '90' + _DEGR]
+        else:
+            ticklabels = ['EQ', '30N', '60N', '90N']
     elif start_lat == -90 and end_lat == 90:
-        ax.set_xticks([-90, -60, -30, 0, 30, 60, 90])
-        minorticks = [-80, -70, -50, -40, -20, -10,
+        ticks = [-90, -60, -30, 0, 30, 60, 90]
+        minor_ticks = [-80, -70, -50, -40, -20, -10,
                       10, 20, 40, 50, 70, 80]
-        ax.set_xticks(minorticks, minor=True)
-        ax.set_xticklabels([f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
-                            "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}",
-                            f"90{_DEGR_N}"])
+        if degr_symbol:
+            ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
+                          "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
+        else:
+            ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
     else:
-        ax.set_xticks(np.arange(start_lat, end_lat + 1, 10))
+        ticks = np.arange(start_lat, end_lat + 1, 10)
+    ax.set_xticks(ticks)
+    ax.set_xticks(minor_ticks, minor=True)
+    ax.set_xticklabels(ticklabels)
     ax.set_xlabel(" ")
 
 
