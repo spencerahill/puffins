@@ -24,6 +24,7 @@ from .fixed_temp_tropo import (
     GAMMA_MOIST,
     grad_wind_bouss_fixed_temp_tropo,
 )
+from .num_solver import brentq_solver_sweep_param
 
 
 def pot_temp_rce_lh88(lats, lat_max, z=0.5*HEIGHT_TROPO, theta_ref=THETA_REF,
@@ -59,22 +60,22 @@ def ang_mom_rce_lh88(lat, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH,
 
 
 def ang_mom_rce_lh88_zero(lat_max, thermal_ro):
-    """LH88 forcing abs. vort. zero cross approx."""
+    """LH88 forcing angular momentum zero cross approx."""
     return sin2deg(sindeg(lat_max)*(2*thermal_ro) / (2*thermal_ro + 1))
 
 
 def ang_mom_rce_lh88_zero_small_r(lat_max, thermal_ro):
-    """LH88 forcing abs. vort. zero cross approx; small thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; small thermal Ro."""
     return sin2deg(2*thermal_ro*sindeg(lat_max))
 
 
 def ang_mom_rce_lh88_zero_unity_r(lat_max, thermal_ro):
-    """LH88 forcing abs. vort. zero cross approx; unity thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; unity thermal Ro."""
     return sin2deg(2./3.*sindeg(lat_max))
 
 
 def ang_mom_rce_lh88_zero_large_r(lat_max, thermal_ro=None):
-    """LH88 forcing abs. vort. zero cross approx; large thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; large thermal Ro."""
     return lat_max
 
 
@@ -93,7 +94,7 @@ def crit_vort_metric_rce_lh88(lat, ascent_lat, delta_h, height,
 def abs_vort_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
                       grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
                       radius=RAD_EARTH, thermal_ro=None):
-    """Analytical solution for absolute vorticity of LH88 forcing."""
+    """Analytical expression for absolute vorticity of LH88 forcing."""
     if thermal_ro is None:
         thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
     coslat = cosdeg(lat)
@@ -106,9 +107,50 @@ def abs_vort_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
     return term1*term2
 
 
-def abs_vort_rce_lh88_zero(lats, lat_max, delta_h=DELTA_H, height=HEIGHT_TROPO,
-                           rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
-                           grav=GRAV_EARTH, lat_str=LAT_STR):
+def _eta_rce_zero_lh88(lat, lat_max, therm_ro):
+    mu = sindeg(lat)
+    mu_m = sindeg(lat_max)
+    r_star = therm_ro * mu_m
+    return np.rad2deg(
+        (mu_m + 2 * r_star) * mu ** 3
+        - 1.5 * r_star * mu_m * mu ** 2
+        - 0.5 * r_star * mu_m
+    )
+
+
+def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
+    """Numerically solved zero cross of LH88 forcing absolute vorticity.
+
+    The zero crossing being solved for is that of last of three multiplicative
+    terms.  The first is the Coriolis parameter.  The second corresponds to
+    the zero crossing in absolute angular momentum.  The third, under reasonably
+    Earth-like conditions at least, occurs farthest poleward into the summer
+    hemisphere.
+
+    There are no approximations in the expression being solved, small-angle
+    or otherwise.
+
+    """
+    zero_bounds_guess_range = np.arange(0.1, 90, 20)
+    return np.sign(lat_max) * brentq_solver_sweep_param(
+        _eta_rce_zero_lh88,
+        lat_max,
+        init_guess,
+        zero_bounds_guess_range,
+        funcargs=(therm_ro,),
+    )
+
+
+def abs_vort_rce_lh88_zero_maxlat_pole_small_therm_ro(therm_ro, lat_max=90):
+    """LH88 RCE abs vort=0 approx; small angle and R; maxlat=pi/2."""
+    return np.rad2deg((0.5 * therm_ro * sindeg(lat_max)) ** (1. / 3))
+
+
+def abs_vort_rce_lh88_zero_approx(lats, lat_max, delta_h=DELTA_H,
+                                  height=HEIGHT_TROPO, rot_rate=ROT_RATE_EARTH,
+                                  radius=RAD_EARTH, grav=GRAV_EARTH,
+                                  lat_str=LAT_STR):
+    """DEPRECATED.  Crude numerical solution to LH88 abs. vort zero cross."""
     abs_vort = abs_vort_rce_lh88(
         lats, lat_max,
         delta_h=delta_h,
@@ -119,11 +161,6 @@ def abs_vort_rce_lh88_zero(lats, lat_max, delta_h=DELTA_H, height=HEIGHT_TROPO,
         lat_str=lat_str,
     )
     return zero_cross_nh(abs_vort, lat_str=lat_str)
-
-
-def abs_vort_rce_lh88_zero_maxlat_pole_small_therm_ro(therm_ro):
-    """LH88 RCE abs vort=0 approx; small angle and R; maxlat=pi/2."""
-    return np.rad2deg((0.5*therm_ro)**(1./3))
 
 
 def lapse_rate_rce_lh88(lat, lat_max, z, theta_ref=THETA_REF,
