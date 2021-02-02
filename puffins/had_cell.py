@@ -215,9 +215,13 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     # Apply cubic interpolation in latitude to a refined mesh.  Otherwise, the
     # cell edge can (unphysically) vary non-monotonically with `frac_thresh`.
     lats_interp = np.arange(sf_one_side[lat_str].min(),
-                            sf_one_side[lat_str].max() + 0.01, 0.05)
+                            sf_one_side[lat_str].max() - 0.01, 0.05)
     sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp},
                                             method="cubic")
+    # Explicitly make the last value equal to the original, as otherwise the
+    # interp step can overwrite it with nan for some reason.
+    sf_one_side_interp = xr.concat([sf_one_side_interp, sf_one_side[-1]],
+                                   dim=lat_str)
 
     # Find where the streamfunction crosses the specified fractional threshold,
     # using the Singh 2019 cosine weighting if specified.
