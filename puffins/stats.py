@@ -106,7 +106,7 @@ def lin_regress(arr1, arr2, dim):
         vectorize=True,
         dask="parallelized",
         output_dtypes=['float64'],
-        output_sizes={"parameter": 5},
+        dask_gufunc_kwargs=dict(output_sizes={"parameter": 5}),
     )
     arr.coords["parameter"] = xr.DataArray(
         ["slope", "intercept", "r_value", "p_value", "std_err"],
