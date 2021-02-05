@@ -287,9 +287,10 @@ def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
     ) for f_kw in func_and_kwargs]
 
 
-def cell_edges_sigma(streamfunc, frac_thresh=0.1, center_min_sigma=0.1,
-                     center_max_sigma=1, cell_min_sigma_depth=0.3,
-                     lat_str=LAT_STR, sigma_str=SIGMA_STR):
+def cell_edges_sigma(streamfunc, frac_thresh=0.1, cos_factor=False,
+                     center_min_sigma=0.1, center_max_sigma=1,
+                     cell_min_sigma_depth=0.3, lat_str=LAT_STR,
+                     sigma_str=SIGMA_STR):
     """Compute edges of all contiguous streamfunction overturning cells."""
     # Discard values in the boundary layer and stratosphere (if specified).
     sigma = streamfunc[sigma_str]
@@ -303,9 +304,14 @@ def cell_edges_sigma(streamfunc, frac_thresh=0.1, center_min_sigma=0.1,
     for n in indices:
         try:
             candidate = _find_cell_and_edges(
-                streamfunc, labels, n, frac_thresh=frac_thresh,
+                streamfunc,
+                labels,
+                n,
+                frac_thresh=frac_thresh,
+                cos_factor=cos_factor,
                 cell_min_sigma_depth=cell_min_sigma_depth,
-                lat_str=lat_str, sigma_str=sigma_str
+                lat_str=lat_str,
+                sigma_str=sigma_str,
             )
         except ValueError as error:
             if str(error) == "Cell is insufficiently deep.":
@@ -322,7 +328,7 @@ def cell_edges_sigma(streamfunc, frac_thresh=0.1, center_min_sigma=0.1,
 
 
 def _find_cell_and_edges(streamfunc, labels, n, cell_min_sigma_depth=0.3,
-                         frac_thresh=0.1, lat_str=LAT_STR,
+                         frac_thresh=0.1, cos_factor=False, lat_str=LAT_STR,
                          sigma_str=SIGMA_STR):
     """Find the cell with a given label and determine its edges."""
     # Isolate the cell labeled by 'n' and make it positive.
@@ -344,9 +350,8 @@ def _find_cell_and_edges(streamfunc, labels, n, cell_min_sigma_depth=0.3,
     if _cell_is_bad(sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=1,
                     lat_str=lat_str):
         raise ValueError("Cell is not physically meaningful.")
-    lat_max = float(sf_max[lat_str].values)
     edges = _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh,
-                            lat_max, lat_str, sigma_str)
+                            cos_factor=cos_factor, lat_str=lat_str)
     # Convert to a single DataArray with the cell center included.
     edges.insert(-1, sf_max[lat_str])
     edges_arr = xr.concat(edges, dim=lat_str)
@@ -399,40 +404,52 @@ def _cell_is_bad(sf_max, lats, sf_and_opp_sign, min_width=3, lat_str=LAT_STR):
     return center_at_pole or cell_too_narrow
 
 
-def _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh, lat_max,
-                    lat_str=LAT_STR, sigma_str=SIGMA_STR):
-    """Compute northern and southern edges of a cell.
-
-    """
+def _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh, cos_factor=False,
+                    lat_str=LAT_STR):
+    """Compute northern and southern edges of a cell."""
     edges = []
     # Look for the northern edge and then, by reversing the sign of the
     # latitudes array, the southern edge.
     for sign_factor in [1, -1]:
         sf_cell = sf_and_opp_sign.copy()
-        sf_max_mag = sf_cell.max()
-        threshold = float(sf_max_mag*frac_thresh)
-        assert threshold > 0
+        lats = sf_cell[lat_str]
+        if sf_cell.max(lat_str) < np.abs(sf_cell.min(lat_str)):
+            sf_max = sf_cell.min(lat_str)
+            lat_max = lats[sf_cell.argmin(lat_str)]
+        else:
+            sf_max = sf_cell.max(lat_str)
+            lat_max = lats[sf_cell.argmax(lat_str)]
+
+        if cos_factor:
+            sf_norm = ((sf_cell / cosdeg(lats)) /
+                       (sf_max / cosdeg(lat_max)))
+        else:
+            sf_norm = sf_cell / sf_max
+
+        # threshold = float(sf_max*frac_thresh)
+        # assert threshold > 0
+
         # Flip the sign and the indexing if looking for southern edge.
-        lat_cell = sf_cell[lat_str]*sign_factor
-        sf_cell[lat_str] = lat_cell
+        lat_cell = sf_norm[lat_str] * sign_factor
+        sf_norm[lat_str] = lat_cell
         if sign_factor == -1:
-            sf_cell = sf_cell.isel(**{lat_str: slice(None, None, -1)})
-            lat_cell = sf_cell[lat_str]
+            sf_norm = sf_norm.isel(**{lat_str: slice(None, None, -1)})
+            lat_cell = sf_norm[lat_str]
 
         # Restrict to latitudes greater than that at the maximum.
-        sf_one_side = sf_cell.where(lat_cell >= sign_factor*lat_max,
+        sf_one_side = sf_norm.where(lat_cell >= sign_factor * lat_max,
                                     drop=True)
         lat_one_side = sf_one_side[lat_str]
 
         # Find where the streamfunction drops below the threshold.  This
         # includes points with opposite-signed streamfunction.
-        sf_below = sf_one_side.where(sf_one_side < threshold, drop=True)
+        sf_below = sf_one_side.where(sf_one_side < frac_thresh, drop=True)
 
         # If the threshold is never crossed, assume that the cell goes to
         # zero at that pole.
         if len(sf_below) == 0:
-            first_lat_below = 90.*np.sign(lat_one_side.max(lat_str))
-            first_below = xr.zeros_like(sf_cell.isel(**{lat_str: -1}))
+            first_lat_below = 90. * np.sign(lat_one_side.max(lat_str))
+            first_below = xr.zeros_like(sf_norm.isel(**{lat_str: -1}))
             first_below[lat_str].values = first_lat_below
 
         # Otherwise, keep the adjacent below-threshold point.
@@ -455,7 +472,7 @@ def _one_cell_edges(sf_and_opp_sign, cell_sign, frac_thresh, lat_max,
         # Interpolate between the two gridpoints to the actual crossing.
         thresh_bounds = xr.concat([last_above, first_below], dim=lat_str)
         edge = interpolate(thresh_bounds, thresh_bounds[lat_str],
-                           threshold*cell_sign, lat_str)
+                           frac_thresh * cell_sign, lat_str)
 
         edges.append(edge)
     # Put southern edge first.
