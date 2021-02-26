@@ -1,10 +1,13 @@
 #! /usr/bin/env python
 """Utility functions useful for interactive work in Jupyter notebooks."""
 
+import importlib
+import os.path
 from subprocess import PIPE, Popen
 import warnings
 
 from IPython.display import display, Javascript
+import git
 import numpy as np
 import xarray as xr
 
@@ -13,6 +16,30 @@ from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
 
 
 # Quality control for production notebooks
+def _checkout_if_clean(repo, branch_name):
+    """Checkout the given branch of the given repo."""
+    clean_and_tracked = not (repo.is_dirty() or repo.untracked_files)
+    if clean_and_tracked:
+        repo.git.checkout(branch_name)
+    else:
+        raise Exception(f"The repo in the directory '{repo.working_dir}' "
+                        "has an untracked file or uncommitted changes.  These "
+                        "must be handled before puffins gets switched to "
+                        "this project's branch.")
+
+
+def _package_rootdir(name):
+    """Get the root directory of the installed package with the given name."""
+    initfile = importlib.util.find_spec(name).origin
+    return os.path.split(os.path.split(initfile)[0])[0]
+
+
+def setup_puffins(branch_name="master"):
+    """Switch puffins to the specified branch, if current branch is clean."""
+    puffins_repo = git.Repo(_package_rootdir("puffins"))
+    _checkout_if_clean(puffins_repo, branch_name)
+
+
 def save_jupyter_nb():
     """From within a Jupyter notebook, save that notebook.
 
@@ -44,6 +71,8 @@ def warn_if_unused_imports(nb_path):
     if warnlog:
         warnings.warn("This notebook has the following unused imports: "
                       f"\n\n{warnlog}")
+
+
 
 
 # Coordinate arrays.
