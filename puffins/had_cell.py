@@ -70,9 +70,9 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
         sf_valid = streamfunc.copy(deep=True)
         lev = streamfunc[lev_str]
 
-    if min_plev:
+    if min_plev is not None:
         sf_valid = sf_valid.where(lev >= min_plev, drop=True)
-    if max_plev:
+    if max_plev is not None:
         sf_valid = sf_valid.where(lev <= max_plev, drop=True)
 
     if dim is None:
@@ -90,22 +90,33 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, lat_str=LAT_STR,
     # opposite-signed cell on either side.  The Hadley cells will be the two of
     # these whose centers are nearest the equator.
     cell_pos_max_strength = had_cell_strength(
-        strmfunc, min_plev=min_plev, max_plev=max_plev, lev_str=lev_str
+        strmfunc, min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
     )
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
 
     cell_south_of_pos_strength = -1*had_cell_strength(
-        -1*strmfunc.where(lat < lat_pos_max))
+        -1*strmfunc.where(lat < lat_pos_max),
+        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    )
     cell_north_of_pos_strength = -1*had_cell_strength(
-        -1*strmfunc.where(lat > lat_pos_max))
+        -1*strmfunc.where(lat > lat_pos_max),
+        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    )
 
-    cell_neg_max_strength = had_cell_strength(-1*strmfunc)
+    cell_neg_max_strength = had_cell_strength(
+        -1*strmfunc,
+        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    )
     lat_neg_max = cell_neg_max_strength.coords[lat_str]
 
-    cell_south_of_neg_strength = had_cell_strength(strmfunc.where(
-        lat < lat_neg_max))
-    cell_north_of_neg_strength = had_cell_strength(strmfunc.where(
-        lat > lat_neg_max))
+    cell_south_of_neg_strength = had_cell_strength(
+        strmfunc.where(lat < lat_neg_max),
+        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    )
+    cell_north_of_neg_strength = had_cell_strength(
+        strmfunc.where(lat > lat_neg_max),
+        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    )
 
     # The above procedure generats 6 cells, of which 2 are duplicates.  Now,
     # get rid of the duplicates.
