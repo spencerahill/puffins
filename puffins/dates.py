@@ -17,6 +17,19 @@ months = dict(
     nov=11,
     dec=12,
 )
+seasons_2mon = {
+    "jf": [1, 2],
+    "fm": [2, 3],
+    "ma": [3, 4],
+    "am": [4, 5],
+    "mj": [5, 6],
+    "jj": [6, 7],
+    "ja": [7, 8],
+    "as": [8, 9],
+    "so": [9, 10],
+    "on": [10, 11],
+    "nd": [11, 12],
+}
 seasons_3mon = dict(
     jfm=[1, 2, 3],
     fma=[2, 3, 4],
@@ -62,6 +75,7 @@ seasons_6mon = dict(
 ann = dict(ann=range(1, 13))
 _ann_subs = (
     months,
+    seasons_2mon,
     seasons_3mon,
     seasons_4mon,
     seasons_5mon,
@@ -72,7 +86,7 @@ ann_subsets = {}
 [ann_subsets.update(d) for d in _ann_subs]
 
 
-def subset_ann(arr, months, dim_time=TIME_STR):
+def subset_ann(arr, months, dim_time=TIME_STR, drop=False):
     """Restrict array values to a subset of each calendar year.
 
     """
@@ -82,7 +96,7 @@ def subset_ann(arr, months, dim_time=TIME_STR):
         months = ann_subsets[months]
     time = arr[dim_time]
     return arr.where((time.dt.month >= np.min(months)) &
-                     (time.dt.month <= np.max(months)))
+                     (time.dt.month <= np.max(months)), drop=drop)
 
 
 def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
