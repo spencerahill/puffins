@@ -10,16 +10,15 @@ from .nb_utils import cosdeg
 
 
 # Trends: computing trends, detrending, etc.
-def trend(arr, dim, order=1, ret_slope_y0=False):
+def trend(arr, dim="year", order=1, return_coeffs=False):
     """Compute linear or higher-order polynomial fit."""
-    coord = arr.coords[dim]
-    slope, y0 = np.polyfit(coord, arr, order)
-    if ret_slope_y0:
-        return slope, y0
-    return xr.ones_like(arr)*np.polyval([slope, y0], coord)
+    coeffs = arr.polyfit(dim, order)["polyfit_coefficients"]
+    if return_coeffs:
+        return coeffs
+    return xr.polyval(arr[dim], coeffs)
 
 
-def detrend(arr, dim, order=1):
+def detrend(arr, dim="year", order=1):
     """Subtract off the linear or higher order polynomial fit."""
     return arr - trend(arr, dim, order)
 
@@ -33,6 +32,11 @@ def anomaly(arr, dim="time"):
 def standardize(arr, dim="time"):
     """Anomaly normalized by the standard deviation along a dimension."""
     return anomaly(arr, dim) / arr.std(dim)
+
+
+def dt_std_anom(arr, dim="year", order=1):
+    """Detrended standardized anomaly timeseries."""
+    return detrend(standardize(arr, dim), dim=dim, order=order)
 
 
 # Filtering (time or otherwise)
@@ -64,8 +68,7 @@ def sel_shared_vals(arr1, arr2, dim):
 
 def corr_where_overlap(arr1, arr2, dim):
     """Compute corr. coeff. for overlapping portion of the two arrays."""
-    arr1_shared, arr2_shared = sel_shared_vals(arr1, arr2, dim)
-    return scipy.stats.pearsonr(arr1_shared, arr2_shared)[0]
+    return float(xr.corr(arr1, arr2, dim))
 
 
 def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
@@ -82,7 +85,7 @@ def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
             np.array(corrs).reshape(arr_sweep_0.shape))
 
 
-def lin_regress(arr1, arr2, dim):
+def lin_regress(arr1, arr2, dim, sel_shared=True):
     """Use xr.apply_ufunc to broadcast scipy.stats.linregress.
 
     For example, over latitude and longitude.
@@ -96,11 +99,16 @@ def lin_regress(arr1, arr2, dim):
         slope, intercept, r_val, p_val, std_err = scipy.stats.linregress(x, y)
         return np.array([slope, intercept, r_val, p_val, std_err])
 
+    if sel_shared:
+        arr1_trunc, arr2_trunc = sel_shared_vals(arr1, arr2, dim)
+    else:
+        arr1_trunc, arr2_trunc = arr1, arr2
+
     # TODO: create parameter coord with the names of each parameter.
     arr = xr.apply_ufunc(
         _linregress,
-        arr1,
-        arr2,
+        arr1_trunc,
+        arr2_trunc,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,
