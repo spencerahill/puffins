@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="puffins",
-    version="0.1",
+    version="0.1.1",
     packages=setuptools.find_packages(),
     author="Spencer A. Hill",
     author_email="shill@ldeo.columbia.edu",

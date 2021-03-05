@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 """Derivatives, integrals, and averages."""
-import aospy
+import logging
+
 import numpy as np
 import xarray as xr
 
@@ -13,6 +14,7 @@ from .names import (
     LON_STR,
     LEV_STR,
     PHALF_STR,
+    SFC_AREA_STR,
 )
 from .nb_utils import cosdeg, sindeg, to_pascal
 
@@ -188,15 +190,106 @@ def add_lat_lon_bounds(arr, lat_str=LAT_STR, lon_str=LON_STR,
     return ds
 
 
+def to_radians(arr, is_delta=False):
+    """Force data with units either degrees or radians to be radians."""
+    # Infer the units from embedded metadata, if it's there.
+    try:
+        units = arr.units
+    except AttributeError:
+        pass
+    else:
+        if units.lower().startswith('degrees'):
+            warn_msg = ("Conversion applied: degrees -> radians to array: "
+                        "{}".format(arr))
+            logging.debug(warn_msg)
+            return np.deg2rad(arr)
+    # Otherwise, assume degrees if the values are sufficiently large.
+    threshold = 0.1*np.pi if is_delta else 4*np.pi
+    if np.max(np.abs(arr)) > threshold:
+        warn_msg = ("Conversion applied: degrees -> radians to array: "
+                    "{}".format(arr))
+        logging.debug(warn_msg)
+        return np.deg2rad(arr)
+    return arr
+
+
+def _bounds_from_array(arr, dim, bounds_dim=BOUNDS_STR):
+    """Get the bounds of an array given its center values.
+
+    E.g. if lat-lon grid center lat/lon values are known, but not the
+    bounds of each grid box.  The algorithm assumes that the bounds
+    are simply halfway between each pair of center values.
+
+    """
+    # TODO: don't assume needed dimension is in axis=0
+    spacing = arr.diff(dim).values
+    lower = xr.DataArray(np.empty_like(arr), dims=arr.dims, coords=arr.coords)
+    lower.values[:-1] = arr.values[:-1] - 0.5*spacing
+    lower.values[-1] = arr.values[-1] - 0.5*spacing[-1]
+    upper = xr.DataArray(np.empty_like(arr), dims=arr.dims, coords=arr.coords)
+    upper.values[:-1] = arr.values[:-1] + 0.5*spacing
+    upper.values[-1] = arr.values[-1] + 0.5*spacing[-1]
+    bounds = xr.concat([lower, upper], dim=bounds_dim)
+    return bounds.T
+
+
+def _diff_bounds(bounds, coord):
+    """Get grid spacing by subtracting upper and lower bounds."""
+    try:
+        return bounds[:, 1] - bounds[:, 0]
+    except IndexError:
+        diff = np.diff(bounds, axis=0)
+        return xr.DataArray(diff, dims=coord.dims, coords=coord.coords)
+
+
+def _grid_sfc_area(lon, lat, lon_bounds=None, lat_bounds=None, lon_str=LON_STR,
+                   lat_str=LAT_STR, lon_bounds_str=LON_BOUNDS_STR,
+                   lat_bounds_str=LAT_BOUNDS_STR, sfc_area_str=SFC_AREA_STR,
+                   radius=RAD_EARTH):
+    # Compute the bounds if not given.
+    if lon_bounds is None:
+        lon_bounds = _bounds_from_array(lon, lon_str, lon_bounds_str)
+    if lat_bounds is None:
+        lat_bounds = _bounds_from_array(lat, lat_str, lat_bounds_str)
+    # Compute the surface area.
+    dlon = _diff_bounds(to_radians(lon_bounds, is_delta=True), lon)
+    sinlat_bounds = np.sin(to_radians(lat_bounds, is_delta=True))
+    dsinlat = np.abs(_diff_bounds(sinlat_bounds, lat))
+    sfc_area = dlon*dsinlat*(radius**2)
+    # Rename the coordinates such that they match the actual lat / lon.
+    try:
+        sfc_area = sfc_area.rename({lat_bounds_str: lat_str,
+                                    lon_bounds_str: lon_str})
+    except ValueError:
+        pass
+    # Clean up: correct names and dimension order.
+    sfc_area = sfc_area.rename(sfc_area_str)
+    sfc_area[lat_str] = lat
+    sfc_area[lon_str] = lon
+    return sfc_area.transpose()
+
+
 def sfc_area_latlon_box(ds, lat_str=LAT_STR, lon_str=LON_STR,
                         lat_bounds_str=LAT_BOUNDS_STR,
-                        lon_bounds_str=LON_BOUNDS_STR):
+                        lon_bounds_str=LON_BOUNDS_STR,
+                        sfc_area_str=SFC_AREA_STR, radius=RAD_EARTH):
     """Calculate surface area of each grid cell in a lon-lat grid."""
     lon = ds[lon_str]
     lat = ds[lat_str]
     lon_bounds = ds[lon_bounds_str]
     lat_bounds = ds[lat_bounds_str]
-    return aospy.model._grid_sfc_area(lon, lat, lon_bounds, lat_bounds)
+    return _grid_sfc_area(
+        lon,
+        lat,
+        lon_bounds=lon_bounds,
+        lat_bounds=lat_bounds,
+        lon_str=lon_str,
+        lat_str=lat_str,
+        lon_bounds_str=lon_bounds_str,
+        lat_bounds_str=lat_bounds_str,
+        sfc_area_str=sfc_area_str,
+        radius=radius,
+    )
 
 
 # Pressure spacing and averages.
