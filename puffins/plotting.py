@@ -4,7 +4,8 @@
 from collections import namedtuple
 import os
 
-from faceted import faceted
+from faceted import faceted as fac_faceted
+from faceted import faceted_ax as fac_ax
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -112,15 +113,14 @@ def lat_yaxis(ax, start_lat=-90, end_lat=90):
     ax.set_ylabel(" ")
 
 
-def facet_ax(width=4, cbar_mode=None, **kwargs):
-    """Use faceted to create single panel figure."""
-    if cbar_mode is None:
-        fig, axarr = faceted(1, 1, width=width, **kwargs)
-        return fig, axarr[0]
-    else:
-        fig, axarr, cax = faceted(1, 1, width=width,
-                                  cbar_mode=cbar_mode, **kwargs)
-        return fig, axarr[0], cax
+def faceted(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted w/ a default aspect ratio."""
+    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
+
+
+def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
+    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
 
 
 def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
