@@ -11,7 +11,12 @@ from .nb_utils import cosdeg
 
 # Trends: computing trends, detrending, etc.
 def trend(arr, dim="year", order=1, return_coeffs=False):
-    """Compute linear or higher-order polynomial fit."""
+    """Compute linear or higher-order polynomial fit.
+
+    If return_coeffs is True, then coeffs.degree(sel=0) is the y-intercept,
+    coeffs.degree(sel=1) is the slope, etc.
+
+    """
     coeffs = arr.polyfit(dim, order)["polyfit_coefficients"]
     if return_coeffs:
         return coeffs
