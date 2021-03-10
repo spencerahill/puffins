@@ -14,6 +14,7 @@ setuptools.setup(
         "ipython",
         "matplotlib",
         "numpy",
+        "ruptures",
         "scipy",
         "scikit-learn",
         "xarray",

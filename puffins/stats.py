@@ -1,6 +1,7 @@
 """Functionality relating to statistics, timeseries, etc."""
 from eofs.xarray import Eof
 import numpy as np
+import ruptures as rpt
 import sklearn.metrics
 import scipy.stats
 import xarray as xr
@@ -56,19 +57,9 @@ def run_mean_anom(arr, n=10, dim="time", center=True, **kwargs):
 
 
 # Correlations and linear regression.
-def sel_shared_vals(arr1, arr2, dim):
-    """Restrict two arrays to their shared values along a dimension.
-
-    Helpful for computing things like correlations which require the
-    two arrays to be equal length.
-
-    """
-    min_shared_val = max(arr1[dim].min(), arr2[dim].min())
-    max_shared_val = min(arr1[dim].max(), arr2[dim].max())
-    shared_vals = (arr1[dim] >= min_shared_val) & (arr1[dim] <= max_shared_val)
-    arr1_trunc = arr1.where(shared_vals, drop=True)
-    arr2_trunc = arr2.where(shared_vals, drop=True)
-    return arr1_trunc, arr2_trunc
+def corr_detrended(arr1, arr2, dim, order=1):
+    """Correlation coefficient of two arrays after they are detrended."""
+    return xr.corr(detrend(arr1, dim, order), detrend(arr2, dim, order), dim)
 
 
 def corr_where_overlap(arr1, arr2, dim):
@@ -78,7 +69,11 @@ def corr_where_overlap(arr1, arr2, dim):
 
 def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
                                 dim_lon=LON_STR, dim_time=YEAR_STR):
-    """Correlation of 1D-arr w/ a (time, lat, lon)-arr at each (lat, lon)."""
+    """Correlation of 1D-arr w/ a (time, lat, lon)-arr at each (lat, lon).
+
+    TODO: This can all be replaced w/ xr.corr right?
+
+    """
     corrs = []
     for lat in arr_sweep[dim_lat]:
         corrs.append([scipy.stats.pearsonr(
@@ -90,7 +85,7 @@ def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
             np.array(corrs).reshape(arr_sweep_0.shape))
 
 
-def lin_regress(arr1, arr2, dim, sel_shared=True):
+def lin_regress(arr1, arr2, dim):
     """Use xr.apply_ufunc to broadcast scipy.stats.linregress.
 
     For example, over latitude and longitude.
@@ -104,12 +99,6 @@ def lin_regress(arr1, arr2, dim, sel_shared=True):
         slope, intercept, r_val, p_val, std_err = scipy.stats.linregress(x, y)
         return np.array([slope, intercept, r_val, p_val, std_err])
 
-    if sel_shared:
-        arr1_trunc, arr2_trunc = sel_shared_vals(arr1, arr2, dim)
-    else:
-        arr1_trunc, arr2_trunc = arr1, arr2
-
-    # TODO: create parameter coord with the names of each parameter.
     arr = xr.apply_ufunc(
         _linregress,
         arr1_trunc,
@@ -141,6 +130,27 @@ def rmse(arr1, arr2, dim):
 
     return xr.apply_ufunc(_rmse, arr1, arr2, input_core_dims=[[dim], [dim]],
                           vectorize=True, dask="parallelized")
+
+
+# Breakpoint detection
+def detect_breakpoint(arr, dim, rpt_class=rpt.Binseg, model="l2",
+                      n_bkps=1):
+    """Use xr.apply_ufunc to broadcast breakpoint detections from ruptures"""
+
+    rpt_instance = rpt_class(model=model)
+
+    def _detect_bp(arr):
+        """Wrapper to use in apply_ufunc."""
+        return rpt_instance.fit(arr).predict(n_bkps=n_bkps)[0]
+
+    inds_bp = xr.apply_ufunc(
+        _detect_bp,
+        arr,
+        input_core_dims=[[dim]],
+        vectorize=True,
+        dask="parallelized",
+    )
+    return arr[dim][inds_bp]
 
 
 # Empirical orthogonal functions (EOFs)
