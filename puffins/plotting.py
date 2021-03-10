@@ -14,13 +14,13 @@ from .nb_utils import sindeg
 _DEGR = r'$^\circ$'
 _DEGR_S = _DEGR + 'S'
 _DEGR_N = _DEGR + 'N'
-
+GRAY = "0.4"
 
 PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
 
-
 plt_rc_params_custom = {
-    "axes.edgecolor": "0.4",  # Make axis spines gray.
+    "axes.edgecolor": GRAY,  # Make axis spines gray.
+    "axes.labelcolor": GRAY,  # Make axis labels gray.
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
@@ -28,8 +28,8 @@ plt_rc_params_custom = {
     "legend.frameon": False,  # Turn off box around legend.
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
-    "xtick.color": "0.4",  # Make xticks gray.
-    "ytick.color": "0.4",  # Make yticks gray.
+    "xtick.color": GRAY,  # Make xticks gray.
+    "ytick.color": GRAY,  # Make yticks gray.
 }
 
 
