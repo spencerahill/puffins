@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="puffins",
-    version="0.0",
+    version="0.1.1",
     packages=setuptools.find_packages(),
     author="Spencer A. Hill",
     author_email="shill@ldeo.columbia.edu",
@@ -15,8 +15,9 @@ setuptools.setup(
         "ipython",
         "matplotlib",
         "numpy",
+        "ruptures",
         "scipy",
-        "sklearn",
+        "scikit-learn",
         "xarray",
     ],
     scripts=["puffins/scripts/set_proj_puff_branch.py"],

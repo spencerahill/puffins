@@ -1,6 +1,7 @@
 """Functionality relating to statistics, timeseries, etc."""
 from eofs.xarray import Eof
 import numpy as np
+import ruptures as rpt
 import sklearn.metrics
 import scipy.stats
 import xarray as xr
@@ -10,16 +11,20 @@ from .nb_utils import cosdeg
 
 
 # Trends: computing trends, detrending, etc.
-def trend(arr, dim, order=1, ret_slope_y0=False):
-    """Compute linear or higher-order polynomial fit."""
-    coord = arr.coords[dim]
-    slope, y0 = np.polyfit(coord, arr, order)
-    if ret_slope_y0:
-        return slope, y0
-    return xr.ones_like(arr)*np.polyval([slope, y0], coord)
+def trend(arr, dim="year", order=1, return_coeffs=False):
+    """Compute linear or higher-order polynomial fit.
+
+    If return_coeffs is True, then coeffs.degree(sel=0) is the y-intercept,
+    coeffs.degree(sel=1) is the slope, etc.
+
+    """
+    coeffs = arr.polyfit(dim, order)["polyfit_coefficients"]
+    if return_coeffs:
+        return coeffs
+    return xr.polyval(arr[dim], coeffs)
 
 
-def detrend(arr, dim, order=1):
+def detrend(arr, dim="year", order=1):
     """Subtract off the linear or higher order polynomial fit."""
     return arr - trend(arr, dim, order)
 
@@ -35,6 +40,11 @@ def standardize(arr, dim="time"):
     return anomaly(arr, dim) / arr.std(dim)
 
 
+def dt_std_anom(arr, dim="year", order=1):
+    """Detrended standardized anomaly timeseries."""
+    return detrend(standardize(arr, dim), dim=dim, order=order)
+
+
 # Filtering (time or otherwise)
 def run_mean(arr, n=10, dim="time", center=True, **kwargs):
     """Simple running average along a dimension."""
@@ -47,30 +57,23 @@ def run_mean_anom(arr, n=10, dim="time", center=True, **kwargs):
 
 
 # Correlations and linear regression.
-def sel_shared_vals(arr1, arr2, dim):
-    """Restrict two arrays to their shared values along a dimension.
-
-    Helpful for computing things like correlations which require the
-    two arrays to be equal length.
-
-    """
-    min_shared_val = max(arr1[dim].min(), arr2[dim].min())
-    max_shared_val = min(arr1[dim].max(), arr2[dim].max())
-    shared_vals = (arr1[dim] >= min_shared_val) & (arr1[dim] <= max_shared_val)
-    arr1_trunc = arr1.where(shared_vals, drop=True)
-    arr2_trunc = arr2.where(shared_vals, drop=True)
-    return arr1_trunc, arr2_trunc
+def corr_detrended(arr1, arr2, dim, order=1):
+    """Correlation coefficient of two arrays after they are detrended."""
+    return xr.corr(detrend(arr1, dim, order), detrend(arr2, dim, order), dim)
 
 
 def corr_where_overlap(arr1, arr2, dim):
     """Compute corr. coeff. for overlapping portion of the two arrays."""
-    arr1_shared, arr2_shared = sel_shared_vals(arr1, arr2, dim)
-    return scipy.stats.pearsonr(arr1_shared, arr2_shared)[0]
+    return float(xr.corr(arr1, arr2, dim))
 
 
 def pointwise_corr_latlon_sweep(arr, arr_sweep, dim_lat=LAT_STR,
                                 dim_lon=LON_STR, dim_time=YEAR_STR):
-    """Correlation of 1D-arr w/ a (time, lat, lon)-arr at each (lat, lon)."""
+    """Correlation of 1D-arr w/ a (time, lat, lon)-arr at each (lat, lon).
+
+    TODO: This can all be replaced w/ xr.corr right?
+
+    """
     corrs = []
     for lat in arr_sweep[dim_lat]:
         corrs.append([scipy.stats.pearsonr(
@@ -96,17 +99,16 @@ def lin_regress(arr1, arr2, dim):
         slope, intercept, r_val, p_val, std_err = scipy.stats.linregress(x, y)
         return np.array([slope, intercept, r_val, p_val, std_err])
 
-    # TODO: create parameter coord with the names of each parameter.
     arr = xr.apply_ufunc(
         _linregress,
-        arr1,
-        arr2,
+        arr1_trunc,
+        arr2_trunc,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,
         dask="parallelized",
         output_dtypes=['float64'],
-        output_sizes={"parameter": 5},
+        dask_gufunc_kwargs=dict(output_sizes={"parameter": 5}),
     )
     arr.coords["parameter"] = xr.DataArray(
         ["slope", "intercept", "r_value", "p_value", "std_err"],
@@ -128,6 +130,27 @@ def rmse(arr1, arr2, dim):
 
     return xr.apply_ufunc(_rmse, arr1, arr2, input_core_dims=[[dim], [dim]],
                           vectorize=True, dask="parallelized")
+
+
+# Breakpoint detection
+def detect_breakpoint(arr, dim, rpt_class=rpt.Binseg, model="l2",
+                      n_bkps=1):
+    """Use xr.apply_ufunc to broadcast breakpoint detections from ruptures"""
+
+    rpt_instance = rpt_class(model=model)
+
+    def _detect_bp(arr):
+        """Wrapper to use in apply_ufunc."""
+        return rpt_instance.fit(arr).predict(n_bkps=n_bkps)[0]
+
+    inds_bp = xr.apply_ufunc(
+        _detect_bp,
+        arr,
+        input_core_dims=[[dim]],
+        vectorize=True,
+        dask="parallelized",
+    )
+    return arr[dim][inds_bp]
 
 
 # Empirical orthogonal functions (EOFs)

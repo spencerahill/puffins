@@ -4,7 +4,8 @@
 from collections import namedtuple
 import os.path
 
-from faceted import faceted
+from faceted import faceted as fac_faceted
+from faceted import faceted_ax as fac_ax
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -14,12 +15,13 @@ from .nb_utils import sindeg
 _DEGR = r'$^\circ$'
 _DEGR_S = _DEGR + 'S'
 _DEGR_N = _DEGR + 'N'
-
+GRAY = "0.4"
 
 PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
 
-
 plt_rc_params_custom = {
+    "axes.edgecolor": GRAY,  # Make axis spines gray.
+    "axes.labelcolor": GRAY,  # Make axis labels gray.
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
@@ -27,6 +29,8 @@ plt_rc_params_custom = {
     "legend.frameon": False,  # Turn off box around legend.
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
+    "xtick.color": GRAY,  # Make xticks gray.
+    "ytick.color": GRAY,  # Make yticks gray.
 }
 
 
@@ -67,25 +71,31 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90):
                             '30' + _DEGR_N, " ", '90' + _DEGR_N])
 
 
-def lat_xaxis(ax, start_lat=-90, end_lat=90):
+def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
     """Make the x-axis be latitude."""
     ax.set_xlim([start_lat, end_lat])
 
     if start_lat == 0 and end_lat == 90:
-        ax.set_xticks([0, 30, 60, 90])
-        ax.set_xticks([10, 20, 40, 50, 70, 80], minor=True)
-        ax.set_xticklabels(['EQ', '', '', '30' + _DEGR, '', '',
-                            '60' + _DEGR, '', '', '90' + _DEGR])
+        ticks = [0, 30, 60, 90]
+        minor_ticks = [10, 20, 40, 50, 70, 80]
+        if degr_symbol:
+            ticklabels = ['EQ', '30' + _DEGR, '60' + _DEGR, '90' + _DEGR]
+        else:
+            ticklabels = ['EQ', '30N', '60N', '90N']
     elif start_lat == -90 and end_lat == 90:
-        ax.set_xticks([-90, -60, -30, 0, 30, 60, 90])
-        minorticks = [-80, -70, -50, -40, -20, -10,
+        ticks = [-90, -60, -30, 0, 30, 60, 90]
+        minor_ticks = [-80, -70, -50, -40, -20, -10,
                       10, 20, 40, 50, 70, 80]
-        ax.set_xticks(minorticks, minor=True)
-        ax.set_xticklabels([f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
-                            "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}",
-                            f"90{_DEGR_N}"])
+        if degr_symbol:
+            ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
+                          "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
+        else:
+            ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
     else:
-        ax.set_xticks(np.arange(start_lat, end_lat + 1, 10))
+        ticks = np.arange(start_lat, end_lat + 1, 10)
+    ax.set_xticks(ticks)
+    ax.set_xticks(minor_ticks, minor=True)
+    ax.set_xticklabels(ticklabels)
     ax.set_xlabel(" ")
 
 
@@ -103,15 +113,14 @@ def lat_yaxis(ax, start_lat=-90, end_lat=90):
     ax.set_ylabel(" ")
 
 
-def facet_ax(width=4, cbar_mode=None, **kwargs):
-    """Use faceted to create single panel figure."""
-    if cbar_mode is None:
-        fig, axarr = faceted(1, 1, width=width, **kwargs)
-        return fig, axarr[0]
-    else:
-        fig, axarr, cax = faceted(1, 1, width=width,
-                                  cbar_mode=cbar_mode, **kwargs)
-        return fig, axarr[0], cax
+def faceted(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted w/ a default aspect ratio."""
+    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
+
+
+def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
+    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
 
 
 def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
