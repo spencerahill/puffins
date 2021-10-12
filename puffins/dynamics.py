@@ -45,7 +45,19 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
             2*rot_rate*sinlat)
 
 
+def ross_num_from_uwind(uwind, lat=None, radius=RAD_EARTH,
+                        rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR):
+    """Rossby number computed from zonal wind."""
+    if lat is None:
+        lat = uwind[lat_str]
+    abs_vort = abs_vort_from_u(uwind)
+    coriolis = coriolis_param(lat, rot_rate=rot_rate)
+    rel_vort = abs_vort - coriolis
+    return -rel_vort / coriolis
+
+
 def brunt_vaisala_freq(lat, dtheta_dz, theta_ref=THETA_REF, grav=GRAV_EARTH):
+    """Brunt Vaisala frequency."""
     return (grav * dtheta_dz / theta_ref)**0.5
 
 
