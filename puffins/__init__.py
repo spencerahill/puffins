@@ -1,4 +1,6 @@
 """puffins: tools for large-scale atmospheric and climate dynamics research"""
+from aospy.utils import Longitude
+
 from . import names
 from . import constants
 from . import dates
