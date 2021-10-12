@@ -2,7 +2,7 @@
 """Helper functions for creating plots."""
 
 from collections import namedtuple
-import os
+import os.path
 
 from faceted import faceted as fac_faceted
 from faceted import faceted_ax as fac_ax
