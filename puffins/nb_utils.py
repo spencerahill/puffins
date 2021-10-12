@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 """Utility functions useful for interactive work in Jupyter notebooks."""
 
+from glob import glob
 import importlib
 import os.path
 from subprocess import PIPE, Popen
@@ -71,8 +72,6 @@ def warn_if_unused_imports(nb_path):
     if warnlog:
         warnings.warn("This notebook has the following unused imports: "
                       f"\n\n{warnlog}")
-
-
 
 
 # Coordinate arrays.
@@ -221,7 +220,26 @@ def zero_cross_nh(arr, lat_str=LAT_STR):
     return lats[np.abs(arr.where(lats > 0)).argmin()]
 
 
-# Data processing and cleaning.
+# Data IO, processing, and cleaning.
+def read_netcdfs(files, dim="time", transform_func=None):
+    """Load multiple netCDF files into Dataset, optimizing for performance.
+
+    Adapted from https://xarray.pydata.org/en/stable/user-guide/io.html#netcdf
+
+    """
+    def process_one_path(path):
+        with xr.open_dataset(path) as ds:
+            if transform_func is not None:
+                ds = transform_func(ds)
+            ds.load()
+            return ds
+
+    paths = sorted(glob(files))
+    datasets = [process_one_path(p) for p in paths]
+    combined = xr.concat(datasets, dim)
+    return combined
+
+
 def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
     """Symmetrize data about the equator.
 
