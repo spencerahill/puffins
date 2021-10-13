@@ -44,7 +44,10 @@ def setup_puffins(branch_name="master"):
 def save_jupyter_nb():
     """From within a Jupyter notebook, save that notebook.
 
-    https://stackoverflow.com/a/57814673/
+    Adapted from https://stackoverflow.com/a/57814673/
+
+    Note that this doesn't work for Jupyterlab, only for Jupyter Notebook,
+    c.f. https://github.com/jupyterlab/jupyterlab/issues/7627.
 
     """
     display(Javascript('Jupyter.notebook.save_checkpoint();'))
