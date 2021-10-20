@@ -1,9 +1,8 @@
 #! /usr/bin/env python
 """Fundamental atmospheric dynamical quantities."""
-
 from .constants import GRAV_EARTH, RAD_EARTH, ROT_RATE_EARTH, THETA_REF
 from .names import LAT_STR, LEV_STR
-from .nb_utils import cosdeg, sindeg
+from .nb_utils import cosdeg, sindeg, tandeg
 from .calculus import lat_deriv
 
 
@@ -37,7 +36,7 @@ def abs_vort_vert_comp(abs_ang_mom, radius=RAD_EARTH, lat_str=LAT_STR):
 
 def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
                     lat_str=LAT_STR):
-    """Absolute vorticity computed from zonal wind."""
+    """Vertical component of absolute vorticity computed from zonal wind."""
     lats = u[lat_str]
     sinlat = sindeg(lats)
     coslat = cosdeg(lats)
@@ -45,15 +44,48 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
             2*rot_rate*sinlat)
 
 
+def rel_vort_from_u(uwind, radius=RAD_EARTH, lat_str=LAT_STR):
+    """Vertical component of relative vorticity computed from zonal wind."""
+    lat = uwind[lat_str]
+    coslat = cosdeg(lat)
+    return -lat_deriv(uwind * coslat, lat_str) / (radius * coslat)
+
+
 def ross_num_from_uwind(uwind, lat=None, radius=RAD_EARTH,
                         rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR):
-    """Rossby number computed from zonal wind."""
+    """Rossby number computed from zonal wind.
+
+    Traditional Rossby number definition in terms of only relative vorticity
+    and the Coriolis parameter, as opposed to the "3D" version introduced by
+    Singh 2019.
+
+    """
     if lat is None:
         lat = uwind[lat_str]
-    abs_vort = abs_vort_from_u(uwind)
+    rel_vort = rel_vort_from_u(uwind, radius=radius, lat_str=lat_str)
     coriolis = coriolis_param(lat, rot_rate=rot_rate)
-    rel_vort = abs_vort - coriolis
     return -rel_vort / coriolis
+
+
+def ross_num_gen(uwind, vwind, omega, lat=None, hpa_to_pa=False,
+                 radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR,
+                 lev_str=LEV_STR):
+    """Generalized Rossby number from Singh 2019, JAS.
+
+    Unnumbered equation from pg. 1997.  One minus the ratio of advection of
+    angular momentum to advection of planetary angular momentum.  Zonal
+    advection is neglected here b/c assuming zonal-mean quantities.
+
+    """
+    if lat is None:
+        lat = uwind[lat_str]
+    coriolis = coriolis_param(lat, rot_rate=rot_rate)
+    du_dp = uwind.differentiate(lev_str)
+    if hpa_to_pa:
+        du_dp *= 1e-2
+    return (lat_deriv(uwind, lat_str) / radius -
+            uwind * tandeg(lat) / radius +
+            omega * du_dp / vwind) / coriolis
 
 
 def brunt_vaisala_freq(lat, dtheta_dz, theta_ref=THETA_REF, grav=GRAV_EARTH):
