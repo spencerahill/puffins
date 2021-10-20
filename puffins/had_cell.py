@@ -4,17 +4,20 @@ import scipy.ndimage
 import xarray as xr
 
 from .calculus import subtract_col_avg
-from .constants import GRAV_EARTH
+from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
+from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
     cosdeg,
+    sindeg,
     zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
     to_pascal,
 )
+from .num_solver import brentq_solver_sweep_param
 
 
 def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
@@ -548,3 +551,57 @@ def _hadley_ferrel_cells(cells, min_frac_strength=0.05, max_num_cells=4,
                 break
     cells['cell'] = labels
     return cells
+
+
+def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
+    """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
+    sinlat = sindeg(lat)
+    coslat = cosdeg(lat)
+    term1 = sinlat**4 / coslat**2
+    term2 = -sindeg(ascentlat)**2 * sinlat**2 / coslat**2
+    term3 = -np.deg2rad(h00lat)**4
+    return term1 + term2 + term3
+
+
+def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann,
+                      zero_bounds_guess_range=np.arange(0.1, 90, 5)):
+    """Numerically solve fixed-Ro, 2-layer BCI model of HC edge."""
+    def _solver(lat_a, lat_h):
+        # Reasonable to start guess at the average of the two given latitudes.
+        init_guess = 0.5 * (lat_a + lat_h)
+        return brentq_solver_sweep_param(
+            _fixed_ro_bci_edge,
+            lat_a,
+            init_guess,
+            zero_bounds_guess_range,
+            funcargs=(lat_h,),
+    )
+    return xr.apply_ufunc(_solver, ascentlat, lat_fixed_ro_ann,
+                          vectorize=True, dask="parallelized")
+
+
+def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
+                                  burg_num=None, ross_num=None, delta_v=None,
+                                  height=HEIGHT_TROPO, grav=GRAV_EARTH,
+                                  rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Small-angle solution for fixed-Ro, BCI model for HC descending edge.
+
+    Both ascentlat and lat_fixed_ro_ann should be in degrees, not radians.
+    And the return value is in degrees, not radians.
+
+    """
+    if lat_fixed_ro_ann is not None:
+        lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
+    else:
+        if burg_num is None:
+            burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
+                                     radius=radius)
+        lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+    lat_a = np.deg2rad(ascentlat)
+    return np.rad2deg(
+        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a)**4))
+    )
+
+
+if __name__ == "__main__":
+    pass
