@@ -59,23 +59,31 @@ def _left_bottom_spines_only(ax, displace=False):
     ax.yaxis.set_ticks_position('left')
 
 
-def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False):
+def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
+                 degr_symbols=False):
     """Make the x-axis be in sin of latitude."""
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
     if start_lat == 0 and end_lat == 90:
         ax.set_xticks(sindeg([0, 30, 60, 90]))
         ax.set_xticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
         if do_ticklabels:
-            ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
-                                r'90$^\circ$'])
+            if degr_symbols:
+                ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
+                                    r'90$^\circ$'])
+            else:
+                ax.set_xticklabels(['EQ', r'30N' r'60N', r'90N'])
+
     elif start_lat == -90 and end_lat == 90:
         ax.set_xticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
         minorticks = [-80, -70, -50, -40, -20, -10,
                       10, 20, 40, 50, 70, 80]
         ax.set_xticks(sindeg(minorticks), minor=True)
         if do_ticklabels:
-            ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
-                                '30' + _DEGR_N, " ", '90' + _DEGR_N])
+            if degr_symbols:
+                ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
+                                    '30' + _DEGR_N, " ", '90' + _DEGR_N])
+            else:
+                ax.set_xticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
 def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
