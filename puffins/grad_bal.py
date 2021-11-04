@@ -14,9 +14,9 @@ from .constants import (
     ROT_RATE_EARTH,
     THETA_REF,
 )
-from .names import LAT_STR, LEV_STR
+from .names import LAT_STR, LEV_STR, PHALF_STR
 from .nb_utils import cosdeg, sindeg
-from .calculus import avg_logp_weighted, lat_deriv
+from .calculus import avg_logp_weighted, lat_deriv, phalf_from_pfull
 from .dynamics import abs_vort_from_u
 from .thermodynamics import temp_from_equiv_pot_temp
 
@@ -209,25 +209,36 @@ def u_rce_minus_u_amc_cqe(lat_max, theta_b, temp_tropo=None,
 
 
 # Non-Boussinesq, non-CQE atmospheres, in pressure coordinates.
-def thermal_wind_p_coords(temp_avg, pressure, p0=1e3, lat_str=LAT_STR,
+def thermal_wind_p_coords(temp_avg, pressure, p0=1e5, lat_str=LAT_STR,
                           radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
-    if np.max(pressure) > 2e3:
-        pressure *= 1e-2
-    return (-r_d*lat_deriv(temp_avg, lat_str)*np.log(p0/pressure) /
-            (2*rot_rate*radius*sindeg(temp_avg[lat_str])))
+    """Thermal wind for data on the sphere in pressure coordinates.
+
+    Assumes that pressure is in Pa, not hPa.
+
+    """
+    return (-r_d * lat_deriv(temp_avg, lat_str) * np.log(p0 / pressure) /
+            (2 * rot_rate * radius * sindeg(temp_avg[lat_str])))
 
 
-def grad_wind_p_coords(temp, p_half, pressure, p0=1e3, lat_str=LAT_STR,
-                       p_str=LEV_STR, radius=RAD_EARTH,
+def grad_wind_p_coords(temp,  pressure, p_half=None, p0=1e5, lat_str=LAT_STR,
+                       p_str=LEV_STR, phalf_str=PHALF_STR, radius=RAD_EARTH,
                        rot_rate=ROT_RATE_EARTH, r_d=R_D):
-    lat = temp[lat_str]
-    coslat = cosdeg(lat)
+    """Gradient wind for data on the sphere in pressure coordinates.
+
+    Assumes that pressure is in Pa, not hPa.
+
+    """
+    if p_half is None:
+        p_half = phalf_from_pfull(pressure, p_bot=p0, phalf_str=phalf_str)
+
     temp_avg = avg_logp_weighted(temp, p_half, pressure, p_str=p_str)
     dtemp_avg_dlat = lat_deriv(temp_avg, lat_str)
-    if pressure.max() > 1e4:
-        raise ValueError("Expected pressures in hPa; got Pa")
-    sqrt_arg = 1 - (r_d*np.log(p0/pressure)*dtemp_avg_dlat /
-                    (coslat*sindeg(lat)*(rot_rate*radius)**2))
+
+    lat = temp[lat_str]
+    coslat = cosdeg(lat)
+
+    sqrt_arg = 1 - (r_d * np.log(p0 / pressure) * dtemp_avg_dlat /
+                    (coslat * sindeg(lat) * (rot_rate * radius) ** 2))
     return rot_rate * radius * coslat * (np.sqrt(sqrt_arg) - 1)
 
 
