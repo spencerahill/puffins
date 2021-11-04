@@ -12,11 +12,11 @@ def plan_burg_num(height, grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
     return height * grav / (rot_rate * radius)**2
 
 
-def therm_ross_num(delta_h, height, grav=GRAV_EARTH,
+def therm_ross_num(delta_h, height, lat_max=90, grav=GRAV_EARTH,
                    rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Thermal Rossby number."""
-    return delta_h * plan_burg_num(height, grav=grav, rot_rate=rot_rate,
-                                   radius=radius)
+    return delta_h * sindeg(lat_max) * plan_burg_num(
+        height, grav=grav, rot_rate=rot_rate, radius=radius)
 
 
 def abs_ang_mom(u, lat=None, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
