@@ -1,6 +1,16 @@
 #! /usr/bin/env python
 """Fundamental atmospheric dynamical quantities."""
-from .constants import GRAV_EARTH, RAD_EARTH, ROT_RATE_EARTH, THETA_REF
+import numpy as np
+import xarray as xr
+
+from .constants import (
+    GRAV_EARTH,
+    MEAN_SLP_EARTH,
+    R_D,
+    RAD_EARTH,
+    ROT_RATE_EARTH,
+    THETA_REF,
+)
 from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg, tandeg
 from .calculus import lat_deriv
@@ -116,8 +126,59 @@ def zonal_fric_inferred_steady(u_merid_flux, u_vert_flux, vwind,
     duw_dvert_term = u_vert_flux.differentiate(vert_str)
 
     u_flux_div = duv_dlat_term + duw_dvert_term
-    f = coriolis_param(lats, rot_rate=rot_rate)
-    return u_flux_div - f*vwind
+    cor_param = coriolis_param(lats, rot_rate=rot_rate)
+    return u_flux_div - cor_param * vwind
+
+
+def z_from_hypso(temp, p_sfc=MEAN_SLP_EARTH, p_top=1, r_d=R_D, grav=GRAV_EARTH,
+                 p_str=LEV_STR):
+    """Height computed from hypsometric equation.
+
+    Pressure is assumed in Pa, not hPa.
+
+    """
+    # Ensure all pressures have same horizontal dimensions as temperature.
+    non_vert_coords = xr.ones_like(
+        temp.isel(**{p_str: 0})).drop(p_str)
+    if np.isscalar(p_sfc):
+        p_sfc_val = p_sfc
+        p_sfc = p_sfc_val*non_vert_coords
+        p_sfc[p_str] = p_sfc_val
+    p_top_val = p_top
+    p_top = xr.zeros_like(p_sfc)
+    p_top[p_str] = p_top_val
+    pressure = (non_vert_coords*temp[p_str]).transpose(*temp.dims)
+
+    # Compute half-level pressure values as averages of full levels.
+    p_half_inner = 0.5*(
+        pressure.isel(**{p_str: slice(1, None)}).values +
+        pressure.isel(**{p_str: slice(None, -1)}).values
+    )
+    p_axis_num = temp.get_axis_num(p_str)
+    p_half = np.concatenate(
+        [np.expand_dims(p_top, p_axis_num), p_half_inner,
+         np.expand_dims(p_sfc, p_axis_num)], axis=p_axis_num
+    )
+
+    # Convert from hPa to Pa if necessary.
+    # if p_half.max() < 2000:
+    #     log_p_half = np.log(p_half*1e2)
+    # else:
+    log_p_half = np.log(p_half)
+
+    dlog_p_half_values = np.diff(log_p_half, axis=p_axis_num)
+    dlog_p_half = xr.ones_like(pressure)*dlog_p_half_values
+    temp_dlog_p = temp*dlog_p_half
+
+    # Integrate vertically.
+    height = r_d / grav * temp_dlog_p.isel(
+        **{p_str: slice(-1, None, -1)}).cumsum(p_str)
+    height = height.isel(**{p_str: slice(-1, None, -1)})
+
+    # Replace 'inf' values at TOA with NaNs and mask where
+    # input temperature array is masked.
+    return xr.where(np.isfinite(height) & temp.notnull(),
+                    height, np.nan)
 
 
 if __name__ == '__main__':
