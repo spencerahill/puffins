@@ -37,14 +37,22 @@ def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
 
 
 # Vertical integrals and averages.
-def integrate(arr, ddim, dim="plev"):
+def integrate(arr, ddim, dim=LEV_STR):
     """Integrate along the given dimension."""
     return (arr * ddim).sum(dim=dim)
 
 
-def int_dp_g(arr, dp, dim="plev", grav=GRAV_EARTH):
+def int_dp_g(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
     """Mass weighted integral."""
     return integrate(arr, to_pascal(dp, is_dp=True), dim=dim) / grav
+
+
+def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
+              phalf_str=PHALF_STR):
+    """Integral of array on pressure levels but weighted by log(pressure)."""
+    dlogp = dlogp_from_pfull(arr[pfull_str], p_top=p_top, p_bot=p_bot,
+                             phalf_str=phalf_str)
+    return integrate(arr, dlogp, dim=pfull_str)
 
 
 def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
@@ -319,8 +327,22 @@ def dp_from_phalf(phalf, pressure):
 
 def dlogp_from_phalf(phalf, pressure):
     """Pressure thickness of vertical levels given interface pressures."""
-    dlogp_vals = np.log(phalf.values[1:]/phalf.values[:-1])
-    return xr.ones_like(pressure)*dlogp_vals
+    # Avoid divide-by-zero error by overwriting if top pressure is zero.
+    phalf_vals = phalf.copy().values
+    if phalf_vals[0] == 0:
+        phalf_vals[0] = 0.5 * phalf_vals[1]
+    elif phalf_vals[-1] == 0:
+        phalf_vals[-1] = 0.5 * phalf_vals[-2]
+    dlogp_vals = np.log(phalf_vals[1:] / phalf_vals[:-1])
+    return xr.ones_like(pressure) * dlogp_vals
+
+
+def dlogp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
+                     phalf_str=PHALF_STR):
+    """Thickness in log(p) of vertical levels given level-center pressures."""
+    phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot,
+                             phalf_str=phalf_str)
+    return dlogp_from_phalf(phalf, pfull)
 
 
 def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
@@ -380,7 +402,7 @@ def avg_p_weighted(arr, phalf, pressure, p_str=LEV_STR):
 def avg_logp_weighted(arr, phalf, pressure, p_str=LEV_STR):
     """Log-pressure-weighted vertical average."""
     dlogp = dlogp_from_phalf(phalf, pressure)
-    return (arr*dlogp).cumsum(p_str) / dlogp.cumsum(p_str)
+    return (arr * dlogp).cumsum(p_str) / dlogp.cumsum(p_str)
 
 
 def col_extrema(arr, p_str=LEV_STR):
