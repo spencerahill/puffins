@@ -8,6 +8,7 @@ C_P = C_PD  # Shorthand for c_pd.
 R_D = 287.06  # Gas constant of dry air.
 C_VD = C_PD - R_D  # Specific heat of dry air at constant volume.
 KAPPA = R_D / C_PD
+MEAN_SLP_EARTH = 101325  # Earth's mean sea level pressure (Pa)
 
 # Water.
 L_F = 3.34e5  # Latent heat of fusion.

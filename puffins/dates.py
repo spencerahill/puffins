@@ -93,7 +93,7 @@ def subset_ann(arr, months, dim_time=TIME_STR, drop=False):
     if isinstance(months, str):
         if months == "ann":
             return arr
-        months = ann_subsets[months]
+        months = ann_subsets[months.lower()]
     time = arr[dim_time]
     return arr.where((time.dt.month >= np.min(months)) &
                      (time.dt.month <= np.max(months)), drop=drop)

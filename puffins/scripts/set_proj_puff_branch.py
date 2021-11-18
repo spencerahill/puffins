@@ -4,6 +4,7 @@ import argparse
 
 from puffins.nb_utils import setup_puffins
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Checkout a particular projects' puffins branch")

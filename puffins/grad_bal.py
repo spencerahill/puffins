@@ -7,6 +7,7 @@ from .constants import (
     C_P,
     GRAV_EARTH,
     L_V,
+    MEAN_SLP_EARTH,
     P0,
     R_D,
     R_V,
@@ -14,10 +15,10 @@ from .constants import (
     ROT_RATE_EARTH,
     THETA_REF,
 )
-from .names import LAT_STR, LEV_STR
-from .nb_utils import cosdeg, sindeg
-from .calculus import avg_logp_weighted, lat_deriv
-from .dynamics import abs_vort_from_u
+from .names import LAT_STR, LEV_STR, PHALF_STR
+from .nb_utils import cosdeg, sindeg, zero_cross_nh
+from .calculus import avg_logp_weighted, lat_deriv, phalf_from_pfull
+from .dynamics import abs_vort_from_u, z_from_hypso
 from .thermodynamics import temp_from_equiv_pot_temp
 
 
@@ -209,26 +210,88 @@ def u_rce_minus_u_amc_cqe(lat_max, theta_b, temp_tropo=None,
 
 
 # Non-Boussinesq, non-CQE atmospheres, in pressure coordinates.
-def thermal_wind_p_coords(temp_avg, pressure, p0=1e3, lat_str=LAT_STR,
-                          radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
-    if np.max(pressure) > 2e3:
-        pressure *= 1e-2
-    return (-r_d*lat_deriv(temp_avg, lat_str)*np.log(p0/pressure) /
-            (2*rot_rate*radius*sindeg(temp_avg[lat_str])))
+def thermal_wind_shear_p_coords(temp, pressure, radius=RAD_EARTH,
+                                rot_rate=ROT_RATE_EARTH, r_d=R_D,
+                                lat_str=LAT_STR):
+    """Thermal wind shear for data on the sphere in pressure coordinates.
+
+    Assumes that pressure is in Pa, not hPa.
+
+    Returns thermal wind shear in pressure coordinates, i.e. du/dp, with units
+    m s^-1 Pa^-1.
 
 
-def grad_wind_p_coords(temp, p_half, pressure, p0=1e3, lat_str=LAT_STR,
-                       p_str=LEV_STR, radius=RAD_EARTH,
-                       rot_rate=ROT_RATE_EARTH, r_d=R_D):
-    lat = temp[lat_str]
+    """
+    return (-1 * r_d * lat_deriv(temp, lat_str) /
+            (2 * rot_rate * radius * pressure * sindeg(temp[lat_str])))
+
+
+def thermal_wind_p_coords(height=None, temp=None, p_sfc=MEAN_SLP_EARTH,
+                          p_top=1., radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
+                          r_d=R_D, grav=GRAV_EARTH, lat_str=LAT_STR,
+                          p_str=LEV_STR):
+    """Thermal wind for data on the sphere in pressure coordinates.
+
+    Assumes that pressure is in Pa, not hPa.
+
+    Returns thermal wind, in m/s.
+
+    """
+    if height is None:
+        if temp is None:
+            raise ValueError("One of 'height' or 'temp' must be provided.")
+        height = z_from_hypso(temp, p_sfc=p_sfc, p_top=p_top, r_d=r_d,
+                              grav=grav, p_str=p_str)
+    sinlat = sindeg(height[lat_str])
+    return (-1 * grav * lat_deriv(height, lat_str) /
+            (2 * rot_rate * radius * sinlat))
+
+
+def grad_wind_p_coords(height=None, temp=None, p_sfc=MEAN_SLP_EARTH, p_top=1.,
+                       radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH,
+                       grav=GRAV_EARTH, r_d=R_D, lat_str=LAT_STR,
+                       p_str=LEV_STR):
+    """Gradient wind for data on the sphere in pressure coordinates.
+
+    Assumes that pressure is in Pa, not hPa.
+
+    """
+    if height is None:
+        if temp is None:
+            raise ValueError("One of 'height' or 'temp' must be provided.")
+        height = z_from_hypso(temp, p_sfc=p_sfc, p_top=p_top, r_d=r_d,
+                              grav=grav, p_str=p_str)
+    lat = height[lat_str]
+    sinlat = sindeg(lat)
     coslat = cosdeg(lat)
-    temp_avg = avg_logp_weighted(temp, p_half, pressure, p_str=p_str)
-    dtemp_avg_dlat = lat_deriv(temp_avg, lat_str)
-    if pressure.max() > 1e4:
-        raise ValueError("Expected pressures in hPa; got Pa")
-    sqrt_arg = 1 - (r_d*np.log(p0/pressure)*dtemp_avg_dlat /
-                    (coslat*sindeg(lat)*(rot_rate*radius)**2))
-    return rot_rate * radius * coslat * (np.sqrt(sqrt_arg) - 1)
+
+    sqrt_arg = (1 - grav * lat_deriv(height, lat_str) /
+                (sinlat * coslat * (rot_rate * radius) ** 2))
+    return (rot_rate * radius * coslat *
+            (np.sqrt(sqrt_arg) - 1)).transpose(*height.dims)
+
+
+# def grad_wind_p_coords(temp, pressure, p_half=None, p0=MEAN_SLP_EARTH,
+#                        lat_str=LAT_STR, p_str=LEV_STR, phalf_str=PHALF_STR,
+#                        radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
+#     """Gradient wind for data on the sphere in pressure coordinates.
+
+#     Assumes that pressure is in Pa, not hPa.
+
+#     """
+#     if p_half is None:
+#         p_half = phalf_from_pfull(pressure, p_bot=p0, phalf_str=phalf_str)
+
+#     temp_avg = avg_logp_weighted(temp, p_half, pressure, p_str=p_str)
+#     dtemp_avg_dlat = lat_deriv(temp_avg, lat_str)
+
+#     lat = temp[lat_str]
+#     coslat = cosdeg(lat)
+
+#     sqrt_arg = 1 - (r_d * np.log(p0 / pressure) * dtemp_avg_dlat /
+#                     (coslat * sindeg(lat) * (rot_rate * radius) ** 2))
+#     return (rot_rate * radius * coslat *
+#             (np.sqrt(sqrt_arg) - 1)).transpose(*temp.dims)
 
 
 if __name__ == '__main__':
