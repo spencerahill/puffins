@@ -29,6 +29,7 @@ plt_rc_params_custom = {
     "legend.frameon": False,  # Turn off box around legend.
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
+    "text.color": GRAY, # Make default text color gray.
     "xtick.color": GRAY,  # Make xticks gray.
     "ytick.color": GRAY,  # Make yticks gray.
 }

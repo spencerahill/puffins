@@ -101,8 +101,8 @@ def lin_regress(arr1, arr2, dim):
 
     arr = xr.apply_ufunc(
         _linregress,
-        arr1_trunc,
-        arr2_trunc,
+        arr1,
+        arr2,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,
