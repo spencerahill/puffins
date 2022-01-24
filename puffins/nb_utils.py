@@ -179,12 +179,11 @@ def apply_maybe_groupby(func, non_groupby_dims, arrs, args=None, kwargs=None):
         if args is not None:
             func_args += args
         return func(*func_args, **kwargs)
-    else:
-        return groupby_apply_func(func, arrs, groupby_dims,
-                                  func_args=args, func_kwargs=kwargs)
+    return groupby_apply_func(func, arrs, groupby_dims,
+                              func_args=args, func_kwargs=kwargs)
 
 
-# Find locations of array extrema.
+# Find locations of array extrema and nearest neighbors.
 def max_and_argmax(arr, do_min=False):
     """Get extremum value and associated coordinate values."""
     method = arr.argmin if do_min else arr.argmax
@@ -196,6 +195,16 @@ def max_and_argmax_along_dim(dataset, dim, do_min=False):
     """Extremum and its coords for each value of a dimension."""
     grouped = dataset.groupby(dim, squeeze=False)
     return grouped.apply(max_and_argmax, do_min=do_min)
+
+
+def find_nearest(arr, value):
+    """Return element in the given array closest to the given value.
+
+    Adapted from https://stackoverflow.com/a/10465997/1706640
+
+    """
+    idx = np.abs(arr - value).idxmin()
+    return arr.loc[idx]
 
 
 # Array zero crossings.
