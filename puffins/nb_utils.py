@@ -4,7 +4,7 @@
 from glob import glob
 import importlib
 import os.path
-from subprocess import PIPE, Popen
+import subprocess
 import warnings
 
 from IPython.display import display, Javascript
@@ -61,10 +61,12 @@ def check_nb_unused_imports(nb_path):
     - https://stackoverflow.com/a/15100663
 
     """
-    p1 = Popen(f"jupyter nbconvert {nb_path} --stdout --to python".split(),
-               stdout=PIPE)
-    p2 = Popen("flake8 - --select=F401".split(), stdin=p1.stdout,
-               stdout=PIPE)
+    p1 = subprocess.Popen(
+        f"jupyter nbconvert {nb_path} --stdout --to python".split(),
+        stdout=subprocess.PIPE)
+    p2 = subprocess.Popen(
+        "flake8 - --select=F401".split(), stdin=p1.stdout,
+        stdout=subprocess.PIPE)
     p1.stdout.close()
     return p2.communicate()[0].decode("utf-8")
 
@@ -233,7 +235,7 @@ def zero_cross_nh(arr, lat_str=LAT_STR):
 
 
 # Data IO, processing, and cleaning.
-def read_netcdfs(files, dim="time", transform_func=None):
+def read_netcdfs(files, dim="time", transform_func=None, pre_func=None):
     """Load multiple netCDF files into Dataset, optimizing for performance.
 
     Adapted from https://xarray.pydata.org/en/stable/user-guide/io.html#netcdf
@@ -247,9 +249,19 @@ def read_netcdfs(files, dim="time", transform_func=None):
             return ds
 
     paths = sorted(glob(files))
+    if pre_func is not None:
+        pre_func(paths)
+
     datasets = [process_one_path(p) for p in paths]
     combined = xr.concat(datasets, dim)
     return combined
+
+
+def dmget(files_list):
+    """Call GFDL command 'dmget' to access archived files."""
+    if isinstance(files_list, str):
+        files_list = [files_list]
+    return subprocess.call(["dmget"] + files_list)
 
 
 def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):

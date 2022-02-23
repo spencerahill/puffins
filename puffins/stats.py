@@ -7,7 +7,7 @@ import sklearn.metrics
 import scipy.stats
 import xarray as xr
 
-from .names import LAT_STR, LON_STR, YEAR_STR
+from .names import LAT_STR, YEAR_STR
 from .nb_utils import cosdeg
 
 
@@ -73,6 +73,11 @@ def run_mean_anom(arr, n=10, dim="time", center=True, **kwargs):
     return arr - run_mean(arr, n, dim, center=center, **kwargs)
 
 
+def avg_monthly(arr, dim="time"):
+    """Average across months weighting by number of days in each month."""
+    return arr.weighted(arr[dim].dt.days_in_month).mean(dim)
+
+
 def xwelch(arr, **kwargs):
     """Wrapper for scipy.signal.welch for xr.DataArrays"""
     freqs, psd = scipy.signal.welch(arr, **kwargs)
@@ -101,7 +106,8 @@ def welch(arr, dim="time", **welch_kwargs):
         output_dtypes=["float64"],
         dask_gufunc_kwargs=dict(output_sizes={"parameter": 2}),
     )
-    freqs = arr.isel(parameter=0, lat=0, lon=0).rename("frequency").reset_coords(drop=True)
+    freqs = arr.isel(parameter=0, lat=0, lon=0).rename(
+        "frequency").reset_coords(drop=True)
     psd = arr.isel(parameter=1)
     ds = psd.to_dataset(name="psd")
     ds.coords["frequency"] = freqs
@@ -200,8 +206,8 @@ def lin_regress(arr1, arr2, dim):
 
     arr = xr.apply_ufunc(
         _linregress,
-        arr1_trunc,
-        arr2_trunc,
+        arr1,
+        arr2,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,

@@ -72,7 +72,6 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
                                     r'90$^\circ$'])
             else:
                 ax.set_xticklabels(['EQ', r'30N' r'60N', r'90N'])
-
     elif start_lat == -90 and end_lat == 90:
         ax.set_xticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
         minorticks = [-80, -70, -50, -40, -20, -10,
@@ -100,7 +99,7 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
     elif start_lat == -90 and end_lat == 90:
         ticks = [-90, -60, -30, 0, 30, 60, 90]
         minor_ticks = [-80, -70, -50, -40, -20, -10,
-                      10, 20, 40, 50, 70, 80]
+                       10, 20, 40, 50, 70, 80]
         if degr_symbol:
             ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
                           "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
@@ -420,7 +419,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     kw.update(textkw)
 
     if valfmt is None:
-        valfmt=ticker.FuncFormatter(_corrs_txt_format)
+        valfmt = ticker.FuncFormatter(_corrs_txt_format)
     elif isinstance(valfmt, str):
         valfmt = ticker.StrMethodFormatter(valfmt)
 
