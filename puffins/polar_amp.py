@@ -23,6 +23,9 @@ def polar_amp_index(arr, include_sh=True, include_nh=True,
     if include_nh:
         nh_avg = merid_avg_grid_data(arr, min_lat=nh_bound, lat_str=lat_str)
         nh_weight = abs(90 - nh_bound)
+    else:
+        nh_avg = 0
+        nh_weight = 0
     numer = (sh_weight * sh_avg + nh_weight * nh_avg) / (sh_weight + nh_weight)
     return numer / denom
 
