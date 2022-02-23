@@ -13,7 +13,7 @@ import xarray as xr
 
 from .names import LAT_STR
 from .nb_utils import sindeg
-from .stats import detrend, dt_std_anom, lin_regress, standardize, trend
+from .stats import detrend, dt_std_anom, lin_regress, trend
 
 _DEGR = r'$^\circ$'
 _DEGR_S = _DEGR + 'S'
@@ -378,7 +378,7 @@ def _corrs_txt_format(x, pos):
 
 
 def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
-                     threshold=None, **textkw):
+                     threshold=None, include_diag=False, **textkw):
     """
     A function to annotate a heatmap.
 
@@ -409,7 +409,6 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     if not isinstance(data, (list, np.ndarray)):
         data = im.get_array()
 
-
     # Normalize the threshold to the images color range.
     if threshold is not None:
         threshold = im.norm(threshold)
@@ -417,8 +416,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
         threshold = im.norm(data.max())/2.
 
     # Set default alignment to center.
-    kw = dict(horizontalalignment="center",
-              verticalalignment="center")
+    kw = dict(horizontalalignment="center", verticalalignment="center")
     kw.update(textkw)
 
     if valfmt is None:
@@ -431,7 +429,13 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     texts = []
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
-            if j < i:
+            if include_diag == "all":
+                do_annotate = True
+            elif include_diag:
+                do_annotate = j <= i
+            else:
+                do_annotate = j < i
+            if do_annotate:
                 kw.update(color=textcolors[int(im.norm(data[i, j]) > threshold)])
                 text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
                 texts.append(text)
@@ -440,6 +444,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
 
 
 def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
+    """Save a figure from a notebook into the desired figures directory."""
     if fig is None:
         fig = plt.gcf()
     fig.savefig(os.path.join(fig_dir, name), **kwargs)
