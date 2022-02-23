@@ -1,5 +1,6 @@
 """Functionality relating to polar amplification."""
 import numpy as np
+import xarray as xr
 
 from .calculus import merid_avg_grid_data
 from .names import LAT_STR
@@ -11,21 +12,19 @@ def polar_amp_index(arr, include_sh=True, include_nh=True,
     """Compute ratio of value averaged over pole(s) to global average."""
     if not (include_sh or include_nh):
         raise ValueError("One or both of SH or NH must be selected.")
-    if include_sh and include_nh and (sh_bound != -nh_bound):
-        raise ValueError("SH and NH polar caps must have same surface areas.")
-
     denom = merid_avg_grid_data(arr, min_lat=min(denom_bounds),
                                 max_lat=max(denom_bounds), lat_str=lat_str)
-    polar_vals = []
     if include_sh:
-        polar_vals.append(merid_avg_grid_data(arr, max_lat=sh_bound,
-                                              lat_str=lat_str))
+        sh_avg = merid_avg_grid_data(arr, max_lat=sh_bound, lat_str=lat_str)
+        sh_weight = abs(-90 - sh_bound)
+    else:
+        sh_avg = 0
+        sh_weight = 0
     if include_nh:
-        polar_vals.append(merid_avg_grid_data(arr, min_lat=nh_bound,
-                                              lat_str=lat_str))
-    polar_avg = np.mean(polar_vals)
-
-    return polar_avg / denom
+        nh_avg = merid_avg_grid_data(arr, min_lat=nh_bound, lat_str=lat_str)
+        nh_weight = abs(90 - nh_bound)
+    numer = (sh_weight * sh_avg + nh_weight * nh_avg) / (sh_weight + nh_weight)
+    return numer / denom
 
 
 def arctic_amp(arr, min_lat=60, denom_bounds=(-90, 90),
