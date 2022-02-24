@@ -2,7 +2,7 @@
 import numpy as np
 import xarray as xr
 
-from .calculus import merid_avg_grid_data
+from .calculus import merid_avg_grid_data, merid_avg_sinlat_data
 from .names import LAT_STR
 
 
@@ -12,16 +12,25 @@ def polar_amp_index(arr, include_sh=True, include_nh=True,
     """Compute ratio of value averaged over pole(s) to global average."""
     if not (include_sh or include_nh):
         raise ValueError("One or both of SH or NH must be selected.")
-    denom = merid_avg_grid_data(arr, min_lat=min(denom_bounds),
-                                max_lat=max(denom_bounds), lat_str=lat_str)
+
+    try:
+        denom = merid_avg_grid_data(arr, min_lat=min(denom_bounds),
+                                    max_lat=max(denom_bounds), lat_str=lat_str)
+        func_avg = merid_avg_grid_data
+    except ValueError:
+        denom = merid_avg_sinlat_data(arr, min_lat=min(denom_bounds),
+                                      max_lat=max(denom_bounds),
+                                      lat_str=lat_str)
+        func_avg = merid_avg_sinlat_data
+
     if include_sh:
-        sh_avg = merid_avg_grid_data(arr, max_lat=sh_bound, lat_str=lat_str)
+        sh_avg = func_avg(arr, max_lat=sh_bound, lat_str=lat_str)
         sh_weight = abs(-90 - sh_bound)
     else:
         sh_avg = 0
         sh_weight = 0
     if include_nh:
-        nh_avg = merid_avg_grid_data(arr, min_lat=nh_bound, lat_str=lat_str)
+        nh_avg = func_avg(arr, min_lat=nh_bound, lat_str=lat_str)
         nh_weight = abs(90 - nh_bound)
     else:
         nh_avg = 0
@@ -47,6 +56,7 @@ def antarctic_amp(arr, max_lat=-60, denom_bounds=(-90, 90),
 
 
 def print_polar_amp(arr, denom_bounds=(-90, 90)):
+    """Compute and print Arctic, Antarctic, and combined polar amp indices."""
     print("Polar amplification indices")
     print("Arctic (60N-90N): {:0.2f}".format(
         float(arctic_amp(arr, denom_bounds=denom_bounds))))
