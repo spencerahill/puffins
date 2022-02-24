@@ -108,16 +108,15 @@ def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
 
     """
     lat = arr[lat_str]
-    arr_masked = arr.where((lat > min_lat) & (lat < max_lat),
-                           drop=True)
+    arr_masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
 
     dlat = lat.diff(lat_str)
     dlat_mean = dlat.mean(lat_str)
     dlat_frac_var = (dlat - dlat_mean) / dlat_mean
     if np.any(np.abs(dlat_frac_var) > dlat_var_tol):
-        max_frac_var = np.max(np.abs(dlat_frac_var))
+        max_frac_var = float(np.max(np.abs(dlat_frac_var)))
         raise ValueError(
-            f"Uniform latitude spacing required to within {dlat_frac_var}.  "
+            f"Uniform latitude spacing required to within {dlat_var_tol}.  "
             f"Actual max fractional deviation from uniform: {max_frac_var}"
         )
 
@@ -134,7 +133,7 @@ def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
     area = xr.ones_like(lat)*2.*np.pi*radius**2*sinlat_diff
     area_masked = area.where((lat > min_lat) & (lat < max_lat),
                              drop=True)
-    return (arr_masked*area_masked).sum(lat_str)
+    return (arr_masked * area_masked).sum(lat_str)
 
 
 def merid_avg_grid_data(arr, lat=None, min_lat=-90, max_lat=90,
@@ -150,6 +149,33 @@ def merid_avg_grid_data(arr, lat=None, min_lat=-90, max_lat=90,
     return (merid_integral_grid_data(arr, min_lat, max_lat, lat_str) /
             merid_integral_grid_data(xr.ones_like(arr), min_lat,
                                      max_lat, lat_str))
+
+
+def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
+                          lat_str=LAT_STR, dsinlat_var_tol=0.001):
+    """Area-weighted meridional average for data evenly spaced in sin(lat).
+
+    Data spaced uniformly by sin(lat) is already area-weighted, so just
+    average, but first check that the spacing really is uniform (enough).
+
+    """
+    lat = arr[lat_str]
+    arr_masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
+
+    if sinlat:
+        dsinlat = sinlat.diff(lat_str)
+    else:
+        dsinlat = sindeg(lat).diff(lat_str)
+
+    dsinlat_mean = dsinlat.mean(lat_str)
+    dsinlat_frac_var = (dsinlat - dsinlat_mean) / dsinlat_mean
+    if np.any(np.abs(dsinlat_frac_var) > dsinlat_var_tol):
+        max_frac_var = float(np.max(np.abs(dsinlat_frac_var)))
+        raise ValueError(
+            f"Uniform sin(lat) spacing required to within {dsinlat_var_tol}.  "
+            f"Actual max fractional deviation from uniform: {max_frac_var}"
+        )
+    return arr_masked.mean(lat_str)
 
 
 # Surface area of lat-lon data.
