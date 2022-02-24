@@ -169,7 +169,7 @@ def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
     lat = arr[lat_str]
     arr_masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
 
-    if sinlat:
+    if sinlat is not None:
         dsinlat = sinlat.diff(lat_str)
     else:
         dsinlat = sindeg(lat).diff(lat_str)
