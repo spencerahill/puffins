@@ -606,8 +606,6 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
-    if ascentlat == 0:
-        return np.rad2deg(lat_ro_ann)
     lat_a = np.deg2rad(ascentlat)
     return np.rad2deg(
         lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a)**4))
