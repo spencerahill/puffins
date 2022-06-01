@@ -13,6 +13,7 @@ from .names import (
     LON_BOUNDS_STR,
     LON_STR,
     LEV_STR,
+    PFULL_STR,
     PHALF_STR,
     SFC_AREA_STR,
 )
@@ -338,17 +339,27 @@ def phalf_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
     return coord_arr_1d(values=phalf_vals, dim=phalf_str)
 
 
-def dp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH, phalf_str=PHALF_STR):
+def dp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH):
     """Pressure thickness of levels given pressures at level centers."""
-    phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot,
-                             phalf_str=phalf_str)
+    phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot)
     return np.abs(xr.ones_like(pfull) * np.diff(phalf.values))
 
 
-def dp_from_phalf(phalf, pressure):
+def dp_from_phalf(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
     """Pressure thickness of vertical levels given interface pressures."""
-    dp_vals = phalf.values[1:] - phalf.values[:-1]
-    return xr.ones_like(pressure)*dp_vals
+    dp_vals = np.abs(phalf.isel(**{phalf_str: slice(None, -1)}).values -
+                     phalf.isel(**{phalf_str: slice(1, None)}).values)
+    dims_out = []
+    for dim in phalf.dims:
+        if dim == "phalf":
+            dims_out.append(pfull_str)
+        else:
+            dims_out.append(dim)
+
+    vals_template = ([phalf[dim] for dim in phalf.dims if dim != phalf_str] +
+                     [pfull_ref])
+    arr_template = xr.ones_like(np.product(vals_template)).transpose(*dims_out)
+    return (arr_template * dp_vals).rename("dp")
 
 
 def dlogp_from_phalf(phalf, pressure):
@@ -369,6 +380,11 @@ def dlogp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
     phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot,
                              phalf_str=phalf_str)
     return dlogp_from_phalf(phalf, pfull)
+
+
+def phalf_from_psfc(bk, pk, p_sfc):
+    """Compute pressure of half levels of hybrid sigma-pressure coordinates."""
+    return p_sfc * bk + pk
 
 
 def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
@@ -406,7 +422,7 @@ def pfull_simm_burr(arr_template, phalf, phalf_ref, pfull_ref,
 
     """
     pfull_vals = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str)
-    return xr.ones_like(arr_template)*pfull_vals
+    return xr.ones_like(arr_template) * pfull_vals
 
 
 def _flip_dim(arr, dim):

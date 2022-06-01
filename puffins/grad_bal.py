@@ -32,9 +32,8 @@ def u_ang_mom_cons(lats, max_lat, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
 def u_given_ro(lat, lat_ascent, ross_num,
                rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Absolute angular momentum for a given Rossby number."""
-    return ross_num*u_ang_mom_cons(lat, lat_ascent,
-                                   rot_rate=rot_rate,
-                                   radius=radius)
+    return ross_num * u_ang_mom_cons(lat, lat_ascent, rot_rate=rot_rate,
+                                     radius=radius)
 
 
 def abs_ang_mom_given_ro(lat, lat_ascent, ross_num,
