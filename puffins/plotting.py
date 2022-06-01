@@ -85,7 +85,7 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
                 ax.set_xticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
-def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
+def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     """Make the x-axis be latitude."""
     ax.set_xlim([start_lat, end_lat])
 
@@ -109,7 +109,7 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
         ticks = np.arange(start_lat, end_lat + 1, 10)
     ax.set_xticks(ticks)
     ax.set_xticks(minor_ticks, minor=True)
-    ax.set_xticklabels(ticklabels)
+    ax.set_xticklabels(ticklabels, **kwargs)
     ax.set_xlabel(" ")
 
 
@@ -170,10 +170,15 @@ def _plot_cutoff_ends(lats, arr, ax=None, **kwargs):
     ax.plot(lats[2:-2], arr[2:-2], **kwargs)
 
 
-def panel_label(panel_num, ax=None, x=0.03, y=0.9, extra_text=None,
+def panel_label(panel_num=None, ax=None, x=0.03, y=0.9, extra_text=None,
                 **text_kwargs):
     if ax is None:
         ax = plt.gca()
+    if panel_num is None:
+        for n, ax_ in enumerate(ax):
+            panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text,
+                        **text_kwargs)
+        return
     letters = 'abcdefghijklmnopqrstuvwxyz'
     label = '({})'.format(letters[panel_num])
     if extra_text is not None:

@@ -213,9 +213,19 @@ def find_nearest(arr, value):
 def zero_cross_bounds(arr, dim, num_cross):
     """Find the values bounding an array's zero crossing."""
     sign_switch = np.sign(arr).diff(dim)
-    switch_val = arr[dim].where(sign_switch, drop=True)[num_cross]
-    lower_bound = max(0.999*switch_val, np.min(arr[dim]))
-    upper_bound = min(1.001*switch_val, np.max(arr[dim]))
+    switch_arr = arr[dim].where(sign_switch, drop=True)
+    if len(switch_arr) == 0:
+        if num_cross == 0:
+            ind = -1
+        elif num_cross == -1:
+            ind = 0
+        else:
+            raise ValueError
+        switch_val = arr[dim][ind]
+    else:
+        switch_val = switch_arr[num_cross]
+    lower_bound = max(0.999 * switch_val, np.min(arr[dim]))
+    upper_bound = min(1.001 * switch_val, np.max(arr[dim]))
     return arr.sel(**{dim: [lower_bound, upper_bound], "method": "backfill"})
 
 
