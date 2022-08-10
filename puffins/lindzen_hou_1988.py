@@ -134,8 +134,8 @@ def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
     zero_bounds_guess_range = np.arange(0.1, 90, 20)
     return np.sign(lat_max) * brentq_solver_sweep_param(
         _eta_rce_zero_lh88,
-        lat_max,
-        init_guess,
+        np.abs(lat_max),
+        np.abs(init_guess),
         zero_bounds_guess_range,
         funcargs=(therm_ro,),
     )

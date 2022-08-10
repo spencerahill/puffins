@@ -561,9 +561,9 @@ def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
     """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
     sinlat = sindeg(lat)
     coslat = cosdeg(lat)
-    term1 = sinlat**4 / coslat**2
-    term2 = -sindeg(ascentlat)**2 * sinlat**2 / coslat**2
-    term3 = -np.deg2rad(h00lat)**4
+    term1 = sinlat ** 4
+    term2 = -sindeg(ascentlat) ** 2 * sinlat ** 2
+    term3 = -np.deg2rad(h00lat) ** 4 * coslat ** 2
     return np.rad2deg(term1 + term2 + term3)
 
 
@@ -595,7 +595,7 @@ def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
 
 def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
     """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
-    if therm_ro == 0:
+    if np.all(therm_ro == 0):
         return 0.
     return np.rad2deg(c_ascent * (0.5 * therm_ro) ** (1. / 3.))
 
