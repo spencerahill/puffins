@@ -20,6 +20,7 @@ from . import hides
 from . import kuo_el
 from . import polar_amp
 from . import thermodynamics
+from . import therm_inert
 from . import tropopause
 
 from . import held_hou_1980

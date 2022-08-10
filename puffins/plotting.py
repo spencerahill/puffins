@@ -105,12 +105,25 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
                           "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
         else:
             ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
+    elif start_lat == -30 and end_lat == 30:
+        ticks = [-30, -20, -10, 0, 10, 20, 30]
+        minor_ticks = [-25, -15, -5, 5, 15, 25]
+        if degr_symbol:
+            ticklabels = [f"30{_DEGR_S}", f"20{_DEGR_S}", f"10{_DEGR_S}",
+                          "EQ", f"10{_DEGR_N}", f"20{_DEGR_N}", f"30{_DEGR_N}"]
+        else:
+            ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
+
     else:
         ticks = np.arange(start_lat, end_lat + 1, 10)
+        minor_ticks = None
+        ticklabels = None
     ax.set_xticks(ticks)
-    ax.set_xticks(minor_ticks, minor=True)
-    ax.set_xticklabels(ticklabels, **kwargs)
-    ax.set_xlabel(" ")
+    if minor_ticks is not None:
+        ax.set_xticks(minor_ticks, minor=True)
+    if ticklabels is not None:
+        ax.set_xticklabels(ticklabels, **kwargs)
+    ax.set_xlabel("")
 
 
 def lat_yaxis(ax, start_lat=-90, end_lat=90):
@@ -124,7 +137,16 @@ def lat_yaxis(ax, start_lat=-90, end_lat=90):
         ax.set_yticklabels(['-90' + _DEGR, '', '', '-60' + _DEGR, '', '',
                             '-30' + _DEGR, '', '', 'EQ', '', '', '30' + _DEGR,
                             '', '', '60' + _DEGR, '', '', '90' + _DEGR])
+    elif start_lat == -45 and end_lat == 45:
+        ax.set_yticks(np.arange(-45, 46, 15))
+        ax.set_yticklabels(['45S', '30S', '15S', 'EQ', '15N', '30N', '45N'])
     ax.set_ylabel(" ")
+
+def ann_cyc_xaxis(ax):
+    ax.set_xlim(1, 12)
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels("JFMAMJJASOND")
+    ax.set_xlabel("")
 
 
 def faceted(*args, width=4, aspect=0.618, **kwargs):
