@@ -28,13 +28,13 @@ from .lindzen_hou_1988 import pot_temp_rce_lh88
 def _theta_hat_amc_lh88(sinlat, sinlat_1, theta_hat_1, theta_ref,
                         del_h_over_ro):
     """Lindzen and Hou 1988 Eq. 7."""
-    return (theta_hat_1 - 0.5*theta_ref*del_h_over_ro *
-            (sinlat**2 - sinlat_1**2)**2 / (1 - sinlat**2))
+    return (theta_hat_1 - 0.5 * theta_ref * del_h_over_ro *
+            (sinlat ** 2 - sinlat_1 ** 2) ** 2 / (1 - sinlat ** 2))
 
 
 def _theta_hat_rce_lh88(sinlat, sinlat_0, theta_ref, delta_h):
     """Lindzen and Hou 1988 Eq. 1b."""
-    return theta_ref*(1 + delta_h / 3. - delta_h * (sinlat - sinlat_0)**2)
+    return theta_ref * (1 + delta_h / 3. - delta_h * (sinlat - sinlat_0) ** 2)
 
 
 def _lh88_amc_rce_theta_hat_diff(sinlat, sinlat_0, sinlat_1, theta_hat_1,
