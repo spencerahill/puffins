@@ -4,21 +4,25 @@ import scipy.ndimage
 import xarray as xr
 
 from .calculus import subtract_col_avg
-from .constants import GRAV_EARTH
+from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
+from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate
 from .nb_utils import (
     cosdeg,
+    sindeg,
     zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
     to_pascal,
 )
+from .num_solver import brentq_solver_sweep_param
 
 
-def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
-                     lat_str=LAT_STR, lon_str=LON_STR, lev_str=LEV_STR):
+def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
+                     impose_zero_col_flux=True, lat_str=LAT_STR,
+                     lon_str=LON_STR, lev_str=LEV_STR):
     """Meridional mass streamfunction.
 
     Parameters
@@ -32,6 +36,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
     -------
     xarray.DataArray
         The meridional mass streamfunction.
+
     """
     # Zonally average v and dp.
     if lon_str in v.dims:
@@ -52,7 +57,8 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, impose_zero_col_flux=True,
     lats = v[lat_str]
     # Leading minus sign results in southern hemisphere cell
     # (i.e. counter-clockwise circulation in lat-height plane) being positive.
-    return -(lat_area_weight(lats) * streamfunc).transpose(*v_znl_mean.dims)
+    return -(lat_area_weight(lats, radius=radius) * streamfunc).transpose(
+        *v_znl_mean.dims).rename("streamfunc")
 
 
 def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
@@ -165,12 +171,12 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, frac_thresh=0., lat_str=LAT_STR,
-                          lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
+                          lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
-    hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
-                                      lev_str=lev_str)
+    hc_strengths = had_cells_strength(strmfunc, max_plev=max_plev,
+                                      lat_str=lat_str, lev_str=lev_str)
     lat_sh_max = hc_strengths[lat_str][0]
     lat_nh_max = hc_strengths[lat_str][1]
 
@@ -179,19 +185,17 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., lat_str=LAT_STR,
                                  drop=True)
     sf_norm_thresh = sf_max2max / np.abs(sf_max2max.max()) - frac_thresh
     sf_interped = sf_norm_thresh.interp(
-        **{lat_str:np.arange(lat_sh_max, lat_nh_max + 0.005, 0.05)}
+        **{lat_str: np.arange(lat_sh_max, lat_nh_max + 0.005, 0.05)}
     )
     return sf_interped[lat_str][np.abs(sf_interped).argmin(lat_str)]
-    # sf_edge_bounds = zero_cross_bounds(sf_max2max, lat_str, 0)
-    # return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str],
-                       # 0, lat_str)[lat_str]
 
 
 def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                  max_plev=None, cos_factor=False, lat_str=LAT_STR,
+                  lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
-    hc_strengths = had_cells_strength(strmfunc, lat_str=lat_str,
-                                      lev_str=lev_str)
+    hc_strengths = had_cells_strength(strmfunc, max_plev=max_plev,
+                                      lat_str=lat_str, lev_str=lev_str)
     if cell == "north":
         label = "had_cell_nh"
     elif cell == "south":
@@ -222,7 +226,6 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     # Restrict to the latitudes from the max to the nearest point with
     # opposite-signed value.
 
-
     # Apply cubic interpolation in latitude to a refined mesh.  Otherwise, the
     # cell edge can (unphysically) vary non-monotonically with `frac_thresh`.
     lats_interp = np.arange(sf_one_side[lat_str].min(),
@@ -250,27 +253,31 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
                        lat_str)[lat_str]
 
 
-def had_cells_south_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
-                         lev_str=LEV_STR):
+def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
+                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
         cell="south",
         edge="south",
         frac_thresh=frac_thresh,
+        max_plev=max_plev,
+        cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
     )
 
 
-def had_cells_north_edge(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
-                         lev_str=LEV_STR):
+def had_cells_north_edge(strmfunc, frac_thresh=0.1, max_plev=None,
+                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
         strmfunc,
         cell="north",
         edge="north",
         frac_thresh=frac_thresh,
+        max_plev=max_plev,
+        cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
     )
@@ -283,10 +290,10 @@ def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
         (had_cell_edge, dict(cell="south", edge="south",
                              frac_thresh=frac_thresh)),
         # (had_cell_edge, dict(cell="south", edge="north",
-                             # frac_thresh=frac_thresh)),
+        #                      frac_thresh=frac_thresh)),
         (had_cells_shared_edge, {}),
         # (had_cell_edge, dict(cell="north", edge="south",
-                             # frac_thresh=frac_thresh)),
+        #                      frac_thresh=frac_thresh)),
         (had_cell_edge, dict(cell="north", edge="north",
                              frac_thresh=frac_thresh)),
          ]
@@ -548,3 +555,98 @@ def _hadley_ferrel_cells(cells, min_frac_strength=0.05, max_num_cells=4,
                 break
     cells['cell'] = labels
     return cells
+
+
+def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
+    """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
+    sinlat = sindeg(lat)
+    coslat = cosdeg(lat)
+    term1 = sinlat ** 4
+    term2 = -sindeg(ascentlat) ** 2 * sinlat ** 2
+    term3 = -np.deg2rad(h00lat) ** 4 * coslat ** 2
+    return np.rad2deg(term1 + term2 + term3)
+
+
+def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
+                      burg_num=None, ross_num=1., delta_v=0.125,
+                      height=HEIGHT_TROPO, grav=GRAV_EARTH,
+                      rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
+                      zero_bounds_guess_range=np.arange(0.1, 90, 5)):
+    """Numerically solve fixed-Ro, 2-layer BCI model of HC edge."""
+    if lat_fixed_ro_ann is None:
+        if burg_num is None:
+            burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
+                                     radius=radius)
+        lat_fixed_ro_ann = np.rad2deg((burg_num * delta_v / ross_num) ** 0.25)
+
+    def _solver(lat_a, lat_h):
+        # Start guess at the average of the two given latitudes.
+        init_guess = 0.5 * (lat_a + lat_h)
+        return brentq_solver_sweep_param(
+            _fixed_ro_bci_edge,
+            lat_a,
+            init_guess,
+            zero_bounds_guess_range,
+            funcargs=(lat_h,),
+        )
+    return xr.apply_ufunc(_solver, ascentlat, lat_fixed_ro_ann, vectorize=True,
+                          dask="parallelized")
+
+
+def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
+    """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
+    if np.all(therm_ro == 0):
+        return 0.
+    return np.rad2deg(c_ascent * (0.5 * therm_ro) ** (1. / 3.))
+
+
+def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
+                                  burg_num=None, ross_num=1, delta_v=0.125,
+                                  c_descent=1., height=HEIGHT_TROPO,
+                                  grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
+                                  radius=RAD_EARTH):
+    """Small-angle solution for fixed-Ro, BCI model for HC descending edge.
+
+    Both ascentlat and lat_fixed_ro_ann should be in degrees, not radians.
+    And the return value is in degrees, not radians.
+
+    """
+    if lat_fixed_ro_ann is not None:
+        lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
+    else:
+        if burg_num is None:
+            burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
+                                     radius=radius)
+        lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+    lat_a = np.deg2rad(ascentlat)
+    return c_descent * np.rad2deg(
+        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a)**4))
+    )
+
+
+def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
+                                       c_descent=1, delta_v=0.125,
+                                       delta_h=1/15, ross_num=1):
+    """Descending edge approx including theory for ascent lat.
+
+    That is, the ascending latitude is assumed equal to the c_ascent times the
+    thermal Rossby number to the one-third power.  From Hill, Bordoni, and
+    Mitchell, 2021, JAS, "Solsticial Hadley Cell Ascending Edge Theory from
+    Supercriticality."
+
+    Then the descending edge assumes a uniform Rossby number and the 2-layer
+    BCI condition.
+
+    """
+    lat_ascent = lat_ascent_eta0_approx(therm_ross, c_ascent=c_ascent)
+    term1 = (2 ** (4. / 3.)) / (c_ascent ** 4)
+    term2 = delta_v / (delta_h * sindeg(max_lat))
+    term3 = 1. / (ross_num * (therm_ross ** (1. / 3.)))
+    return c_descent * np.rad2deg(
+        np.deg2rad(lat_ascent) *
+        np.sqrt(0.5 + np.sqrt(0.25 + term1 * term2 * term3))
+    )
+
+
+if __name__ == "__main__":
+    pass

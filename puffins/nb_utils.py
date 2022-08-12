@@ -4,7 +4,7 @@
 from glob import glob
 import importlib
 import os.path
-from subprocess import PIPE, Popen
+import subprocess
 import warnings
 
 from IPython.display import display, Javascript
@@ -44,7 +44,10 @@ def setup_puffins(branch_name="master"):
 def save_jupyter_nb():
     """From within a Jupyter notebook, save that notebook.
 
-    https://stackoverflow.com/a/57814673/
+    Adapted from https://stackoverflow.com/a/57814673/
+
+    Note that this doesn't work for Jupyterlab, only for Jupyter Notebook,
+    c.f. https://github.com/jupyterlab/jupyterlab/issues/7627.
 
     """
     display(Javascript('Jupyter.notebook.save_checkpoint();'))
@@ -58,10 +61,12 @@ def check_nb_unused_imports(nb_path):
     - https://stackoverflow.com/a/15100663
 
     """
-    p1 = Popen(f"jupyter nbconvert {nb_path} --stdout --to python".split(),
-               stdout=PIPE)
-    p2 = Popen("flake8 - --select=F401".split(), stdin=p1.stdout,
-               stdout=PIPE)
+    p1 = subprocess.Popen(
+        f"jupyter nbconvert {nb_path} --stdout --to python".split(),
+        stdout=subprocess.PIPE)
+    p2 = subprocess.Popen(
+        "flake8 - --select=F401".split(), stdin=p1.stdout,
+        stdout=subprocess.PIPE)
     p1.stdout.close()
     return p2.communicate()[0].decode("utf-8")
 
@@ -176,12 +181,11 @@ def apply_maybe_groupby(func, non_groupby_dims, arrs, args=None, kwargs=None):
         if args is not None:
             func_args += args
         return func(*func_args, **kwargs)
-    else:
-        return groupby_apply_func(func, arrs, groupby_dims,
-                                  func_args=args, func_kwargs=kwargs)
+    return groupby_apply_func(func, arrs, groupby_dims,
+                              func_args=args, func_kwargs=kwargs)
 
 
-# Find locations of array extrema.
+# Find locations of array extrema and nearest neighbors.
 def max_and_argmax(arr, do_min=False):
     """Get extremum value and associated coordinate values."""
     method = arr.argmin if do_min else arr.argmax
@@ -195,13 +199,33 @@ def max_and_argmax_along_dim(dataset, dim, do_min=False):
     return grouped.apply(max_and_argmax, do_min=do_min)
 
 
+def find_nearest(arr, value):
+    """Return element in the given array closest to the given value.
+
+    Adapted from https://stackoverflow.com/a/10465997/1706640
+
+    """
+    idx = np.abs(arr - value).idxmin()
+    return arr.loc[idx]
+
+
 # Array zero crossings.
 def zero_cross_bounds(arr, dim, num_cross):
     """Find the values bounding an array's zero crossing."""
     sign_switch = np.sign(arr).diff(dim)
-    switch_val = arr[dim].where(sign_switch, drop=True)[num_cross]
-    lower_bound = max(0.999*switch_val, np.min(arr[dim]))
-    upper_bound = min(1.001*switch_val, np.max(arr[dim]))
+    switch_arr = arr[dim].where(sign_switch, drop=True)
+    if len(switch_arr) == 0:
+        if num_cross == 0:
+            ind = -1
+        elif num_cross == -1:
+            ind = 0
+        else:
+            raise ValueError
+        switch_val = arr[dim][ind]
+    else:
+        switch_val = switch_arr[num_cross]
+    lower_bound = max(0.999 * switch_val, np.min(arr[dim]))
+    upper_bound = min(1.001 * switch_val, np.max(arr[dim]))
     return arr.sel(**{dim: [lower_bound, upper_bound], "method": "backfill"})
 
 
@@ -221,7 +245,7 @@ def zero_cross_nh(arr, lat_str=LAT_STR):
 
 
 # Data IO, processing, and cleaning.
-def read_netcdfs(files, dim="time", transform_func=None):
+def read_netcdfs(files, dim="time", transform_func=None, pre_func=None):
     """Load multiple netCDF files into Dataset, optimizing for performance.
 
     Adapted from https://xarray.pydata.org/en/stable/user-guide/io.html#netcdf
@@ -235,9 +259,19 @@ def read_netcdfs(files, dim="time", transform_func=None):
             return ds
 
     paths = sorted(glob(files))
+    if pre_func is not None:
+        pre_func(paths)
+
     datasets = [process_one_path(p) for p in paths]
     combined = xr.concat(datasets, dim)
     return combined
+
+
+def dmget(files_list):
+    """Call GFDL command 'dmget' to access archived files."""
+    if isinstance(files_list, str):
+        files_list = [files_list]
+    return subprocess.call(["dmget"] + files_list)
 
 
 def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):

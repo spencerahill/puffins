@@ -13,7 +13,7 @@ import xarray as xr
 
 from .names import LAT_STR
 from .nb_utils import sindeg
-from .stats import detrend, dt_std_anom, lin_regress, standardize, trend
+from .stats import detrend, dt_std_anom, lin_regress, trend
 
 _DEGR = r'$^\circ$'
 _DEGR_S = _DEGR + 'S'
@@ -59,23 +59,33 @@ def _left_bottom_spines_only(ax, displace=False):
     ax.yaxis.set_ticks_position('left')
 
 
-def sinlat_xaxis(ax, start_lat=-90, end_lat=90):
+def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
+                 degr_symbols=False):
     """Make the x-axis be in sin of latitude."""
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
     if start_lat == 0 and end_lat == 90:
         ax.set_xticks(sindeg([0, 30, 60, 90]))
         ax.set_xticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
-        ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$', r'90$^\circ$'])
+        if do_ticklabels:
+            if degr_symbols:
+                ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
+                                    r'90$^\circ$'])
+            else:
+                ax.set_xticklabels(['EQ', r'30N' r'60N', r'90N'])
     elif start_lat == -90 and end_lat == 90:
         ax.set_xticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
         minorticks = [-80, -70, -50, -40, -20, -10,
                       10, 20, 40, 50, 70, 80]
         ax.set_xticks(sindeg(minorticks), minor=True)
-        ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
-                            '30' + _DEGR_N, " ", '90' + _DEGR_N])
+        if do_ticklabels:
+            if degr_symbols:
+                ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
+                                    '30' + _DEGR_N, " ", '90' + _DEGR_N])
+            else:
+                ax.set_xticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
-def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
+def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     """Make the x-axis be latitude."""
     ax.set_xlim([start_lat, end_lat])
 
@@ -89,18 +99,31 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False):
     elif start_lat == -90 and end_lat == 90:
         ticks = [-90, -60, -30, 0, 30, 60, 90]
         minor_ticks = [-80, -70, -50, -40, -20, -10,
-                      10, 20, 40, 50, 70, 80]
+                       10, 20, 40, 50, 70, 80]
         if degr_symbol:
             ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
                           "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
         else:
             ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
+    elif start_lat == -30 and end_lat == 30:
+        ticks = [-30, -20, -10, 0, 10, 20, 30]
+        minor_ticks = [-25, -15, -5, 5, 15, 25]
+        if degr_symbol:
+            ticklabels = [f"30{_DEGR_S}", f"20{_DEGR_S}", f"10{_DEGR_S}",
+                          "EQ", f"10{_DEGR_N}", f"20{_DEGR_N}", f"30{_DEGR_N}"]
+        else:
+            ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
+
     else:
         ticks = np.arange(start_lat, end_lat + 1, 10)
+        minor_ticks = None
+        ticklabels = None
     ax.set_xticks(ticks)
-    ax.set_xticks(minor_ticks, minor=True)
-    ax.set_xticklabels(ticklabels)
-    ax.set_xlabel(" ")
+    if minor_ticks is not None:
+        ax.set_xticks(minor_ticks, minor=True)
+    if ticklabels is not None:
+        ax.set_xticklabels(ticklabels, **kwargs)
+    ax.set_xlabel("")
 
 
 def lat_yaxis(ax, start_lat=-90, end_lat=90):
@@ -114,7 +137,16 @@ def lat_yaxis(ax, start_lat=-90, end_lat=90):
         ax.set_yticklabels(['-90' + _DEGR, '', '', '-60' + _DEGR, '', '',
                             '-30' + _DEGR, '', '', 'EQ', '', '', '30' + _DEGR,
                             '', '', '60' + _DEGR, '', '', '90' + _DEGR])
+    elif start_lat == -45 and end_lat == 45:
+        ax.set_yticks(np.arange(-45, 46, 15))
+        ax.set_yticklabels(['45S', '30S', '15S', 'EQ', '15N', '30N', '45N'])
     ax.set_ylabel(" ")
+
+def ann_cyc_xaxis(ax):
+    ax.set_xlim(1, 12)
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels("JFMAMJJASOND")
+    ax.set_xlabel("")
 
 
 def faceted(*args, width=4, aspect=0.618, **kwargs):
@@ -160,10 +192,15 @@ def _plot_cutoff_ends(lats, arr, ax=None, **kwargs):
     ax.plot(lats[2:-2], arr[2:-2], **kwargs)
 
 
-def panel_label(panel_num, ax=None, x=0.03, y=0.9, extra_text=None,
+def panel_label(panel_num=None, ax=None, x=0.03, y=0.9, extra_text=None,
                 **text_kwargs):
     if ax is None:
         ax = plt.gca()
+    if panel_num is None:
+        for n, ax_ in enumerate(ax):
+            panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text,
+                        **text_kwargs)
+        return
     letters = 'abcdefghijklmnopqrstuvwxyz'
     label = '({})'.format(letters[panel_num])
     if extra_text is not None:
@@ -367,7 +404,7 @@ def _corrs_txt_format(x, pos):
 
 
 def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
-                     threshold=None, **textkw):
+                     threshold=None, include_diag=False, **textkw):
     """
     A function to annotate a heatmap.
 
@@ -398,7 +435,6 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     if not isinstance(data, (list, np.ndarray)):
         data = im.get_array()
 
-
     # Normalize the threshold to the images color range.
     if threshold is not None:
         threshold = im.norm(threshold)
@@ -406,12 +442,11 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
         threshold = im.norm(data.max())/2.
 
     # Set default alignment to center.
-    kw = dict(horizontalalignment="center",
-              verticalalignment="center")
+    kw = dict(horizontalalignment="center", verticalalignment="center")
     kw.update(textkw)
 
     if valfmt is None:
-        valfmt=ticker.FuncFormatter(_corrs_txt_format)
+        valfmt = ticker.FuncFormatter(_corrs_txt_format)
     elif isinstance(valfmt, str):
         valfmt = ticker.StrMethodFormatter(valfmt)
 
@@ -420,7 +455,13 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     texts = []
     for i in range(data.shape[0]):
         for j in range(data.shape[1]):
-            if j < i:
+            if include_diag == "all":
+                do_annotate = True
+            elif include_diag:
+                do_annotate = j <= i
+            else:
+                do_annotate = j < i
+            if do_annotate:
                 kw.update(color=textcolors[int(im.norm(data[i, j]) > threshold)])
                 text = im.axes.text(j, i, valfmt(data[i, j], None), **kw)
                 texts.append(text)
@@ -429,6 +470,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
 
 
 def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
+    """Save a figure from a notebook into the desired figures directory."""
     if fig is None:
         fig = plt.gcf()
     fig.savefig(os.path.join(fig_dir, name), **kwargs)

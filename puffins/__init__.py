@@ -1,10 +1,10 @@
 """puffins: tools for large-scale atmospheric and climate dynamics research"""
-from aospy.utils import Longitude
-
 from . import names
 from . import constants
 from . import dates
 from . import num_solver
+from . import longitude
+from .longitude import Longitude
 from . import calculus
 from . import nb_utils
 from . import interp
@@ -18,7 +18,9 @@ from . import fixed_temp_tropo
 from . import had_cell
 from . import hides
 from . import kuo_el
+from . import polar_amp
 from . import thermodynamics
+from . import therm_inert
 from . import tropopause
 
 from . import held_hou_1980
