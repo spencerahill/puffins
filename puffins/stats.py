@@ -8,7 +8,7 @@ import scipy.stats
 import xarray as xr
 
 from .names import LAT_STR, YEAR_STR
-from .nb_utils import cosdeg
+from .nb_utils import coord_arr_1d, cosdeg
 
 
 # TODO: make this a decorator.
@@ -191,7 +191,8 @@ def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True,
 def lin_regress(arr1, arr2, dim):
     """Use xr.apply_ufunc to broadcast scipy.stats.linregress.
 
-    For example, over latitude and longitude.
+    For example, over latitude and longitude.  The regression is performed
+    of arr2 on arr1; i.e. arr2 corresponds to y and arr1 to x.
 
     Adapted from
     https://github.com/pydata/xarray/issues/1815#issuecomment-614216243.
@@ -228,6 +229,28 @@ def multi_regress(target, predictors):
     clf = linear_model.LinearRegression()
     clf.fit(clf_X, target.values)
     return clf, xr.ones_like(target) * clf.predict(clf_X)
+
+
+def regress_resid(arr1, arr2, dim):
+    """Linear regression, outputting the residual.
+
+    `arr1` is the array whose linear influence is to be removed from `arr2`.
+    I.e. `arr1` corresponds to x, and `arr2` to y.
+
+    """
+    arr1_trunc, arr2_trunc = xr.align(arr1, arr2)
+    regress = lin_regress(arr1_trunc, arr2_trunc, dim)
+    y0 = regress.sel(parameter="intercept").drop("parameter")
+    slope = regress.sel(parameter="slope").drop("parameter")
+    predic = (y0 + arr1_trunc * slope).transpose(*arr2_trunc.dims)
+    resid = (arr2_trunc - predic).transpose(*arr2_trunc.dims)
+    data_vars = {
+        "y0": y0,
+        "slope": slope,
+        "predic": predic,
+        "resid": resid,
+    }
+    return xr.Dataset(data_vars)
 
 
 def rmse(arr1, arr2, dim):
@@ -272,3 +295,24 @@ def eof_solver(arr, lat_str=LAT_STR, time_str=YEAR_STR):
     # The eofs package requires that the time dimension be named "time".
     return Eof(arr.rename({time_str: "time"}).transpose("time", ...),
                weights=weights)
+
+
+# Histograms
+def xhist(arr, bin_edges, bin_centers=None, **kwargs):
+    """xarray-based histograms."""
+    if bin_centers is None:
+        if isinstance(bin_edges, xr.DataArray):
+            bin_edge_vals = bin_edges.values
+        else:
+            bin_edge_vals = bin_edges
+        bin_center_vals = 0.5 * (bin_edge_vals[1:] + bin_edge_vals[:-1])
+        bin_centers = coord_arr_1d(values=bin_center_vals, dim="bin_center")
+    elif not isinstance(bin_centers, xr.DataArray):
+        bin_centers = coord_arr_1d(values=bin_centers, dim="bin_center")
+    counts, _ = np.histogram(arr, bins=bin_edges, **kwargs)
+    return xr.ones_like(bin_centers) * counts
+
+
+def normalize(arr, *args, **kwargs):
+    """Normalize an array by dividing it by its sum."""
+    return arr / arr.sum(*args, **kwargs)
