@@ -86,10 +86,15 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
     return max_and_argmax_along_dim(sf_valid, dim)
 
 
-def had_cells_strength(strmfunc, min_plev=None, max_plev=None, lat_str=LAT_STR,
-                       lev_str=LEV_STR):
+def had_cells_strength(strmfunc, min_plev=None, max_plev=None, min_lat=None,
+                       max_lat=None, lat_str=LAT_STR, lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
+
+    if min_lat is not None:
+        strmfunc = strmfunc.where(lat > min_lat, drop=True)
+    if max_lat is not None:
+        strmfunc = strmfunc.where(lat < max_lat, drop=True)
 
     # Sometimes the winter Ferrel cell is stronger than the summer Hadley cell.
     # So find the global extremal negative and positive values as well as the
@@ -100,7 +105,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, lat_str=LAT_STR,
     )
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
 
-    cell_south_of_pos_strength = -1*had_cell_strength(
+    cell_south_of_pos_strength = -1 * had_cell_strength(
         -1*strmfunc.where(lat < lat_pos_max),
         min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
     )
@@ -124,7 +129,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, lat_str=LAT_STR,
         min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
     )
 
-    # The above procedure generats 6 cells, of which 2 are duplicates.  Now,
+    # The above procedure generates 6 cells, of which 2 are duplicates.  Now,
     # get rid of the duplicates.
     strengths = [
         cell_pos_max_strength,
@@ -172,11 +177,18 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
 
 
 def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
+                          min_lat=None, max_lat=None,
                           lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
-    hc_strengths = had_cells_strength(strmfunc, max_plev=max_plev,
-                                      lat_str=lat_str, lev_str=lev_str)
+    hc_strengths = had_cells_strength(
+        strmfunc,
+        max_plev=max_plev,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        lat_str=lat_str,
+        lev_str=lev_str,
+)
     lat_sh_max = hc_strengths[lat_str][0]
     lat_nh_max = hc_strengths[lat_str][1]
 
@@ -191,11 +203,17 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
 
 
 def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  max_plev=None, cos_factor=False, lat_str=LAT_STR,
-                  lev_str=LEV_STR):
+                  max_plev=None, min_lat=None, max_lat=None, cos_factor=False,
+                  lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
-    hc_strengths = had_cells_strength(strmfunc, max_plev=max_plev,
-                                      lat_str=lat_str, lev_str=lev_str)
+    hc_strengths = had_cells_strength(
+        strmfunc,
+        max_plev=max_plev,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        lat_str=lat_str,
+        lev_str=lev_str,
+    )
     if cell == "north":
         label = "had_cell_nh"
     elif cell == "south":
@@ -254,7 +272,8 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
 
 
 def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
-                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                         min_lat=None, max_lat=None, cos_factor=False,
+                         lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -262,6 +281,8 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
         edge="south",
         frac_thresh=frac_thresh,
         max_plev=max_plev,
+        min_lat=min_lat,
+        max_lat=max_lat,
         cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
@@ -269,6 +290,7 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
 
 
 def had_cells_north_edge(strmfunc, frac_thresh=0.1, max_plev=None,
+                         min_lat=None, max_lat=None,
                          cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
@@ -277,31 +299,37 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, max_plev=None,
         edge="north",
         frac_thresh=frac_thresh,
         max_plev=max_plev,
+        min_lat=min_lat,
+        max_lat=max_lat,
         cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
     )
 
 
-def had_cells_edges(strmfunc, frac_thresh=0.1, lat_str=LAT_STR,
+def had_cells_edges(strmfunc, frac_thresh=0.1, max_lev=None, min_lat=None,
+                    max_lat=None, cos_factor=False, lat_str=LAT_STR,
                     lev_str=LEV_STR):
     """Southern, shared inner, and northern edge of the Hadley cells."""
+    shared_kwargs = dict(
+        frac_thresh=frac_thresh,
+        max_lev=max_lev,
+        min_lat=min_lat,
+        cos_factor=cos_factor,
+        lat_str=lat_str,
+        lev_str=lev_str,
+    )
     func_and_kwargs = [
-        (had_cell_edge, dict(cell="south", edge="south",
-                             frac_thresh=frac_thresh)),
-        # (had_cell_edge, dict(cell="south", edge="north",
-        #                      frac_thresh=frac_thresh)),
+        (had_cell_edge, dict(cell="south", edge="south")),
         (had_cells_shared_edge, {}),
-        # (had_cell_edge, dict(cell="north", edge="south",
-        #                      frac_thresh=frac_thresh)),
-        (had_cell_edge, dict(cell="north", edge="north",
-                             frac_thresh=frac_thresh)),
+        (had_cell_edge, dict(cell="north", edge="north")),
          ]
     return [f_kw[0](
         strmfunc,
         lat_str=lat_str,
         lev_str=lev_str,
         **f_kw[1],
+        **shared_kwargs,
     ) for f_kw in func_and_kwargs]
 
 

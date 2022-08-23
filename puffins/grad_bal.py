@@ -16,7 +16,7 @@ from .constants import (
     THETA_REF,
 )
 from .names import LAT_STR, LEV_STR, PHALF_STR
-from .nb_utils import cosdeg, sindeg, zero_cross_nh
+from .nb_utils import cosdeg, sindeg, zero_cross
 from .calculus import avg_logp_weighted, lat_deriv, phalf_from_pfull
 from .dynamics import abs_vort_from_u, z_from_hypso
 from .thermodynamics import temp_from_equiv_pot_temp
@@ -165,7 +165,7 @@ def abs_vort_zero_cross_cqe(theta_b, temp_tropo=None, const_stab=False,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross_nh(eta, lat_str=lat_str)
+    return zero_cross(eta.where(eta[lat_str] > 0), lat_str)
 
 
 def pot_temp_amc_cqe(lat, lat_max, pot_temp_max, vert_temp_diff,

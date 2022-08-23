@@ -17,7 +17,7 @@ from .constants import (
     THETA_REF,
 )
 from .names import LAT_STR
-from .nb_utils import cosdeg, sin2deg, sindeg, zero_cross_nh
+from .nb_utils import cosdeg, sin2deg, sindeg, zero_cross
 from .dynamics import abs_vort_from_u, therm_ross_num
 from .fixed_temp_tropo import (
     DTHETA_DTS_MOIST,
@@ -160,7 +160,7 @@ def abs_vort_rce_lh88_zero_approx(lats, lat_max, delta_h=DELTA_H,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross_nh(abs_vort, lat_str=lat_str)
+    return zero_cross(abs_vort.where(abs_vort[lat_str] > 0), lat_str)
 
 
 def lapse_rate_rce_lh88(lat, lat_max, z, theta_ref=THETA_REF,
@@ -259,7 +259,7 @@ def eta_rce_lh88_fixed_tt_zero_cross(lats, lat_max, theta_ref=THETA_REF,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross_nh(eta_rce, lat_str=lat_str)
+    return zero_cross(eta_rce.where(eta_rce[lat_str] > 0), lat_str)
 
 
 if __name__ == '__main__':

@@ -13,6 +13,7 @@ import numpy as np
 import xarray as xr
 
 from .constants import RAD_EARTH
+from .interp import interpolate
 from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
 
 
@@ -215,33 +216,15 @@ def zero_cross_bounds(arr, dim, num_cross):
     sign_switch = np.sign(arr).diff(dim)
     switch_arr = arr[dim].where(sign_switch, drop=True)
     if len(switch_arr) == 0:
-        if num_cross == 0:
-            ind = -1
-        elif num_cross == -1:
-            ind = 0
-        else:
-            raise ValueError
-        switch_val = arr[dim][ind]
-    else:
-        switch_val = switch_arr[num_cross]
-    lower_bound = max(0.999 * switch_val, np.min(arr[dim]))
-    upper_bound = min(1.001 * switch_val, np.max(arr[dim]))
-    return arr.sel(**{dim: [lower_bound, upper_bound], "method": "backfill"})
+        raise ValueError("Didn't find any zero crossings")
+    switch_val = switch_arr[num_cross]
+    return arr.sel(**{dim: slice(None, switch_val)})[-2:]
 
 
-def first_zero_cross_bounds(arr, dim):
-    """Find the values bounding an array's first zero crossing."""
-    return zero_cross_bounds(arr, dim, 0)
-
-
-def last_zero_cross_bounds(arr, dim):
-    """Find the values bounding an array's last zero crossing."""
-    return zero_cross_bounds(arr, dim, -1)
-
-
-def zero_cross_nh(arr, lat_str=LAT_STR):
-    lats = arr[lat_str]
-    return lats[np.abs(arr.where(lats > 0)).argmin()]
+def zero_cross(arr, dim, num_cross=0):
+    """Find an array's zero crossing, with interpolation."""
+    bounds = zero_cross_bounds(arr, dim, num_cross)
+    return interpolate(bounds, bounds[dim], 0, dim).rename(dim)
 
 
 # Data IO, processing, and cleaning.
