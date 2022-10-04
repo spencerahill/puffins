@@ -114,6 +114,22 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         else:
             ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
 
+    elif start_lat == -45 and end_lat == 45:
+        ticks = [-45, -30, -15, 0, 15, 30, 45]
+        minor_ticks = [-40, -35, -25, -20, -10, -5, 5, 10, 20, 25, 35, 40]
+        if degr_symbol:
+            ticklabels = [f"45{_DEGR_S}", f"30{_DEGR_S}", f"15{_DEGR_S}",
+                          "EQ", f"15{_DEGR_N}", f"30{_DEGR_N}", f"45{_DEGR_N}"]
+        else:
+            ticklabels = ["45S", "30S", "15S", "EQ", "15N", "30N", "45N"]
+    elif start_lat == -60 and end_lat == 60:
+        ticks = [-60, -30, 0, 30, 60]
+        minor_ticks = [-50, -40, -20, -10, 10, 20, 40, 50]
+        if degr_symbol:
+            ticklabels = [f"60{_DEGR_S}", f"30{_DEGR_S}", "EQ",
+                          f"30{_DEGR_N}", f"60{_DEGR_N}"]
+        else:
+            ticklabels = ["60S", "30S", "EQ", "30N", "60N"]
     else:
         ticks = np.arange(start_lat, end_lat + 1, 10)
         minor_ticks = None
