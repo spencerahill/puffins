@@ -1,5 +1,6 @@
 """Functionality relating to calendars, times, and dates."""
 import numpy as np
+import xarray as xr
 
 from .names import TIME_STR
 
@@ -108,3 +109,30 @@ def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
     grouped = subset_ann(arr, months, dim_time).groupby(dim_time + ".year")
     func = getattr(grouped, reduction)
     return func()
+
+
+def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
+    """Compute annual harmonics.
+
+    Adapted from https://stackoverflow.com/a/69424590/1706640.
+
+    """
+    if num_harm == len(arr):
+        return arr
+    arr_mean = arr.mean()
+    data = (arr - arr_mean).values
+    mfft = np.fft.fft(data)
+    mask = np.zeros_like(mfft)
+    if do_sum:
+        mask[-num_harm:] = 1
+    else:
+        mask[-num_harm] = 1
+    vals = float(arr_mean) + 2. * np.real(np.fft.ifft(mfft * mask))
+    if normalize:
+        vals /= np.abs(vals).max()
+    return xr.ones_like(arr) * vals
+    # These two lines below are for if you want the approximation at
+    # whatever frequency has the most power.  What I want is the
+    # approximation using just the lowest `n` frequencies.
+    # imax = np.argmax(np.absolute(mfft))
+    # mask[[imax]] = 1
