@@ -139,7 +139,7 @@ def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
         lat_below[0] = -90.
 
     sinlat_diff = sindeg(lat_above.values) - sindeg(lat_below.values)
-    area = xr.ones_like(lat)*2.*np.pi*radius**2*sinlat_diff
+    area = xr.ones_like(lat) * 2. * np.pi * radius ** 2 * sinlat_diff
     area_masked = area.where((lat > min_lat) & (lat < max_lat),
                              drop=True)
     return (arr_masked * area_masked).sum(lat_str)
@@ -356,10 +356,10 @@ def dp_from_phalf(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
         else:
             dims_out.append(dim)
 
-    vals_template = ([phalf[dim] for dim in phalf.dims if dim != phalf_str] +
-                     [pfull_ref])
+    vals_template = ([xr.ones_like(phalf[dim]) for dim in phalf.dims
+                      if dim != phalf_str] + [pfull_ref])
     arr_template = xr.ones_like(np.product(vals_template)).transpose(*dims_out)
-    return (arr_template * dp_vals).rename("dp")
+    return (arr_template * dp_vals).rename("dp").astype("float")
 
 
 def dlogp_from_phalf(phalf, pressure):
@@ -387,6 +387,15 @@ def phalf_from_psfc(bk, pk, p_sfc):
     return p_sfc * bk + pk
 
 
+def pfull_from_phalf_avg(phalf, pfull_ref, phalf_str=PHALF_STR,
+                         pfull_str=PFULL_STR):
+    """Compute pressure of half levels of hybrid sigma-pressure coordinates."""
+    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str,
+                       pfull_str=pfull_str)
+    return (phalf.isel(**{phalf_str: slice(None, -1)}).values +
+            0.5 * dp).rename(pfull_str)
+
+
 def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
     """Compute pressure at full levels using Simmons-Burridge spacing.
 
@@ -408,12 +417,12 @@ def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
     ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
     pfull_vals = np.exp(ln_pfull_vals)
     top_lev_factor = float(pfull_ref[0] / phalf_ref[1])
-    pfull_vals[0] = phalf.isel(phalf=1)*top_lev_factor
+    pfull_vals[0] = phalf.isel(phalf=1) * top_lev_factor
     return pfull_vals
 
 
-def pfull_simm_burr(arr_template, phalf, phalf_ref, pfull_ref,
-                    phalf_str=PHALF_STR):
+def pfull_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR,
+                    pfull_str=PFULL_STR):
     """Compute pressure at full levels using Simmons-Burridge spacing.
 
     See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
@@ -421,8 +430,48 @@ def pfull_simm_burr(arr_template, phalf, phalf_ref, pfull_ref,
     Monthly Weather Review, 109(4), 758-766.
 
     """
-    pfull_vals = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str)
-    return xr.ones_like(arr_template) * pfull_vals
+    # Above means vertically above (i.e. lower pressure).
+    if phalf_ref[0] < phalf_ref[1]:
+        p_is_increasing = True
+        phalf_above = phalf.isel(phalf=slice(None, -1))
+        phalf_below = phalf.isel(phalf=slice(1, None))
+        ind_phalf_next_to_top = 1
+    else:
+        p_is_increasing = False
+        phalf_above = phalf.isel(phalf=slice(1, None))
+        phalf_below = phalf.isel(phalf=slice(None, -1))
+        ind_phalf_next_to_top = -2
+
+    dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
+
+    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str,
+                       pfull_str=pfull_str)
+    phalf_over_dp_vals = phalf_above.values / dp.values
+    alpha_vals = 1. - phalf_over_dp_vals * dlog_phalf_vals
+
+    ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
+    pfull_vals = np.exp(ln_pfull_vals)
+    pfull = xr.ones_like(dp) * pfull_vals
+
+    # Top level has its own procedure.
+    if p_is_increasing:
+        ind_top = 0
+        ind_next = 1
+        pfull_not_top = pfull.isel(**{pfull_str: slice(1, None)})
+    else:
+        ind_top = -1
+        ind_next = -2
+        pfull_not_top = pfull.isel(**{pfull_str: slice(None, -1)})
+
+    top_lev_factor = float(pfull_ref[ind_top] /
+                           phalf_ref[ind_phalf_next_to_top])
+    pfull_top = top_lev_factor * phalf.isel(
+        **{phalf_str: ind_phalf_next_to_top})
+    pfull_top.coords["pfull"] = pfull_ref.isel(**{pfull_str: ind_top})
+
+    if p_is_increasing:
+        return xr.concat([pfull_top, pfull_not_top], pfull_str)
+    return xr.concat([pfull_not_top, pfull_top], pfull_str)
 
 
 def _flip_dim(arr, dim):

@@ -58,7 +58,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     # Leading minus sign results in southern hemisphere cell
     # (i.e. counter-clockwise circulation in lat-height plane) being positive.
     return -(lat_area_weight(lats, radius=radius) * streamfunc).transpose(
-        *v_znl_mean.dims).rename("streamfunc")
+        *v_znl_mean.dims).rename("streamfunc").where(np.isfinite(v))
 
 
 def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
@@ -106,7 +106,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, min_lat=None,
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
 
     cell_south_of_pos_strength = -1 * had_cell_strength(
-        -1*strmfunc.where(lat < lat_pos_max),
+        -1 * strmfunc.where(lat < lat_pos_max),
         min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
     )
     cell_north_of_pos_strength = -1*had_cell_strength(
@@ -140,11 +140,24 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, min_lat=None,
         cell_north_of_neg_strength,
     ]
     cell_strengths = xr.concat(strengths, dim=lat_str, coords=[lev_str])
-    dupes = cell_strengths.get_index(LAT_STR).duplicated()
+    dupes = cell_strengths.get_index(lat_str).duplicated()
     cell_strengths = cell_strengths[~dupes]
 
     # Pick the two cells closest to the equator.
+    # But sometimes two cells can be at identical but mirror latitudes,
+    # which the logic would otherwise always select the NH one.  So
+    # in that case pick the one with the larger strength.
+    # For now, the logic only checks this for the first and last values, but
+    # in principle this could occur for other indices and thus this logic would
+    # need to be generalized.
     center_lats = cell_strengths[lat_str]
+    if np.isclose(np.abs(center_lats[0]), np.abs(center_lats[-1])):
+        if np.abs(cell_strengths)[0] > np.abs(cell_strengths)[-1]:
+            center_lats = center_lats[:-1]
+            cell_strengths = cell_strengths[:-1]
+        else:
+            center_lats = center_lats[1:]
+            cell_strengths = cell_strengths[1:]
     hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
 
     # Order the cells from south to north.
@@ -176,9 +189,9 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
-                          min_lat=None, max_lat=None,
-                          lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, frac_thresh=0., fixed_plev=None,
+                          max_plev=None, min_lat=None, max_lat=None,
+                          cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
@@ -188,11 +201,14 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
         max_lat=max_lat,
         lat_str=lat_str,
         lev_str=lev_str,
-)
+    )
     lat_sh_max = hc_strengths[lat_str][0]
     lat_nh_max = hc_strengths[lat_str][1]
 
-    sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
+    if fixed_plev is None:
+        sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
+    else:
+        sf_at_max = strmfunc.sel(**{lev_str: fixed_plev, "method": "nearest"})
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max),
                                  drop=True)
     sf_norm_thresh = sf_max2max / np.abs(sf_max2max.max()) - frac_thresh
@@ -203,8 +219,8 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., max_plev=None,
 
 
 def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  max_plev=None, min_lat=None, max_lat=None, cos_factor=False,
-                  lat_str=LAT_STR, lev_str=LEV_STR):
+                  fixed_plev=None, max_plev=None, min_lat=None, max_lat=None,
+                  cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(
         strmfunc,
@@ -226,7 +242,11 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     cell_max = hc_strengths.sel(cell=label)
     lat_max = cell_max[lat_str]
     lev_max = cell_max[lev_str]
-    sf_at_max = strmfunc.sel(**{lev_str: float(lev_max), "method": "nearest"})
+    if fixed_plev is None:
+        lev_for_edges = float(lev_max)
+    else:
+        lev_for_edges = fixed_plev
+    sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
 
     # Restrict to the latitudes north or south of the max, as specified.
     lat = strmfunc[lat_str]
@@ -271,15 +291,16 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
                        lat_str)[lat_str]
 
 
-def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
-                         min_lat=None, max_lat=None, cos_factor=False,
-                         lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
+                         max_plev=None, min_lat=None, max_lat=None,
+                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
         cell="south",
         edge="south",
         frac_thresh=frac_thresh,
+        fixed_plev=fixed_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -289,8 +310,8 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, max_plev=None,
     )
 
 
-def had_cells_north_edge(strmfunc, frac_thresh=0.1, max_plev=None,
-                         min_lat=None, max_lat=None,
+def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
+                         max_plev=None, min_lat=None, max_lat=None,
                          cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
@@ -298,6 +319,7 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, max_plev=None,
         cell="north",
         edge="north",
         frac_thresh=frac_thresh,
+        fixed_plev=fixed_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -648,7 +670,7 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
     lat_a = np.deg2rad(ascentlat)
     return c_descent * np.rad2deg(
-        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a)**4))
+        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
     )
 
 
