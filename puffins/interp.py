@@ -113,8 +113,8 @@ def interp_ds_p_to_p(ds, plevs, method="cubic", pfull_str=PFULL_STR,
                            coords={pfull_str: plevs}, name="p")
     interped = []
     lats = ds[lat_str]
-    for j, lat in enumerate(lats):
-        ds_tmp = ds.isel(**{lat_str: j}, drop=True).interp(
+    for lat in lats:
+        ds_tmp = ds.sel(**{lat_str: lat}, drop=True).interp(
             **{pfull_str: p_fixed}, method=method)
         interped.append(ds_tmp.assign_coords(
             **{pfull_str: p_fixed}).rename(**{pfull_str: lev_str}))
