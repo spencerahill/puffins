@@ -4,7 +4,16 @@
 import numpy as np
 import xarray as xr
 
-from .names import LAT_STR, LEV_STR, P_SFC_STR, PFULL_STR, SIGMA_STR
+from .vert_coords import pfull_from_phalf_avg, phalf_from_psfc
+from .names import (
+    BK_STR,
+    LAT_STR,
+    LEV_STR,
+    P_SFC_STR,
+    PFULL_STR,
+    PK_STR,
+    SIGMA_STR,
+)
 
 
 P_INTERP_VALS = np.arange(0, 1000.5, 1.)
@@ -44,8 +53,7 @@ def _maybe_interp_in_p(arrs, new_p_vals=P_INTERP_VALS,
     if do_interp:
         return interp_arrs_in_p(arrs, new_p_vals=new_p_vals,
                                 p_str=p_str)
-    else:
-        return arrs
+    return arrs
 
 
 def drop_nans_and_interp(arrs, new_p_vals=P_INTERP_VALS, do_interp=True,
@@ -120,6 +128,98 @@ def interp_ds_p_to_p(ds, plevs, method="cubic", pfull_str=PFULL_STR,
             **{pfull_str: p_fixed}).rename(**{pfull_str: lev_str}))
 
     return xr.concat(interped, dim=lats).transpose(lev_str, lat_str, ...)
+
+
+# Array zero crossings.
+def zero_cross_bounds(arr, dim, num_cross):
+    """Find the values bounding an array's zero crossing."""
+    sign_switch = np.sign(arr).diff(dim)
+    switch_arr = arr[dim].where(sign_switch, drop=True)
+    if len(switch_arr) == 0:
+        raise ValueError("Didn't find any zero crossings")
+    switch_val = switch_arr[num_cross]
+    return arr.sel(**{dim: slice(None, switch_val)})[-2:]
+
+
+def zero_cross_interp(arr, dim, num_cross=0):
+    """Find an array's zero crossing, with interpolation."""
+    bounds = zero_cross_bounds(arr, dim, num_cross)
+    return interpolate(bounds, bounds[dim], 0, dim).rename(dim)
+
+
+def interp_eta_to_plevs(
+    ds,
+    plevs_target,
+    dim,
+    method="cubic",
+    pfull_str=PFULL_STR,
+    bk_str=BK_STR,
+    pk_str=PK_STR,
+    p_sfc_str=P_SFC_STR,
+    lev_str=LEV_STR,
+    lat_str=LAT_STR,
+):
+    """Interpolate Dataset from eta coordinates to fixed pressure levels.
+
+    Note: the logic only works correctly if the dataset is only defined in
+    pressure and one other dimension (e.g. latitude).  It will silently give
+    errant results if there are other dimensions.
+
+    """
+    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds["ps"])
+    pfull = pfull_from_phalf_avg(phalf, ds[pfull_str])
+    pfull *= 1e-2  # Pa to hPa
+
+    interped = []
+    for val in ds[dim]:
+        pfull_this_val = pfull.sel(**{dim: val}, drop=True)
+        ds_emars_this_val = ds.sel(**{dim: val}, drop=True).assign_coords(
+            **{pfull_str: pfull_this_val}
+        )
+        interped_this_val = ds_emars_this_val.interp(
+            **{pfull_str: plevs_target}, method=method
+        )
+        interped.append(interped_this_val)
+    return xr.concat(interped, dim=ds[dim])
+
+
+def interp_nested_to_plevs(
+    ds,
+    plevs_target,
+    dim1,
+    dim2,
+    method="cubic",
+    pfull_str=PFULL_STR,
+    bk_str=BK_STR,
+    pk_str=PK_STR,
+    p_sfc_str=P_SFC_STR,
+    lev_str=LEV_STR,
+    lat_str=LAT_STR,
+):
+    """Interpolate Dataset from eta coordinates to fixed pressure levels.
+
+    Note: the logic only works correctly if the dataset is only defined in
+    pressure and *two* other dimension (e.g. latitude and time).  It will
+    silently give errant results if there are other dimensions.
+
+    """
+    coord2 = ds[dim2]
+    interped = [
+        interp_eta_to_plevs(
+            ds.sel(**{dim2: val2}),
+            plevs_target,
+            dim1,
+            method=method,
+            pfull_str=pfull_str,
+            bk_str=bk_str,
+            pk_str=pk_str,
+            p_sfc_str=p_sfc_str,
+            lev_str=lev_str,
+            lat_str=lat_str,
+        )
+        for val2 in coord2
+    ]
+    return xr.concat(interped, dim=coord2)
 
 
 if __name__ == '__main__':

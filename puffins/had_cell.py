@@ -7,15 +7,13 @@ from .calculus import subtract_col_avg
 from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
 from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
-from .interp import interpolate
+from .interp import interpolate, zero_cross_bounds
 from .nb_utils import (
     cosdeg,
     sindeg,
-    zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
-    to_pascal,
 )
 from .num_solver import brentq_solver_sweep_param
 
@@ -44,13 +42,12 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     else:
         v_znl_mean = v
     if lon_str in dp.dims:
-        dp_znl_mean = to_pascal(dp, is_dp=True).mean(dim=lon_str)
+        dp_znl_mean = dp.mean(dim=lon_str)
     else:
         dp_znl_mean = dp
     # If desired, impose zero net mass flux at each level.
     if impose_zero_col_flux:
-        v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean,
-                                      dim=lev_str, grav=grav)
+        v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean, dim=lev_str)
     # At each vertical level, integrate from TOA to that level.
     streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
@@ -190,12 +187,14 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
 
 
 def had_cells_shared_edge(strmfunc, frac_thresh=0., fixed_plev=None,
-                          max_plev=None, min_lat=None, max_lat=None,
-                          cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                          min_plev=None, max_plev=None, min_lat=None,
+                          max_lat=None, cos_factor=False, lat_str=LAT_STR,
+                          lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
         strmfunc,
+        min_plev=min_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -219,11 +218,13 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., fixed_plev=None,
 
 
 def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  fixed_plev=None, max_plev=None, min_lat=None, max_lat=None,
-                  cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                  fixed_plev=None, min_plev=None, max_plev=None, min_lat=None,
+                  max_lat=None, cos_factor=False, lat_str=LAT_STR,
+                  lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(
         strmfunc,
+        min_plev=min_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -292,8 +293,9 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
 
 
 def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
-                         max_plev=None, min_lat=None, max_lat=None,
-                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                         min_plev=None, max_plev=None, min_lat=None,
+                         max_lat=None, cos_factor=False, lat_str=LAT_STR,
+                         lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -301,6 +303,7 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
         edge="south",
         frac_thresh=frac_thresh,
         fixed_plev=fixed_plev,
+        min_plev=min_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -311,8 +314,9 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
 
 
 def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
-                         max_plev=None, min_lat=None, max_lat=None,
-                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                         min_plev=None, max_plev=None, min_lat=None,
+                         max_lat=None, cos_factor=False, lat_str=LAT_STR,
+                         lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -320,6 +324,7 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
         edge="north",
         frac_thresh=frac_thresh,
         fixed_plev=fixed_plev,
+        min_plev=min_plev,
         max_plev=max_plev,
         min_lat=min_lat,
         max_lat=max_lat,
@@ -647,7 +652,8 @@ def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
     """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
     if np.all(therm_ro == 0):
         return 0.
-    return np.rad2deg(c_ascent * (0.5 * therm_ro) ** (1. / 3.))
+    return np.sign(therm_ro) * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro))
+                                          ** (1. / 3.))
 
 
 def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
@@ -662,12 +668,16 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
+        if ascentlat == 0:
+            return c_descent * lat_fixed_ro_ann
         lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+        if ascentlat == 0:
+            return c_descent * np.rad2deg(lat_ro_ann)
     lat_a = np.deg2rad(ascentlat)
     return c_descent * np.rad2deg(
         lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
@@ -676,7 +686,7 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
 def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
                                        c_descent=1, delta_v=0.125,
-                                       delta_h=1/15, ross_num=1):
+                                       delta_h=1. / 15., ross_num=1):
     """Descending edge approx including theory for ascent lat.
 
     That is, the ascending latitude is assumed equal to the c_ascent times the

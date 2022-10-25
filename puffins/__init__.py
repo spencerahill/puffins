@@ -22,6 +22,7 @@ from . import polar_amp
 from . import thermodynamics
 from . import therm_inert
 from . import tropopause
+from . import vert_coords
 
 from . import held_hou_1980
 from . import lindzen_hou_1988
