@@ -111,6 +111,40 @@ def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
     return func()
 
 
+def ann_ts_djf(arr):
+    """Annual timeseries of DJF values, accounting for year wrapping.
+
+    Simple grouping by year would put the J, F, and D values in the same
+    calendar year together, when what is desired is the December of one year
+    grouped with the January and February of the following year.
+
+    """
+    arr_dec = ann_subset_ts(arr, 12)
+    arr_jf = ann_subset_ts(arr, "jf")
+
+    # Want previous year's December and this year's Jan-Feb.  So first year is
+    # just Jan-Feb.  Accomplish this by just shifting the December years by 1,
+    # then averaging.
+    years_for_dec = arr_dec["year"].copy()
+    years_for_dec = years_for_dec + 1
+    arr_dec.coords["year"] = years_for_dec
+
+    weights_dec = 31 * xr.ones_like(arr_dec["year"])
+    weights_jf = (31 + 28.25) * xr.ones_like(arr_jf["year"])
+
+    arr_djf_no_yr1 = (weights_dec * arr_dec + weights_jf * arr_jf) / (
+        weights_dec + weights_jf
+    )
+
+    arr_djf = xr.concat([arr_jf.isel(year=0), arr_djf_no_yr1], dim="year")
+    if arr.ndim > 1:
+        ind_time = arr.dims.index("time")
+        dims_out = list(arr.dims)
+        dims_out[ind_time] = "year"
+        return arr_djf.transpose(*dims_out)
+    return arr_djf
+
+
 def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     """Compute annual harmonics.
 
