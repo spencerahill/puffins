@@ -100,11 +100,11 @@ def abs_vort_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     sin_latmax = sindeg(lat_max)
-    power_arg = 1 + 2*thermal_ro*(1 - sin_latmax / sinlat)
-    term1 = 2*rot_rate*power_arg**0.5
-    term2 = 2*sinlat - (thermal_ro*(coslat**2)*sin_latmax /
-                        ((sinlat**2)*power_arg))
-    return term1*term2
+    power_arg = 1 + 2 * thermal_ro * (1 - sin_latmax / sinlat)
+    term1 = 2 * rot_rate * power_arg ** 0.5
+    term2 = 2 * sinlat - (thermal_ro * (coslat**2) * sin_latmax /
+                          ((sinlat ** 2) * power_arg))
+    return term1 * term2
 
 
 def _eta_rce_zero_lh88(lat, lat_max, therm_ro):
@@ -158,7 +158,6 @@ def abs_vort_rce_lh88_zero_approx(lats, lat_max, delta_h=DELTA_H,
         grav=grav,
         rot_rate=rot_rate,
         radius=radius,
-        lat_str=lat_str,
     )
     return zero_cross(abs_vort.where(abs_vort[lat_str] > 0), lat_str)
 

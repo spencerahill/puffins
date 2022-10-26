@@ -1,5 +1,6 @@
 """Functionality relating to calendars, times, and dates."""
 import numpy as np
+import xarray as xr
 
 from .names import TIME_STR
 

@@ -42,8 +42,8 @@ def hc_edge_hh80_small_angle(therm_ross_num):
 def _hc_edge_hh80_lhs(lat, therm_ross_num):
     """Left hand side of Eq. 17 of Held Hou 1980 (right hand side is zero)."""
     y = sindeg(lat)
-    return ((1/3)*(4*therm_ross_num - 1)*y**3 - y**5/(1-y**2) -
-            y + 0.5*np.log((1 + y)/(1 - y)))
+    return ((1/3) * (4 * therm_ross_num - 1) * y ** 3 - y ** 5 / (1 - y **2 ) -
+            y + 0.5 * np.log((1 + y) / (1 - y)))
 
 
 def hc_edge_hh80(therm_ross_num, init_guess=0.1,
