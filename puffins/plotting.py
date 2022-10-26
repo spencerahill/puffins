@@ -30,6 +30,7 @@ plt_rc_params_custom = {
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
     "font.family": "Helvetica",  # Use Helvetica font.
     "legend.frameon": False,  # Turn off box around legend.
+    "legend.handlelength": 1.,  # Make legend symbols smaller.
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
     "text.color": GRAY,  # Make text gray.
@@ -38,18 +39,16 @@ plt_rc_params_custom = {
 }
 
 
-def default_gca(func):
-    """If no axes object is given, use gca() to find the active one."""
-    def func_default_gca(*args, **kwargs):
-        ax = kwargs.get('ax', None)
-        if ax is None:
-            kwargs['ax'] = plt.gca()
-        return func(*args, **kwargs)
-    return func_default_gca
+def _gca_if_ax_none(ax):
+    """Get the currently active matplotlib Axes if one isn't provided."""
+    if ax is None:
+        return plt.gca()
+    return ax
 
 
-def _left_bottom_spines_only(ax, displace=False):
+def _left_bottom_spines_only(ax=None, displace=False):
     """Don't plot top or right border."""
+    ax = _gca_if_ax_none(ax)
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
     if displace:
@@ -59,9 +58,10 @@ def _left_bottom_spines_only(ax, displace=False):
     ax.yaxis.set_ticks_position('left')
 
 
-def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
+def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
                  degr_symbols=False):
     """Make the x-axis be in sin of latitude."""
+    ax = _gca_if_ax_none(ax)
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
     if start_lat == 0 and end_lat == 90:
         ax.set_xticks(sindeg([0, 30, 60, 90]))
@@ -85,8 +85,9 @@ def sinlat_xaxis(ax, start_lat=-90, end_lat=90, do_ticklabels=False,
                 ax.set_xticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
-def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
+def lat_xaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     """Make the x-axis be latitude."""
+    ax = _gca_if_ax_none(ax)
     ax.set_xlim([start_lat, end_lat])
 
     if start_lat == 0 and end_lat == 90:
@@ -114,6 +115,22 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         else:
             ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
 
+    elif start_lat == -45 and end_lat == 45:
+        ticks = [-45, -30, -15, 0, 15, 30, 45]
+        minor_ticks = [-40, -35, -25, -20, -10, -5, 5, 10, 20, 25, 35, 40]
+        if degr_symbol:
+            ticklabels = [f"45{_DEGR_S}", f"30{_DEGR_S}", f"15{_DEGR_S}",
+                          "EQ", f"15{_DEGR_N}", f"30{_DEGR_N}", f"45{_DEGR_N}"]
+        else:
+            ticklabels = ["45S", "30S", "15S", "EQ", "15N", "30N", "45N"]
+    elif start_lat == -60 and end_lat == 60:
+        ticks = [-60, -30, 0, 30, 60]
+        minor_ticks = [-50, -40, -20, -10, 10, 20, 40, 50]
+        if degr_symbol:
+            ticklabels = [f"60{_DEGR_S}", f"30{_DEGR_S}", "EQ",
+                          f"30{_DEGR_N}", f"60{_DEGR_N}"]
+        else:
+            ticklabels = ["60S", "30S", "EQ", "30N", "60N"]
     else:
         ticks = np.arange(start_lat, end_lat + 1, 10)
         minor_ticks = None
@@ -126,24 +143,70 @@ def lat_xaxis(ax, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     ax.set_xlabel("")
 
 
-def lat_yaxis(ax, start_lat=-90, end_lat=90):
+def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     """Make the y-axis be latitude."""
+    ax = _gca_if_ax_none(ax)
     ax.set_ylim([start_lat, end_lat])
-    ax.set_yticks(np.arange(start_lat, end_lat + 1, 10))
-    if start_lat == 0 and end_lat == 90:
-        ax.set_yticklabels(['EQ', '', '', '30' + _DEGR, '', '',
-                            '60' + _DEGR, '', '', '90' + _DEGR])
-    elif start_lat == -90 and end_lat == 90:
-        ax.set_yticklabels(['-90' + _DEGR, '', '', '-60' + _DEGR, '', '',
-                            '-30' + _DEGR, '', '', 'EQ', '', '', '30' + _DEGR,
-                            '', '', '60' + _DEGR, '', '', '90' + _DEGR])
-    elif start_lat == -45 and end_lat == 45:
-        ax.set_yticks(np.arange(-45, 46, 15))
-        ax.set_yticklabels(['45S', '30S', '15S', 'EQ', '15N', '30N', '45N'])
-    ax.set_ylabel(" ")
 
-def ann_cyc_xaxis(ax):
-    ax.set_xlim(1, 12)
+    if start_lat == 0 and end_lat == 90:
+        ticks = [0, 30, 60, 90]
+        minor_ticks = [10, 20, 40, 50, 70, 80]
+        if degr_symbol:
+            ticklabels = ['EQ', '30' + _DEGR, '60' + _DEGR, '90' + _DEGR]
+        else:
+            ticklabels = ['EQ', '30N', '60N', '90N']
+    elif start_lat == -90 and end_lat == 90:
+        ticks = [-90, -60, -30, 0, 30, 60, 90]
+        minor_ticks = [-80, -70, -50, -40, -20, -10,
+                       10, 20, 40, 50, 70, 80]
+        if degr_symbol:
+            ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
+                          "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
+        else:
+            ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
+    elif start_lat == -30 and end_lat == 30:
+        ticks = [-30, -20, -10, 0, 10, 20, 30]
+        minor_ticks = [-25, -15, -5, 5, 15, 25]
+        if degr_symbol:
+            ticklabels = [f"30{_DEGR_S}", f"20{_DEGR_S}", f"10{_DEGR_S}",
+                          "EQ", f"10{_DEGR_N}", f"20{_DEGR_N}", f"30{_DEGR_N}"]
+        else:
+            ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
+
+    elif start_lat == -45 and end_lat == 45:
+        ticks = [-45, -30, -15, 0, 15, 30, 45]
+        minor_ticks = [-40, -35, -25, -20, -10, -5, 5, 10, 20, 25, 35, 40]
+        if degr_symbol:
+            ticklabels = [f"45{_DEGR_S}", f"30{_DEGR_S}", f"15{_DEGR_S}",
+                          "EQ", f"15{_DEGR_N}", f"30{_DEGR_N}", f"45{_DEGR_N}"]
+        else:
+            ticklabels = ["45S", "30S", "15S", "EQ", "15N", "30N", "45N"]
+    elif start_lat == -60 and end_lat == 60:
+        ticks = [-60, -30, 0, 30, 60]
+        minor_ticks = [-50, -40, -20, -10, 10, 20, 40, 50]
+        if degr_symbol:
+            ticklabels = [f"60{_DEGR_S}", f"30{_DEGR_S}", "EQ",
+                          f"30{_DEGR_N}", f"60{_DEGR_N}"]
+        else:
+            ticklabels = ["60S", "30S", "EQ", "30N", "60N"]
+    else:
+        ticks = np.arange(start_lat, end_lat + 1, 10)
+        minor_ticks = None
+        ticklabels = None
+    ax.set_yticks(ticks)
+    if minor_ticks is not None:
+        ax.set_yticks(minor_ticks, minor=True)
+    if ticklabels is not None:
+        ax.set_yticklabels(ticklabels, **kwargs)
+    ax.set_ylabel("")
+
+
+def ann_cyc_xaxis(ax=None, extra_space=False):
+    ax = _gca_if_ax_none(ax)
+    if extra_space:
+        ax.set_xlim(0.8, 12.2)
+    else:
+        ax.set_xlim(1, 12)
     ax.set_xticks(range(1, 13))
     ax.set_xticklabels("JFMAMJJASOND")
     ax.set_xlabel("")
@@ -162,10 +225,9 @@ def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
 def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
                 ax=None, lat_str=LAT_STR, ax_labels=False, **plot_kwargs):
     """Plot of the given array as a function of latitude."""
+    ax = _gca_if_ax_none(ax)
     arr_plot = arr.where((arr[lat_str] > start_lat) &
                          (arr[lat_str] < end_lat))
-    if ax is None:
-        ax = plt.gca()
     if sinlat:
         lat = sindeg(arr_plot[lat_str])
         sinlat_xaxis(ax, start_lat=start_lat, end_lat=end_lat)
@@ -187,15 +249,13 @@ def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
 
 def _plot_cutoff_ends(lats, arr, ax=None, **kwargs):
     """Avoid finite-differencing artifacts at endpoints."""
-    if ax is None:
-        ax = plt.gca()
+    ax = _gca_if_ax_none(ax)
     ax.plot(lats[2:-2], arr[2:-2], **kwargs)
 
 
-def panel_label(panel_num=None, ax=None, x=0.03, y=0.9, extra_text=None,
+def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.88,
                 **text_kwargs):
-    if ax is None:
-        ax = plt.gca()
+    ax = _gca_if_ax_none(ax)
     if panel_num is None:
         for n, ax_ in enumerate(ax):
             panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text,
@@ -219,19 +279,19 @@ def truncate_cmap(cmap, minval=0.0, maxval=1.0, n=100):
         cmap(np.linspace(minval, maxval, n)))
     return new_cmap
 
-@default_gca
+
 def mark_x0(ax=None, linewidth=0.5, color='0.5', x0=0, **kwargs):
     """Mark the x intercept line on the given axis."""
+    ax = _gca_if_ax_none(ax)
     return ax.axvline(x=x0, linewidth=linewidth, color=color, **kwargs)
 
 
-@default_gca
 def mark_y0(ax=None, linewidth=0.5, color='0.5', y0=0, **kwargs):
     """Mark the y intercept on the given axis."""
+    ax = _gca_if_ax_none(ax)
     return ax.axhline(y=y0, linewidth=linewidth, color=color, **kwargs)
 
 
-@default_gca
 def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
                  linewidth=0.8, **line_kwargs):
     """Mark the identity line, y=x, on the given axis.
@@ -239,6 +299,7 @@ def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
     From https://stackoverflow.com/a/28216751/1706640.
 
     """
+    ax = _gca_if_ax_none(ax)
     identity, = ax.plot([], [], *line_args, linestyle=linestyle,
                         color=color, **line_kwargs)
 
@@ -353,8 +414,7 @@ def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
         All other arguments are forwarded to `imshow`.
 
     """
-    if not ax:
-        ax = plt.gca()
+    ax = _gca_if_ax_none(ax)
 
     # Plot the heatmap
     im = ax.imshow(data, **kwargs)
@@ -467,6 +527,57 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
                 texts.append(text)
 
     return texts
+
+
+def plot_seas_points(arr, ax=None, seas_ordered=None, **kwargs):
+    """Plot seasonal values in calendar order on one set of axes."""
+    ax = _gca_if_ax_none(ax)
+    if seas_ordered is None:
+        seas_ordered = arr["season"].values
+    xrange = range(4)
+    linestyle = kwargs.pop("linestyle", "none")
+    marker = kwargs.pop("marker", ".")
+    ax.plot(
+        xrange,
+        arr.sel(season=seas_ordered),
+        linestyle=linestyle,
+        marker=marker,
+        **kwargs
+    )
+    ax.set_xticks(xrange)
+    ax.set_xticklabels(seas_ordered)
+
+
+def plot_seas_ann_points(arr_seas, arr_ann, ax=None, seas_ordered=None,
+                         **kwargs):
+    """Plot seasonal and annual-mean values on one set of axes."""
+    ax = _gca_if_ax_none(ax)
+    if seas_ordered is None:
+        seas_ordered = ["MAM", "JJA", "SON", "DJF"]
+    xticklabels = seas_ordered + ["annual"]
+    xrange = range(5)
+    linestyle = kwargs.pop("linestyle", "none")
+    marker = kwargs.pop("marker", ".")
+    color = kwargs.pop("color", "0.3")
+    ax.plot(
+        xrange[:-1],
+        arr_seas.sel(season=seas_ordered),
+        linestyle=linestyle,
+        marker=marker,
+        color=color,
+        **kwargs,
+    )
+    ax.plot(
+        xrange[-1],
+        arr_ann,
+        linestyle=linestyle,
+        marker=marker,
+        color=color,
+        **kwargs,
+    )
+    mark_x0(ax, x0=3.5)
+    ax.set_xticks(xrange)
+    ax.set_xticklabels(xticklabels)
 
 
 def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):

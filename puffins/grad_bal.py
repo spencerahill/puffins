@@ -15,9 +15,10 @@ from .constants import (
     ROT_RATE_EARTH,
     THETA_REF,
 )
-from .names import LAT_STR, LEV_STR, PHALF_STR
-from .nb_utils import cosdeg, sindeg, zero_cross
-from .calculus import avg_logp_weighted, lat_deriv, phalf_from_pfull
+from .interp import zero_cross_interp
+from .names import LAT_STR, LEV_STR
+from .nb_utils import cosdeg, sindeg
+from .calculus import lat_deriv
 from .dynamics import abs_vort_from_u, z_from_hypso
 from .thermodynamics import temp_from_equiv_pot_temp
 
@@ -165,7 +166,7 @@ def abs_vort_zero_cross_cqe(theta_b, temp_tropo=None, const_stab=False,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross(eta.where(eta[lat_str] > 0), lat_str)
+    return zero_cross_interp(eta.where(eta[lat_str] > 0), lat_str)
 
 
 def pot_temp_amc_cqe(lat, lat_max, pot_temp_max, vert_temp_diff,
@@ -268,29 +269,6 @@ def grad_wind_p_coords(height=None, temp=None, p_sfc=MEAN_SLP_EARTH, p_top=1.,
                 (sinlat * coslat * (rot_rate * radius) ** 2))
     return (rot_rate * radius * coslat *
             (np.sqrt(sqrt_arg) - 1)).transpose(*height.dims)
-
-
-# def grad_wind_p_coords(temp, pressure, p_half=None, p0=MEAN_SLP_EARTH,
-#                        lat_str=LAT_STR, p_str=LEV_STR, phalf_str=PHALF_STR,
-#                        radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D):
-#     """Gradient wind for data on the sphere in pressure coordinates.
-
-#     Assumes that pressure is in Pa, not hPa.
-
-#     """
-#     if p_half is None:
-#         p_half = phalf_from_pfull(pressure, p_bot=p0, phalf_str=phalf_str)
-
-#     temp_avg = avg_logp_weighted(temp, p_half, pressure, p_str=p_str)
-#     dtemp_avg_dlat = lat_deriv(temp_avg, lat_str)
-
-#     lat = temp[lat_str]
-#     coslat = cosdeg(lat)
-
-#     sqrt_arg = 1 - (r_d * np.log(p0 / pressure) * dtemp_avg_dlat /
-#                     (coslat * sindeg(lat) * (rot_rate * radius) ** 2))
-#     return (rot_rate * radius * coslat *
-#             (np.sqrt(sqrt_arg) - 1)).transpose(*temp.dims)
 
 
 if __name__ == '__main__':

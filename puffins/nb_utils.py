@@ -13,7 +13,6 @@ import numpy as np
 import xarray as xr
 
 from .constants import RAD_EARTH
-from .interp import interpolate
 from .names import DAY_OF_YEAR_STR, LAT_STR, TIME_STR
 
 
@@ -210,23 +209,6 @@ def find_nearest(arr, value):
     return arr.loc[idx]
 
 
-# Array zero crossings.
-def zero_cross_bounds(arr, dim, num_cross):
-    """Find the values bounding an array's zero crossing."""
-    sign_switch = np.sign(arr).diff(dim)
-    switch_arr = arr[dim].where(sign_switch, drop=True)
-    if len(switch_arr) == 0:
-        raise ValueError("Didn't find any zero crossings")
-    switch_val = switch_arr[num_cross]
-    return arr.sel(**{dim: slice(None, switch_val)})[-2:]
-
-
-def zero_cross(arr, dim, num_cross=0):
-    """Find an array's zero crossing, with interpolation."""
-    bounds = zero_cross_bounds(arr, dim, num_cross)
-    return interpolate(bounds, bounds[dim], 0, dim).rename(dim)
-
-
 # Data IO, processing, and cleaning.
 def read_netcdfs(files, dim="time", transform_func=None, pre_func=None):
     """Load multiple netCDF files into Dataset, optimizing for performance.
@@ -310,17 +292,6 @@ def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
 def lat_area_weight(lat, radius=RAD_EARTH):
     """Geometric factor corresponding to surface area at each latitude."""
     return 2.*np.pi*radius*cosdeg(lat)
-
-
-def to_pascal(arr, is_dp=False, warn=False):
-    """Force data with units either hPa or Pa to be in Pa."""
-    threshold = 400 if is_dp else 1200
-    if np.max(np.abs(arr)) < threshold:
-        if warn:
-            warn_msg = "Conversion applied: hPa -> Pa to array: {}".format(arr)
-            warnings.warn(warn_msg)
-        return arr * 100.0
-    return arr
 
 
 def drop_dupes(sequence):
