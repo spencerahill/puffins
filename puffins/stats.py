@@ -78,6 +78,12 @@ def avg_monthly(arr, dim="time"):
     return arr.weighted(arr[dim].dt.days_in_month).mean(dim)
 
 
+def rolling_avg(arr, weight, **rolling_kwargs):
+    """Rolling weighted average."""
+    return ((arr * weight).rolling(**rolling_kwargs).sum() /
+            weight.rolling(**rolling_kwargs).sum())
+
+
 def xwelch(arr, **kwargs):
     """Wrapper for scipy.signal.welch for xr.DataArrays"""
     freqs, psd = scipy.signal.welch(arr, **kwargs)
