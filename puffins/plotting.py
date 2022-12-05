@@ -7,7 +7,7 @@ import os.path
 from faceted import faceted as fac_faceted
 from faceted import faceted_ax as fac_ax
 from matplotlib import pyplot as plt
-from matplotlib import colors, ticker
+from matplotlib import colors, gridspec, ticker
 import numpy as np
 import xarray as xr
 
@@ -578,6 +578,51 @@ def plot_seas_ann_points(arr_seas, arr_ann, ax=None, seas_ordered=None,
     mark_x0(ax, x0=3.5)
     ax.set_xticks(xrange)
     ax.set_xticklabels(xticklabels)
+
+
+def fig_ann_seas(**fig_kwargs):
+    """5-panel figure of annual at top and 4 seasonal values below."""
+    fig = plt.figure(**fig_kwargs)
+    gs = gridspec.GridSpec(3, 4)
+
+    ax1 = plt.subplot(gs[0, 1:3])
+    ax2 = plt.subplot(gs[1, :2])
+    ax3 = plt.subplot(gs[1, 2:])
+    ax4 = plt.subplot(gs[2, :2])
+    ax5 = plt.subplot(gs[2, 2:])
+    axarr = [ax1, ax2, ax3, ax4, ax5]
+    return fig, axarr
+
+
+def ann_seas_labels(
+    axarr,
+    xparams_inner=None,
+    xparams_outer=None,
+    yparams_inner=None,
+    yparams_outer=None,
+):
+    """x and y labels for 5-panel annual + seasonal plots."""
+    do_x_outer = [True, False, False, True, True]
+    do_x_inner = [False, True, True, False, False]
+    do_y_outer = [True, True, False, True, False]
+    do_y_inner = [False, False, True, False, True]
+
+    if xparams_outer is not None:
+        for ax, do_this_ax in zip(axarr, do_x_outer):
+            if do_this_ax:
+                ax.set(**xparams_outer)
+    if xparams_inner is not None:
+        for ax, do_this_ax in zip(axarr, do_x_inner):
+            if do_this_ax:
+                ax.set(**xparams_inner)
+    if yparams_outer is not None:
+        for ax, do_this_ax in zip(axarr, do_y_outer):
+            if do_this_ax:
+                ax.set(**yparams_outer)
+    if yparams_inner is not None:
+        for ax, do_this_ax in zip(axarr, do_y_inner):
+            if do_this_ax:
+                ax.set(**yparams_inner)
 
 
 def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
