@@ -82,7 +82,7 @@ def interpolate(x, y, x_target, dim):
     y_vals = y.values
     y_target_vals = (y_vals[0] + (y_vals[1] - y_vals[0]) /
                      (x_vals[1] - x_vals[0]) * (x_target - x_vals[0]))
-    y_target = xr.ones_like(x[0])*y_target_vals
+    y_target = xr.ones_like(x[0]) * y_target_vals
     y_target[dim].values = y_target_vals
     return y_target
 
@@ -131,7 +131,7 @@ def interp_ds_p_to_p(ds, plevs, method="cubic", pfull_str=PFULL_STR,
 
 
 # Array zero crossings.
-def zero_cross_bounds(arr, dim, num_cross):
+def zero_cross_bounds(arr, dim, num_cross=0):
     """Find the values bounding an array's zero crossing."""
     sign_switch = np.sign(arr).diff(dim)
     switch_arr = arr[dim].where(sign_switch, drop=True)

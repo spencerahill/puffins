@@ -6,6 +6,7 @@ import numpy as np
 import xarray as xr
 
 from .constants import RAD_EARTH
+from .interp import zero_cross_interp
 from .names import (
     BOUNDS_STR,
     LAT_BOUNDS_STR,
@@ -168,6 +169,32 @@ def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
             f"Actual max fractional deviation from uniform: {max_frac_var}"
         )
     return arr_masked.mean(lat_str)
+
+
+# Centroids.
+def centroid(arr, dim, weights=None, centroid_thresh=0.5):
+    """Compute centroid of a given field
+    """
+    if weights is None:
+        weights = 1.
+    arr_int = (weights * arr).cumsum(dim)
+    arr_int_norm = arr_int / arr_int.max(dim)
+    return zero_cross_interp(arr_int_norm - centroid_thresh, dim)
+
+
+def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5,
+                   do_cos_weight=True):
+    """Compute centroid of a field in latitude.
+
+    By default, includes area weighting by cos(lat).
+
+    """
+    if do_cos_weight:
+        weights = np.abs(cosdeg(arr[lat_str]))
+    else:
+        weights = None
+    return centroid(arr, lat_str, weights=weights,
+                    centroid_thresh=centroid_thresh)
 
 
 # Surface area of lat-lon data.
