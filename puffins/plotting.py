@@ -201,6 +201,33 @@ def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     ax.set_ylabel("")
 
 
+def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
+                 degr_symbols=False):
+    """Make the x-axis be in sin of latitude."""
+    ax = _gca_if_ax_none(ax)
+    ax.set_ylim([sindeg(start_lat), sindeg(end_lat)])
+    if start_lat == 0 and end_lat == 90:
+        ax.set_yticks(sindeg([0, 30, 60, 90]))
+        ax.set_yticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
+        if do_ticklabels:
+            if degr_symbols:
+                ax.set_yticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
+                                    r'90$^\circ$'])
+            else:
+                ax.set_yticklabels(['EQ', r'30N' r'60N', r'90N'])
+    elif start_lat == -90 and end_lat == 90:
+        ax.set_yticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
+        minorticks = [-80, -70, -50, -40, -20, -10,
+                      10, 20, 40, 50, 70, 80]
+        ax.set_yticks(sindeg(minorticks), minor=True)
+        if do_ticklabels:
+            if degr_symbols:
+                ax.set_yticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
+                                    '30' + _DEGR_N, " ", '90' + _DEGR_N])
+            else:
+                ax.set_yticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
+
+
 def ann_cyc_xaxis(ax=None, extra_space=False):
     ax = _gca_if_ax_none(ax)
     if extra_space:
