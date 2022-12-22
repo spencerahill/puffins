@@ -55,8 +55,8 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
     lats = u[lat_str]
     sinlat = sindeg(lats)
     coslat = cosdeg(lats)
-    return ((u*sinlat)/(radius*coslat) - lat_deriv(u, lat_str)/radius +
-            2*rot_rate*sinlat)
+    return ((u * sinlat) / (radius * coslat) - lat_deriv(u, lat_str) / radius
+            + 2 * rot_rate * sinlat)
 
 
 def rel_vort_from_u(uwind, radius=RAD_EARTH, lat_str=LAT_STR):
