@@ -7,6 +7,7 @@ import sklearn.metrics
 import scipy.stats
 import xarray as xr
 
+from .interp import zero_cross_interp
 from .names import LAT_STR, YEAR_STR
 from .nb_utils import coord_arr_1d, cosdeg
 
@@ -60,6 +61,32 @@ def dt_std_anom(arr, dim=None, order=1):
     """Detrended standardized anomaly timeseries."""
     dim = _infer_dim_if_1d(arr, dim)
     return detrend(standardize(arr, dim), dim=dim, order=order)
+
+
+# Centroids.
+def centroid(arr, dim, weights=None, centroid_thresh=0.5):
+    """Compute centroid of a given field
+    """
+    if weights is None:
+        weights = 1.
+    arr_int = (weights * arr).cumsum(dim)
+    arr_int_norm = arr_int / arr_int.max(dim)
+    return zero_cross_interp(arr_int_norm - centroid_thresh, dim)
+
+
+def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5,
+                   do_cos_weight=True):
+    """Compute centroid of a field in latitude.
+
+    By default, includes area weighting by cos(lat).
+
+    """
+    if do_cos_weight:
+        weights = np.abs(cosdeg(arr[lat_str]))
+    else:
+        weights = None
+    return centroid(arr, lat_str, weights=weights,
+                    centroid_thresh=centroid_thresh)
 
 
 # Filtering (time or otherwise)
