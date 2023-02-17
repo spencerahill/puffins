@@ -59,7 +59,8 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
 
 
 def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
-                      do_avg_vert=False, lev_str=LEV_STR):
+                      do_avg_vert=False, do_interp_lat=False, lev_str=LEV_STR,
+                      lat_str=LAT_STR):
     """Hadley cell strength, as maximum of streamfunction.
 
     If a dimension is given, compute the strength separately at each value of
@@ -83,6 +84,26 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
         sf_valid = sf_valid.mean(lev_str)
         sf_valid.coords[lev_str] = avg_lev
 
+    # WIP: interpolate in latitude to the center.  I've got something that runs
+    # but I don't trust it yet, and it feels clunky.  What I need is to find
+    # the center point, grab it and two point on either side of it, compute the
+    # derivative using 2nd order centered differences for the three points, and
+    # on one side or the other there will be a sign change, and interpolate there.
+    # Or is there a way to do that even more directly with xarray's interpolation?
+    if do_interp_lat:
+        cell_strength = max_and_argmax(sf_valid)
+        lev_center = cell_strength[lev_str].values
+        lat_center_raw = cell_strength[lat_str].values
+        dlat_mean = sf_valid[lat_str].diff(lat_str).mean()
+        dsf_dlat = sf_valid.differentiate(lat_str).sel(
+            **{lev_str: lev_center, "method": "nearest"}).sel(
+            **{lat_str: slice(lat_center_raw - 1.1 * dlat_mean,
+                              lat_center_raw + 1.1 * dlat_mean)})
+        lat_center = zero_cross_interp(dsf_dlat, lat_str).values
+        sf_at_center = sf_valid.interp(
+            **{lat_str: lat_center, "method": "cubic"})
+        return max_and_argmax(sf_at_center)
+
     if dim is None:
         return max_and_argmax(sf_valid)
     return max_and_argmax_along_dim(sf_valid, dim)
@@ -90,7 +111,7 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
 
 def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
                        do_avg_vert=False, min_lat=None, max_lat=None,
-                       lat_str=LAT_STR, lev_str=LEV_STR):
+                       do_interp_lat=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -105,13 +126,18 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
     # these whose centers are nearest the equator.
     cell_strength_vals = []
 
-    cell_pos_max_strength = had_cell_strength(
-        strmfunc, min_plev=min_plev, max_plev=max_plev,
-        do_avg_vert=do_avg_vert, lev_str=lev_str)
+    kwargs_hc_strength = dict(
+        min_plev=min_plev,
+        max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
+        do_interp_lat=do_interp_lat,
+        lat_str=lat_str,
+        lev_str=lev_str,
+    )
+
+    cell_pos_max_strength = had_cell_strength(strmfunc, **kwargs_hc_strength)
     cell_neg_max_strength = -1 * had_cell_strength(
-        -1 * strmfunc,
-        min_plev=min_plev, max_plev=max_plev,
-        do_avg_vert=do_avg_vert, lev_str=lev_str,
+        -1 * strmfunc, **kwargs_hc_strength
     )
     cell_strength_vals.append(cell_pos_max_strength)
     cell_strength_vals.append(cell_neg_max_strength)
@@ -121,9 +147,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
 
     try:
         cell_south_of_pos_strength = -1 * had_cell_strength(
-            -1 * strmfunc.where(lat < lat_pos_max),
-            min_plev=min_plev, max_plev=max_plev,
-            do_avg_vert=do_avg_vert, lev_str=lev_str,
+            -1 * strmfunc.where(lat < lat_pos_max), **kwargs_hc_strength,
         )
     except ValueError:
         pass
@@ -131,9 +155,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
         cell_strength_vals.append(cell_south_of_pos_strength)
     try:
         cell_north_of_pos_strength = -1 * had_cell_strength(
-            -1 * strmfunc.where(lat > lat_pos_max),
-            min_plev=min_plev, max_plev=max_plev,
-            do_avg_vert=do_avg_vert, lev_str=lev_str,
+            -1 * strmfunc.where(lat > lat_pos_max), **kwargs_hc_strength,
         )
     except ValueError:
         pass
@@ -141,9 +163,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
         cell_strength_vals.append(cell_north_of_pos_strength)
     try:
         cell_south_of_neg_strength = had_cell_strength(
-            strmfunc.where(lat < lat_neg_max),
-            min_plev=min_plev, max_plev=max_plev,
-            do_avg_vert=do_avg_vert, lev_str=lev_str,
+            strmfunc.where(lat < lat_neg_max), **kwargs_hc_strength,
         )
     except ValueError:
         pass
@@ -152,9 +172,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
 
     try:
         cell_north_of_neg_strength = had_cell_strength(
-            strmfunc.where(lat > lat_neg_max),
-            min_plev=min_plev, max_plev=max_plev,
-            do_avg_vert=do_avg_vert, lev_str=lev_str,
+            strmfunc.where(lat > lat_neg_max), **kwargs_hc_strength,
         )
     except ValueError:
         pass
