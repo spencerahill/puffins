@@ -7,15 +7,13 @@ from .calculus import subtract_col_avg
 from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
 from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
-from .interp import interpolate
+from .interp import interpolate, zero_cross_bounds, zero_cross_interp
 from .nb_utils import (
     cosdeg,
     sindeg,
-    zero_cross_bounds,
     lat_area_weight,
     max_and_argmax,
     max_and_argmax_along_dim,
-    to_pascal,
 )
 from .num_solver import brentq_solver_sweep_param
 
@@ -44,13 +42,12 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     else:
         v_znl_mean = v
     if lon_str in dp.dims:
-        dp_znl_mean = to_pascal(dp, is_dp=True).mean(dim=lon_str)
+        dp_znl_mean = dp.mean(dim=lon_str)
     else:
         dp_znl_mean = dp
     # If desired, impose zero net mass flux at each level.
     if impose_zero_col_flux:
-        v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean,
-                                      dim=lev_str, grav=grav)
+        v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean, dim=lev_str)
     # At each vertical level, integrate from TOA to that level.
     streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
@@ -62,7 +59,8 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
 
 
 def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
-                      lev_str=LEV_STR):
+                      do_avg_vert=False, do_interp_lat=False, lev_str=LEV_STR,
+                      lat_str=LAT_STR):
     """Hadley cell strength, as maximum of streamfunction.
 
     If a dimension is given, compute the strength separately at each value of
@@ -81,13 +79,39 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
     if max_plev is not None:
         sf_valid = sf_valid.where(lev <= max_plev, drop=True)
 
+    if do_avg_vert:
+        avg_lev = sf_valid[lev_str].mean(lev_str).values
+        sf_valid = sf_valid.mean(lev_str)
+        sf_valid.coords[lev_str] = avg_lev
+
+    # WIP: interpolate in latitude to the center.  I've got something that runs
+    # but I don't trust it yet, and it feels clunky.  What I need is to find
+    # the center point, grab it and two point on either side of it, compute the
+    # derivative using 2nd order centered differences for the three points, and
+    # on one side or the other there will be a sign change, and interpolate there.
+    # Or is there a way to do that even more directly with xarray's interpolation?
+    if do_interp_lat:
+        cell_strength = max_and_argmax(sf_valid)
+        lev_center = cell_strength[lev_str].values
+        lat_center_raw = cell_strength[lat_str].values
+        dlat_mean = sf_valid[lat_str].diff(lat_str).mean()
+        dsf_dlat = sf_valid.differentiate(lat_str).sel(
+            **{lev_str: lev_center, "method": "nearest"}).sel(
+            **{lat_str: slice(lat_center_raw - 1.1 * dlat_mean,
+                              lat_center_raw + 1.1 * dlat_mean)})
+        lat_center = zero_cross_interp(dsf_dlat, lat_str).values
+        sf_at_center = sf_valid.interp(
+            **{lat_str: lat_center, "method": "cubic"})
+        return max_and_argmax(sf_at_center)
+
     if dim is None:
         return max_and_argmax(sf_valid)
     return max_and_argmax_along_dim(sf_valid, dim)
 
 
-def had_cells_strength(strmfunc, min_plev=None, max_plev=None, min_lat=None,
-                       max_lat=None, lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
+                       do_avg_vert=False, min_lat=None, max_lat=None,
+                       do_interp_lat=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -100,46 +124,65 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None, min_lat=None,
     # So find the global extremal negative and positive values as well as the
     # opposite-signed cell on either side.  The Hadley cells will be the two of
     # these whose centers are nearest the equator.
-    cell_pos_max_strength = had_cell_strength(
-        strmfunc, min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
+    cell_strength_vals = []
+
+    kwargs_hc_strength = dict(
+        min_plev=min_plev,
+        max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
+        do_interp_lat=do_interp_lat,
+        lat_str=lat_str,
+        lev_str=lev_str,
     )
+
+    cell_pos_max_strength = had_cell_strength(strmfunc, **kwargs_hc_strength)
+    cell_neg_max_strength = -1 * had_cell_strength(
+        -1 * strmfunc, **kwargs_hc_strength
+    )
+    cell_strength_vals.append(cell_pos_max_strength)
+    cell_strength_vals.append(cell_neg_max_strength)
+
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
-
-    cell_south_of_pos_strength = -1 * had_cell_strength(
-        -1 * strmfunc.where(lat < lat_pos_max),
-        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
-    )
-    cell_north_of_pos_strength = -1*had_cell_strength(
-        -1*strmfunc.where(lat > lat_pos_max),
-        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
-    )
-
-    cell_neg_max_strength = had_cell_strength(
-        -1*strmfunc,
-        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
-    )
     lat_neg_max = cell_neg_max_strength.coords[lat_str]
 
-    cell_south_of_neg_strength = had_cell_strength(
-        strmfunc.where(lat < lat_neg_max),
-        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
-    )
-    cell_north_of_neg_strength = had_cell_strength(
-        strmfunc.where(lat > lat_neg_max),
-        min_plev=min_plev, max_plev=max_plev, lev_str=lev_str,
-    )
+    try:
+        cell_south_of_pos_strength = -1 * had_cell_strength(
+            -1 * strmfunc.where(lat < lat_pos_max), **kwargs_hc_strength,
+        )
+    except ValueError:
+        pass
+    else:
+        cell_strength_vals.append(cell_south_of_pos_strength)
+    try:
+        cell_north_of_pos_strength = -1 * had_cell_strength(
+            -1 * strmfunc.where(lat > lat_pos_max), **kwargs_hc_strength,
+        )
+    except ValueError:
+        pass
+    else:
+        cell_strength_vals.append(cell_north_of_pos_strength)
+    try:
+        cell_south_of_neg_strength = had_cell_strength(
+            strmfunc.where(lat < lat_neg_max), **kwargs_hc_strength,
+        )
+    except ValueError:
+        pass
+    else:
+        cell_strength_vals.append(cell_south_of_neg_strength)
 
-    # The above procedure generates 6 cells, of which 2 are duplicates.  Now,
-    # get rid of the duplicates.
-    strengths = [
-        cell_pos_max_strength,
-        cell_south_of_pos_strength,
-        cell_north_of_pos_strength,
-        cell_neg_max_strength,
-        cell_south_of_neg_strength,
-        cell_north_of_neg_strength,
-    ]
-    cell_strengths = xr.concat(strengths, dim=lat_str, coords=[lev_str])
+    try:
+        cell_north_of_neg_strength = had_cell_strength(
+            strmfunc.where(lat > lat_neg_max), **kwargs_hc_strength,
+        )
+    except ValueError:
+        pass
+    else:
+        cell_strength_vals.append(cell_north_of_neg_strength)
+
+    # The above procedure generates up to 6 cells, of which up to 2 are
+    # duplicates.  Now, get rid of the duplicates.
+    cell_strengths = xr.concat(cell_strength_vals, dim=lat_str,
+                               coords=[lev_str])
     dupes = cell_strengths.get_index(lat_str).duplicated()
     cell_strengths = cell_strengths[~dupes]
 
@@ -189,14 +232,17 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, frac_thresh=0., fixed_plev=None,
-                          max_plev=None, min_lat=None, max_lat=None,
-                          cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, fixed_plev=None,
+                          min_plev=None, max_plev=None, do_avg_vert=False,
+                          min_lat=None, max_lat=None, cos_factor=False,
+                          lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
         strmfunc,
+        min_plev=min_plev,
         max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
         min_lat=min_lat,
         max_lat=max_lat,
         lat_str=lat_str,
@@ -211,20 +257,19 @@ def had_cells_shared_edge(strmfunc, frac_thresh=0., fixed_plev=None,
         sf_at_max = strmfunc.sel(**{lev_str: fixed_plev, "method": "nearest"})
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max),
                                  drop=True)
-    sf_norm_thresh = sf_max2max / np.abs(sf_max2max.max()) - frac_thresh
-    sf_interped = sf_norm_thresh.interp(
-        **{lat_str: np.arange(lat_sh_max, lat_nh_max + 0.005, 0.05)}
-    )
-    return sf_interped[lat_str][np.abs(sf_interped).argmin(lat_str)]
+    return zero_cross_interp(sf_max2max, lat_str)[lat_str]
 
 
 def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  fixed_plev=None, max_plev=None, min_lat=None, max_lat=None,
+                  fixed_plev=None, min_plev=None, max_plev=None,
+                  do_avg_vert=False, min_lat=None, max_lat=None,
                   cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(
         strmfunc,
+        min_plev=min_plev,
         max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
         min_lat=min_lat,
         max_lat=max_lat,
         lat_str=lat_str,
@@ -262,12 +307,18 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     sf_one_side = sf_at_max.where(lat_compar, drop=True)
 
     # Restrict to the latitudes from the max to the nearest point with
-    # opposite-signed value.
-
-    # Apply cubic interpolation in latitude to a refined mesh.  Otherwise, the
-    # cell edge can (unphysically) vary non-monotonically with `frac_thresh`.
+    # opposite-signed value.  Also apply cubic interpolation in latitude to a
+    # refined mesh.  Otherwise, the cell edge can (unphysically) vary
+    # non-monotonically with `frac_thresh`.
+    dlat_avg = float(sf_one_side[lat_str].diff(lat_str).mean(lat_str).values)
+    # If there's only one point, assume it's one of the poles.
+    if np.isnan(dlat_avg):
+        if edge == "north":
+            return 90
+        return -90
     lats_interp = np.arange(sf_one_side[lat_str].min(),
-                            sf_one_side[lat_str].max() - 0.01, 0.05)
+                            sf_one_side[lat_str].max() - 0.2 * dlat_avg,
+                            0.1 * dlat_avg)
     sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp},
                                             method="cubic")
     # Explicitly make the last value equal to the original, as otherwise the
@@ -284,16 +335,22 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
         sf_norm = sf_one_side_interp / cell_max
 
     sf_thresh_diff = sf_norm - frac_thresh
-    sf_edge_bounds = zero_cross_bounds(sf_thresh_diff, lat_str, which_zero)
-
+    # If there is no zero crossing, then the cell extends to the pole.
+    try:
+        sf_edge_bounds = zero_cross_bounds(sf_thresh_diff, lat_str, which_zero)
+    except ValueError:
+        if edge == "north":
+            return 90.
+        return -90.
     # Interpolate between the bounding points to the crossing.
     return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0,
                        lat_str)[lat_str]
 
 
 def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
-                         max_plev=None, min_lat=None, max_lat=None,
-                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                         min_plev=None, max_plev=None, do_avg_vert=False,
+                         min_lat=None, max_lat=None, cos_factor=False,
+                         lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -301,7 +358,9 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
         edge="south",
         frac_thresh=frac_thresh,
         fixed_plev=fixed_plev,
+        min_plev=min_plev,
         max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
         min_lat=min_lat,
         max_lat=max_lat,
         cos_factor=cos_factor,
@@ -311,8 +370,9 @@ def had_cells_south_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
 
 
 def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
-                         max_plev=None, min_lat=None, max_lat=None,
-                         cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                         min_plev=None, max_plev=None, do_avg_vert=False,
+                         min_lat=None, max_lat=None, cos_factor=False,
+                         lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -320,7 +380,9 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
         edge="north",
         frac_thresh=frac_thresh,
         fixed_plev=fixed_plev,
+        min_plev=min_plev,
         max_plev=max_plev,
+        do_avg_vert=do_avg_vert,
         min_lat=min_lat,
         max_lat=max_lat,
         cos_factor=cos_factor,
@@ -329,14 +391,17 @@ def had_cells_north_edge(strmfunc, frac_thresh=0.1, fixed_plev=None,
     )
 
 
-def had_cells_edges(strmfunc, frac_thresh=0.1, max_lev=None, min_lat=None,
-                    max_lat=None, cos_factor=False, lat_str=LAT_STR,
-                    lev_str=LEV_STR):
+def had_cells_edges(strmfunc, frac_thresh=0.1, min_lev=None, max_lev=None,
+                    do_avg_vert=False, min_lat=None, max_lat=None,
+                    cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
     """Southern, shared inner, and northern edge of the Hadley cells."""
     shared_kwargs = dict(
         frac_thresh=frac_thresh,
+        min_lev=min_lev,
         max_lev=max_lev,
+        do_avg_vert=do_avg_vert,
         min_lat=min_lat,
+        max_lat=max_lat,
         cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
@@ -647,7 +712,8 @@ def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
     """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
     if np.all(therm_ro == 0):
         return 0.
-    return np.rad2deg(c_ascent * (0.5 * therm_ro) ** (1. / 3.))
+    return np.sign(therm_ro) * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro))
+                                          ** (1. / 3.))
 
 
 def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
@@ -662,12 +728,16 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
+        if ascentlat == 0:
+            return c_descent * lat_fixed_ro_ann
         lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+        if ascentlat == 0:
+            return c_descent * np.rad2deg(lat_ro_ann)
     lat_a = np.deg2rad(ascentlat)
     return c_descent * np.rad2deg(
         lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
@@ -676,16 +746,20 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
 def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
                                        c_descent=1, delta_v=0.125,
-                                       delta_h=1/15, ross_num=1):
+                                       delta_h=1. / 15., ross_num=1):
     """Descending edge approx including theory for ascent lat.
 
-    That is, the ascending latitude is assumed equal to the c_ascent times the
-    thermal Rossby number to the one-third power.  From Hill, Bordoni, and
-    Mitchell, 2021, JAS, "Solsticial Hadley Cell Ascending Edge Theory from
-    Supercriticality."
+    From Hill, Bordoni, and Mitchell, 2022, JAS, "A Theory for the Hadley Cell
+    Descending and Ascending Edges throughout the Annual Cycle."
 
-    Then the descending edge assumes a uniform Rossby number and the 2-layer
-    BCI condition.
+    The ascending latitude is assumed equal to the c_ascent times the thermal
+    Rossby number to the one-third power.  Then the descending edge assumes a
+    uniform Rossby number and the 2-layer BCI condition.
+
+    Note that this is the seasonally varying thermal Rossby number that
+    includes `max_lat`: therm_ross = burg_num * delta_h * sin(max_lat), where
+    burg_num is the planetary Burger number.  `max_lat` also appears separately
+    in the expression, which is why it also must be provided separately.
 
     """
     lat_ascent = lat_ascent_eta0_approx(therm_ross, c_ascent=c_ascent)

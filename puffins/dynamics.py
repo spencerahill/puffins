@@ -16,6 +16,11 @@ from .nb_utils import cosdeg, sindeg, tandeg
 from .calculus import lat_deriv
 
 
+def coriolis_param(lat, rot_rate=ROT_RATE_EARTH):
+    """Coriolis parameter, i.e. 'f'."""
+    return 2.0 * rot_rate * sindeg(lat)
+
+
 def plan_burg_num(height, grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
                   radius=RAD_EARTH):
     """Planetary Burger number"""
@@ -50,8 +55,8 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
     lats = u[lat_str]
     sinlat = sindeg(lats)
     coslat = cosdeg(lats)
-    return ((u*sinlat)/(radius*coslat) - lat_deriv(u, lat_str)/radius +
-            2*rot_rate*sinlat)
+    return ((u * sinlat) / (radius * coslat) - lat_deriv(u, lat_str) / radius
+            + 2 * rot_rate * sinlat)
 
 
 def rel_vort_from_u(uwind, radius=RAD_EARTH, lat_str=LAT_STR):
@@ -108,11 +113,6 @@ def rossby_radius(lat, dtheta_dz, height, theta_ref=THETA_REF,
     """Rossby radius of deformation"""
     return brunt_vaisala_freq(lat, dtheta_dz, theta_ref=theta_ref,
                               grav=grav) * height / (2*rot_rate*sindeg(lat))
-
-
-def coriolis_param(lat, rot_rate=ROT_RATE_EARTH):
-    """Coriolis parameter, i.e. 'f'."""
-    return 2*rot_rate*sindeg(lat)
 
 
 def zonal_fric_inferred_steady(u_merid_flux, u_vert_flux, vwind,

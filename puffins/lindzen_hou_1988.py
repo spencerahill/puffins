@@ -16,8 +16,9 @@ from .constants import (
     TEMP_TROPO,
     THETA_REF,
 )
+from .interp import zero_cross_interp
 from .names import LAT_STR
-from .nb_utils import cosdeg, sin2deg, sindeg, zero_cross
+from .nb_utils import cosdeg, sin2deg, sindeg
 from .dynamics import abs_vort_from_u, therm_ross_num
 from .fixed_temp_tropo import (
     DTHETA_DTS_MOIST,
@@ -100,11 +101,11 @@ def abs_vort_rce_lh88(lat, lat_max, delta_h=1./6., height=HEIGHT_TROPO,
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     sin_latmax = sindeg(lat_max)
-    power_arg = 1 + 2*thermal_ro*(1 - sin_latmax / sinlat)
-    term1 = 2*rot_rate*power_arg**0.5
-    term2 = 2*sinlat - (thermal_ro*(coslat**2)*sin_latmax /
-                        ((sinlat**2)*power_arg))
-    return term1*term2
+    power_arg = 1 + 2 * thermal_ro * (1 - sin_latmax / sinlat)
+    term1 = 2 * rot_rate * power_arg ** 0.5
+    term2 = 2 * sinlat - (thermal_ro * (coslat**2) * sin_latmax /
+                          ((sinlat ** 2) * power_arg))
+    return term1 * term2
 
 
 def _eta_rce_zero_lh88(lat, lat_max, therm_ro):
@@ -122,8 +123,8 @@ def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
     """Numerically solved zero cross of LH88 forcing absolute vorticity.
 
     The zero crossing being solved for is that of last of three multiplicative
-    terms.  The first is the Coriolis parameter.  The second corresponds to
-    the zero crossing in absolute angular momentum.  The third, under reasonably
+    terms.  The first is the Coriolis parameter.  The second corresponds to the
+    zero crossing in absolute angular momentum.  The third, under reasonably
     Earth-like conditions at least, occurs farthest poleward into the summer
     hemisphere.
 
@@ -141,11 +142,6 @@ def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
     )
 
 
-def abs_vort_rce_lh88_zero_maxlat_pole_small_therm_ro(therm_ro, lat_max=90):
-    """LH88 RCE abs vort=0 approx; small angle and R; maxlat=pi/2."""
-    return np.rad2deg((0.5 * therm_ro * sindeg(lat_max)) ** (1. / 3))
-
-
 def abs_vort_rce_lh88_zero_approx(lats, lat_max, delta_h=DELTA_H,
                                   height=HEIGHT_TROPO, rot_rate=ROT_RATE_EARTH,
                                   radius=RAD_EARTH, grav=GRAV_EARTH,
@@ -158,9 +154,8 @@ def abs_vort_rce_lh88_zero_approx(lats, lat_max, delta_h=DELTA_H,
         grav=grav,
         rot_rate=rot_rate,
         radius=radius,
-        lat_str=lat_str,
     )
-    return zero_cross(abs_vort.where(abs_vort[lat_str] > 0), lat_str)
+    return zero_cross_interp(abs_vort.where(abs_vort[lat_str] > 0), lat_str)
 
 
 def lapse_rate_rce_lh88(lat, lat_max, z, theta_ref=THETA_REF,
@@ -259,7 +254,7 @@ def eta_rce_lh88_fixed_tt_zero_cross(lats, lat_max, theta_ref=THETA_REF,
         radius=radius,
         lat_str=lat_str,
     )
-    return zero_cross(eta_rce.where(eta_rce[lat_str] > 0), lat_str)
+    return zero_cross_interp(eta_rce.where(eta_rce[lat_str] > 0), lat_str)
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import sklearn.metrics
 import scipy.stats
 import xarray as xr
 
+from .interp import zero_cross_interp
 from .names import LAT_STR, YEAR_STR
 from .nb_utils import coord_arr_1d, cosdeg
 
@@ -62,6 +63,32 @@ def dt_std_anom(arr, dim=None, order=1):
     return detrend(standardize(arr, dim), dim=dim, order=order)
 
 
+# Centroids.
+def centroid(arr, dim, weights=None, centroid_thresh=0.5):
+    """Compute centroid of a given field
+    """
+    if weights is None:
+        weights = 1.
+    arr_int = (weights * arr).cumsum(dim)
+    arr_int_norm = arr_int / arr_int.max(dim)
+    return zero_cross_interp(arr_int_norm - centroid_thresh, dim)
+
+
+def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5,
+                   do_cos_weight=True):
+    """Compute centroid of a field in latitude.
+
+    By default, includes area weighting by cos(lat).
+
+    """
+    if do_cos_weight:
+        weights = np.abs(cosdeg(arr[lat_str]))
+    else:
+        weights = None
+    return centroid(arr, lat_str, weights=weights,
+                    centroid_thresh=centroid_thresh)
+
+
 # Filtering (time or otherwise)
 def run_mean(arr, n=10, dim="time", center=True, **kwargs):
     """Simple running average along a dimension."""
@@ -76,6 +103,12 @@ def run_mean_anom(arr, n=10, dim="time", center=True, **kwargs):
 def avg_monthly(arr, dim="time"):
     """Average across months weighting by number of days in each month."""
     return arr.weighted(arr[dim].dt.days_in_month).mean(dim)
+
+
+def rolling_avg(arr, weight, **rolling_kwargs):
+    """Rolling weighted average."""
+    return ((arr * weight).rolling(**rolling_kwargs).sum() /
+            weight.rolling(**rolling_kwargs).sum())
 
 
 def xwelch(arr, **kwargs):
@@ -154,6 +187,23 @@ def autocorr(arr, lag=None, dim="time", do_detrend=False):
                             name="autocorrelation")
 
 
+def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
+    """Spearman correlation coefficient using xr.apply_ufunc to broadcast.
+
+    """
+    def _spearman(x, y):
+        """Wrapper around scipy.stats.spearmanr to use in apply_ufunc."""
+        return scipy.stats.spearmanr(x, y, **kwargs)[0]
+
+    arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
+    if do_detrend:
+        arr1_aligned = detrend(arr1_aligned, dim)
+        arr2_aligned = detrend(arr2_aligned, dim)
+    return xr.apply_ufunc(_spearman, arr1_aligned, arr2_aligned,
+                          input_core_dims=[[dim], [dim]],
+                          vectorize=True, dask="parallelized")
+
+
 def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True,
              do_detrend=False):
     """Lag correlation on xarray.DataArrays computed for specified lag(s).
@@ -207,8 +257,8 @@ def lin_regress(arr1, arr2, dim):
 
     arr = xr.apply_ufunc(
         _linregress,
-        arr1,
-        arr2,
+        arr1_trunc,
+        arr2_trunc,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,
