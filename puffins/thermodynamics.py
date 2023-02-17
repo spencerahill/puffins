@@ -70,7 +70,7 @@ def saturation_specific_humidity(pressure, sat_vap_press=None, temp=None,
 def moist_static_energy(temp, height, spec_hum, c_p=C_P, grav=GRAV_EARTH,
                         l_v=L_V):
     """Moist static energy."""
-    return c_p * temp + grav * height * l_v * height
+    return c_p * temp + grav * height + l_v * spec_hum
 
 
 def saturation_mse(temp, height, pressure=P0, c_p=C_P, grav=GRAV_EARTH,
