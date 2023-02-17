@@ -3,7 +3,6 @@ import numpy as np
 import scipy.ndimage
 import xarray as xr
 
-from .calculus import subtract_col_avg
 from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
 from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
@@ -16,6 +15,7 @@ from .nb_utils import (
     max_and_argmax_along_dim,
 )
 from .num_solver import brentq_solver_sweep_param
+from .vert_coords import subtract_col_avg
 
 
 def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,

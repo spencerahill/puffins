@@ -37,6 +37,23 @@ def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
     return integrate(arr, dlogp, dim=pfull_str)
 
 
+def col_avg(arr, dp, dim=LEV_STR):
+    """Pressure-weighted column average."""
+    return integrate(arr, dp, dim=dim) / integrate(1.0, dp, dim=dim)
+
+
+def subtract_col_avg(arr, dp, dim=LEV_STR):
+    """Impoze zero column integral by subtracting column average at each level.
+
+    Used e.g. for computing the zonally integrated mass flux.  In the time-mean
+    and neglecting tendencies in column mass, the column integrated meridional
+    mass transport should be zero at each latitude; otherwise there would be a
+    build up of mass on one side.
+
+    """
+    return arr - col_avg(arr, dp, dim=dim)
+
+
 def phalf_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
                      phalf_str=PHALF_STR):
     """Pressure at half levels given pressures at level centers."""

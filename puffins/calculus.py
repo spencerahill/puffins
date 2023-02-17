@@ -35,40 +35,10 @@ def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
     return merid_flux_div + vert_flux_div
 
 
-# Vertical integrals and averages.
+# Integral.
 def integrate(arr, ddim, dim=LEV_STR):
     """Integrate along the given dimension."""
     return (arr * ddim).sum(dim=dim)
-
-
-def int_dp_g(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
-    """Mass weighted integral."""
-    return integrate(arr, dp, dim=dim) / grav
-
-
-def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
-              phalf_str=PHALF_STR):
-    """Integral of array on pressure levels but weighted by log(pressure)."""
-    dlogp = dlogp_from_pfull(arr[pfull_str], p_top=p_top, p_bot=p_bot,
-                             phalf_str=phalf_str)
-    return integrate(arr, dlogp, dim=pfull_str)
-
-
-def col_avg(arr, dp, dim=LEV_STR):
-    """Pressure-weighted column average."""
-    return integrate(arr, dp, dim=dim) / integrate(1.0, dp, dim=dim)
-
-
-def subtract_col_avg(arr, dp, dim=LEV_STR):
-    """Impoze zero column integral by subtracting column average at each level.
-
-    Used e.g. for computing the zonally integrated mass flux.  In the time-mean
-    and neglecting tendencies in column mass, the column integrated meridional
-    mass transport should be zero at each latitude; otherwise there would be a
-    build up of mass on one side.
-
-    """
-    return arr - col_avg(arr, dp, dim=dim)
 
 
 # Meridional integrals and averages.
