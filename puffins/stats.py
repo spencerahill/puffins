@@ -187,6 +187,23 @@ def autocorr(arr, lag=None, dim="time", do_detrend=False):
                             name="autocorrelation")
 
 
+def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
+    """Spearman correlation coefficient using xr.apply_ufunc to broadcast.
+
+    """
+    def _spearman(x, y):
+        """Wrapper around scipy.stats.spearmanr to use in apply_ufunc."""
+        return scipy.stats.spearmanr(x, y, **kwargs)[0]
+
+    arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
+    if do_detrend:
+        arr1_aligned = detrend(arr1_aligned, dim)
+        arr2_aligned = detrend(arr2_aligned, dim)
+    return xr.apply_ufunc(_spearman, arr1_aligned, arr2_aligned,
+                          input_core_dims=[[dim], [dim]],
+                          vectorize=True, dask="parallelized")
+
+
 def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True,
              do_detrend=False):
     """Lag correlation on xarray.DataArrays computed for specified lag(s).
@@ -240,8 +257,8 @@ def lin_regress(arr1, arr2, dim):
 
     arr = xr.apply_ufunc(
         _linregress,
-        arr1,
-        arr2,
+        arr1_trunc,
+        arr2_trunc,
         input_core_dims=[[dim], [dim]],
         output_core_dims=[["parameter"]],
         vectorize=True,
