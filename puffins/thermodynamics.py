@@ -17,8 +17,28 @@ from .constants import (
 )
 
 
+def water_vapor_mixing_ratio(vapor_press, pressure, epsilon=EPSILON):
+    """Water vapor mixing ratio.
+
+    E.g. https://glossary.ametsoc.org/wiki/Mixing_ratio
+
+    """
+    return epsilon * vapor_press / (pressure - vapor_press)
+
+
+def specific_humidity(mixing_ratio):
+    """Specific humidity computed from water vapor mixing ratio.
+
+    E.g. https://glossary.ametsoc.org/wiki/Specific_humidity
+
+    """
+    return mixing_ratio / (1. + mixing_ratio)
+
+
 def sat_vap_press_tetens_kelvin(temp):
     """Saturation vapor pressure using Tetens equation.
+
+    E.g. https://en.wikipedia.org/wiki/Tetens_equation
 
     Note: unlike original Tetens expression, temperature should be in Kelvin,
     NOT degrees Celsius.  And result has units Pa, not kPa as in original
@@ -27,8 +47,43 @@ def sat_vap_press_tetens_kelvin(temp):
     """
     a = 61.078
     b = 17.27
-    c = -35.85
-    return a*np.exp(b*(temp - 273.15) / (temp + c))
+    c = 237.3 - 273.15
+    return a * np.exp(b * (temp - 273.15) / (temp + c))
+
+
+def saturation_mixing_ratio(pressure, sat_vap_press=None, temp=None,
+                            epsilon=EPSILON):
+    """Saturation mixing ratio."""
+    if sat_vap_press is None:
+        sat_vap_press = sat_vap_press_tetens_kelvin(temp)
+    return water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
+
+
+def saturation_specific_humidity(pressure, sat_vap_press=None, temp=None,
+                                 epsilon=EPSILON):
+    """Saturation specific humidity."""
+    sat_mix_ratio = saturation_mixing_ratio(
+        pressure, sat_vap_press=sat_vap_press, temp=temp, epsilon=epsilon)
+    return specific_humidity(sat_mix_ratio)
+
+
+def moist_static_energy(temp, height, spec_hum, c_p=C_P, grav=GRAV_EARTH,
+                        l_v=L_V):
+    """Moist static energy."""
+    return c_p * temp + grav * height * l_v * height
+
+
+def saturation_mse(temp, height, pressure=P0, c_p=C_P, grav=GRAV_EARTH,
+                   l_v=L_V, epsilon=EPSILON):
+    """Saturation moist static energy.
+
+    I.e. MSE if the specific humidity was at its saturation value.
+
+    """
+    sat_spec_hum = saturation_specific_humidity(pressure, temp=temp,
+                                                epsilon=epsilon)
+    return moist_static_energy(temp, height, sat_spec_hum, c_p=c_p,
+                               grav=grav, l_v=l_v)
 
 
 def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
@@ -53,9 +108,9 @@ def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
     """
     if sat_vap_press is None:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    sat_spec_hum = sat_vap_press / pressure
-    return (c_p*np.log(temp) - r_d*np.log(pressure) +
-            l_v*sat_spec_hum / temp)
+    sat_q = sat_spec_hum(pressure, sat_vap_press=sat_vap_press)
+    return (c_p * np.log(temp) - r_d * np.log(pressure) +
+            l_v * sat_q / temp)
 
 
 def dsat_entrop_dtemp_approx(temp, pressure=P0, c_p=C_P, r_v=R_V, l_v=L_V):
@@ -64,25 +119,20 @@ def dsat_entrop_dtemp_approx(temp, pressure=P0, c_p=C_P, r_v=R_V, l_v=L_V):
     return (c_p + l_v*sat_spec_hum*(l_v/(r_v*temp) - 1)/temp) / temp
 
 
-def water_vapor_mixing_ratio(vapor_press, pressure, epsilon=EPSILON):
-    return epsilon*vapor_press / (pressure - vapor_press)
-
-
-def equiv_pot_temp(temp, rel_hum, pressure,
-                   tot_wat_mix_ratio=None, p0=P0, c_p=C_P, c_liq=4185.5,
-                   l_v=L_V, r_d=R_D, r_v=R_V):
+def equiv_pot_temp(temp, rel_hum, pressure, tot_wat_mix_ratio=None, p0=P0,
+                   c_p=C_P, c_liq=4185.5, l_v=L_V, r_d=R_D, r_v=R_V):
     """Equivalent potential temperature."""
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    vapor_pressure = rel_hum*sat_vap_press
+    vapor_pressure = rel_hum * sat_vap_press
     pressure_dry = pressure - vapor_pressure
     vap_mix_ratio = water_vapor_mixing_ratio(vapor_pressure, pressure)
     if tot_wat_mix_ratio is None:
         denom = c_p
     else:
-        denom = c_p + c_liq*tot_wat_mix_ratio
-    return (temp*(p0/pressure_dry)**(r_d/denom) *
-            rel_hum**(r_v*vap_mix_ratio / denom) *
-            np.exp(l_v*vap_mix_ratio / (denom*temp)))
+        denom = c_p + c_liq * tot_wat_mix_ratio
+    return (temp * (p0 / pressure_dry) ** (r_d / denom) *
+            rel_hum ** (r_v*vap_mix_ratio / denom) *
+            np.exp(l_v * vap_mix_ratio / (denom * temp)))
 
 
 def temp_from_equiv_pot_temp(theta_e, rel_hum=0.7, pressure=P0,
