@@ -154,8 +154,8 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     if num_harm == len(arr):
         return arr
     arr_mean = arr.mean()
-    data = (arr - arr_mean).values
-    mfft = np.fft.fft(data)
+    arr_anom = (arr - arr_mean)
+    mfft = np.fft.fft(arr_anom.values)
     mask = np.zeros_like(mfft)
     if do_sum:
         mask[-num_harm:] = 1

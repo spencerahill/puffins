@@ -65,7 +65,7 @@ def drop_nans_and_interp(arrs, new_p_vals=P_INTERP_VALS, do_interp=True,
 
 
 def interpolate(x, y, x_target, dim):
-    """Interpolate between two points.
+    """Linearly interpolate between two points.
 
     Parameters
     ----------
