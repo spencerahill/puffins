@@ -17,7 +17,7 @@ from .names import (
     PHALF_STR,
     SFC_AREA_STR,
 )
-from .nb_utils import coord_arr_1d, cosdeg, sindeg, to_pascal
+from .nb_utils import coord_arr_1d, cosdeg, sindeg
 
 
 # Derivatives.
@@ -45,7 +45,7 @@ def integrate(arr, ddim, dim=LEV_STR):
 
 def int_dp_g(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
     """Mass weighted integral."""
-    return integrate(arr, to_pascal(dp, is_dp=True), dim=dim) / grav
+    return integrate(arr, dp, dim=dim) / grav
 
 
 def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
@@ -56,7 +56,12 @@ def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
     return integrate(arr, dlogp, dim=pfull_str)
 
 
-def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
+def col_avg(arr, dp, dim=LEV_STR):
+    """Pressure-weighted column average."""
+    return integrate(arr, dp, dim=dim) / integrate(1.0, dp, dim=dim)
+
+
+def subtract_col_avg(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
     """Impoze zero column integral by subtracting column average at each level.
 
     Used e.g. for computing the zonally integrated mass flux.  In the time-mean
@@ -65,14 +70,12 @@ def subtract_col_avg(arr, dp, dim="plev", grav=GRAV_EARTH):
     build up of mass on one side.
 
     """
-    col_avg = (int_dp_g(arr, dp, dim=dim, grav=grav) /
-               int_dp_g(1.0, dp, dim=dim, grav=grav))
-    return arr - col_avg
+    return arr - col_avg(arr, dp, dim=dim)
 
 
 # Meridional integrals and averages.
 def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
-                              lat_str=LAT_STR):
+                              do_cumsum=False, lat_str=LAT_STR):
     """Area-weighted meridional integral for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -84,10 +87,13 @@ def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
     lat = arr[lat_str]
     masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
     dlat = lat.diff(lat_str)
-    if (dlat.max() - dlat.min())/dlat.mean() > unif_thresh:
+    if (dlat.max() - dlat.min()) / dlat.mean() > unif_thresh:
         raise ValueError("Uniform latitude spacing required; given values "
                          "are not sufficiently uniform.")
-    return (masked*cosdeg(lat)*np.deg2rad(dlat)).sum(lat_str)
+    integrand = masked * cosdeg(lat) * np.deg2rad(dlat)
+    if do_cumsum:
+        return integrand.cumsum(lat_str)
+    return integrand.sum(lat_str)
 
 
 def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
@@ -100,10 +106,13 @@ def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
     implemented in the function ``merid_average_grid_data``.
 
     """
-    return (merid_integral_point_data(arr, min_lat, max_lat,
-                                      unif_thresh, lat_str) /
-            merid_integral_point_data(xr.ones_like(arr), min_lat,
-                                      max_lat, unif_thresh, lat_str))
+    return (merid_integral_point_data(arr, min_lat=min_lat, max_lat=max_lat,
+                                      unif_thresh=unif_thresh, do_cumsum=False,
+                                      lat_str=lat_str) /
+            merid_integral_point_data(xr.ones_like(arr),
+                                      min_lat=min_lat, max_lat=max_lat,
+                                      unif_thresh=unif_thresh,
+                                      do_cumsum=False, lat_str=lat_str))
 
 
 def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
@@ -322,6 +331,22 @@ def sfc_area_latlon_box(ds, lat_str=LAT_STR, lon_str=LON_STR,
         sfc_area_str=sfc_area_str,
         radius=radius,
     )
+
+
+def lat_circumf(lat, radius=RAD_EARTH):
+    """Circumference of a latitude circle."""
+    return 2 * np.pi * radius * cosdeg(lat)
+
+
+def lat_circumf_weight(arr, lat=None, lat_str=LAT_STR, radius=RAD_EARTH):
+    """Multiply an array by the latitude circumference.
+
+    For e.g. poleward tracer fluxes.
+
+    """
+    if lat is None:
+        lat = arr[lat_str]
+    return arr * lat_circumf(lat, radius=radius)
 
 
 # Pressure spacing and averages.
