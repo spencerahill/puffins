@@ -45,25 +45,21 @@ def sat_vap_press_tetens_kelvin(temp):
     version.
 
     """
-    a = 61.078
+    a = 610.78
     b = 17.27
     c = 237.3 - 273.15
     return a * np.exp(b * (temp - 273.15) / (temp + c))
 
 
-def saturation_mixing_ratio(pressure, sat_vap_press=None, temp=None,
-                            epsilon=EPSILON):
+def saturation_mixing_ratio(pressure, temp, epsilon=EPSILON):
     """Saturation mixing ratio."""
-    if sat_vap_press is None:
-        sat_vap_press = sat_vap_press_tetens_kelvin(temp)
+    sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     return water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
 
 
-def saturation_specific_humidity(pressure, sat_vap_press=None, temp=None,
-                                 epsilon=EPSILON):
+def saturation_specific_humidity(pressure, temp, epsilon=EPSILON):
     """Saturation specific humidity."""
-    sat_mix_ratio = saturation_mixing_ratio(
-        pressure, sat_vap_press=sat_vap_press, temp=temp, epsilon=epsilon)
+    sat_mix_ratio = saturation_mixing_ratio(pressure, temp, epsilon=epsilon)
     return specific_humidity(sat_mix_ratio)
 
 
@@ -80,7 +76,7 @@ def saturation_mse(temp, height, pressure=P0, c_p=C_P, grav=GRAV_EARTH,
     I.e. MSE if the specific humidity was at its saturation value.
 
     """
-    sat_spec_hum = saturation_specific_humidity(pressure, temp=temp,
+    sat_spec_hum = saturation_specific_humidity(pressure, temp,
                                                 epsilon=epsilon)
     return moist_static_energy(temp, height, sat_spec_hum, c_p=c_p,
                                grav=grav, l_v=l_v)
