@@ -159,6 +159,18 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
                                      max_lat, lat_str))
 
 
+def global_avg_grid_data(arr, lat_str=LAT_STR, lon_str=LON_STR,
+                         sfc_area_str=SFC_AREA_STR):
+    """Area-weighted global average for data on finite-area grid cells."""
+    if sfc_area_str in arr:
+        sfc_area = arr[sfc_area_str]
+        return ((arr * sfc_area).sum([lon_str, lat_str]) /
+                sfc_area.sum([lon_str, lat_str]))
+    # TODO: this assumes uniform longitude, which isn't strictly guaranteed.
+    return merid_avg_grid_data(arr.mean(lon_str), min_lat=-90, max_lat=90,
+                               lat_str=lat_str)
+
+
 def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
                           lat_str=LAT_STR, dsinlat_var_tol=0.001):
     """Area-weighted meridional average for data evenly spaced in sin(lat).
