@@ -108,7 +108,7 @@ def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
     """
     if sat_vap_press is None:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    sat_q = sat_spec_hum(pressure, sat_vap_press=sat_vap_press)
+    sat_q = saturation_specific_humidity(pressure, sat_vap_press=sat_vap_press)
     return (c_p * np.log(temp) - r_d * np.log(pressure) +
             l_v * sat_q / temp)
 
@@ -119,19 +119,16 @@ def dsat_entrop_dtemp_approx(temp, pressure=P0, c_p=C_P, r_v=R_V, l_v=L_V):
     return (c_p + l_v*sat_spec_hum*(l_v/(r_v*temp) - 1)/temp) / temp
 
 
-def equiv_pot_temp(temp, rel_hum, pressure, tot_wat_mix_ratio=None, p0=P0,
+def equiv_pot_temp(temp, rel_hum, pressure, tot_wat_mix_ratio=0., p0=P0,
                    c_p=C_P, c_liq=4185.5, l_v=L_V, r_d=R_D, r_v=R_V):
     """Equivalent potential temperature."""
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     vapor_pressure = rel_hum * sat_vap_press
     pressure_dry = pressure - vapor_pressure
     vap_mix_ratio = water_vapor_mixing_ratio(vapor_pressure, pressure)
-    if tot_wat_mix_ratio is None:
-        denom = c_p
-    else:
-        denom = c_p + c_liq * tot_wat_mix_ratio
+    denom = c_p + c_liq * tot_wat_mix_ratio
     return (temp * (p0 / pressure_dry) ** (r_d / denom) *
-            rel_hum ** (r_v*vap_mix_ratio / denom) *
+            rel_hum ** (-1 * r_v * vap_mix_ratio / denom) *
             np.exp(l_v * vap_mix_ratio / (denom * temp)))
 
 
@@ -223,6 +220,21 @@ def pseudoadiabatic_lapse_rate(temp, pressure, rel_hum=REL_HUM,
         l_v**2*vap_mix_ratio * (epsilon + vap_mix_ratio) / (r_d*temp**2)
     )
     return numer / denom
+
+
+def exner_func(pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Exner function."""
+    return (pressure / p0) ** (r_d / c_p)
+
+
+def pot_temp(temp, pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Potential temperature."""
+    return temp / exner_func(pressure, p0=p0, r_d=r_d, c_p=c_p)
+
+
+def moist_enthalpy(temp, sphum, c_p=C_P, l_v=L_V):
+    """Moist enthalpy in units of Kelvin."""
+    return temp + l_v * sphum / c_p
 
 
 if __name__ == '__main__':

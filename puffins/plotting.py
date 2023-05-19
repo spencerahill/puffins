@@ -59,7 +59,7 @@ def _left_bottom_spines_only(ax=None, displace=False):
 
 
 def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
-                 degr_symbols=False):
+                 degr_symbol=False):
     """Make the x-axis be in sin of latitude."""
     ax = _gca_if_ax_none(ax)
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
@@ -67,7 +67,7 @@ def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
         ax.set_xticks(sindeg([0, 30, 60, 90]))
         ax.set_xticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
         if do_ticklabels:
-            if degr_symbols:
+            if degr_symbol:
                 ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
                                     r'90$^\circ$'])
             else:
@@ -78,7 +78,7 @@ def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
                       10, 20, 40, 50, 70, 80]
         ax.set_xticks(sindeg(minorticks), minor=True)
         if do_ticklabels:
-            if degr_symbols:
+            if degr_symbol:
                 ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
                                     '30' + _DEGR_N, " ", '90' + _DEGR_N])
             else:
@@ -202,7 +202,7 @@ def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
 
 
 def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
-                 degr_symbols=False):
+                 degr_symbol=False):
     """Make the x-axis be in sin of latitude."""
     ax = _gca_if_ax_none(ax)
     ax.set_ylim([sindeg(start_lat), sindeg(end_lat)])
@@ -210,7 +210,7 @@ def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
         ax.set_yticks(sindeg([0, 30, 60, 90]))
         ax.set_yticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
         if do_ticklabels:
-            if degr_symbols:
+            if degr_symbol:
                 ax.set_yticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
                                     r'90$^\circ$'])
             else:
@@ -221,7 +221,7 @@ def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
                       10, 20, 40, 50, 70, 80]
         ax.set_yticks(sindeg(minorticks), minor=True)
         if do_ticklabels:
-            if degr_symbols:
+            if degr_symbol:
                 ax.set_yticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
                                     '30' + _DEGR_N, " ", '90' + _DEGR_N])
             else:
@@ -295,16 +295,42 @@ def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.88,
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 
-def truncate_cmap(cmap, minval=0.0, maxval=1.0, n=100):
+def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
     """Truncate a colormap.
 
     From https://stackoverflow.com/a/18926541/1706640.
 
     """
+    if n_colors is None:
+        n_colors = len(cmap.colors)
     new_cmap = colors.LinearSegmentedColormap.from_list(
         'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
-        cmap(np.linspace(minval, maxval, n)))
+        cmap(np.linspace(minval, maxval, n_colors)))
     return new_cmap
+
+
+def trunc_cmap_about_center(cmap, min_val=None, max_val=None, central_val=0,
+                            arr=None, n_colors=None):
+    """Diverging colormap centered at specified value w/ asymmetric extent.
+
+    I.e. stops at the specified minimum and maximum values while retaining
+    the given colormap's built-in spacing.
+
+    """
+    if min_val is None:
+        min_val = arr.min().values
+    if max_val is None:
+        max_val = arr.max().values
+    min_central_diff = central_val - min_val
+    max_central_diff = max_val - central_val
+    if min_central_diff > max_central_diff:
+        cmap_min = 0.
+        cmap_max = 0.5 * (max_val - min_val) / min_central_diff
+    else:
+        cmap_min = 1. - 0.5 * (max_val - min_val) / max_central_diff
+        cmap_max = 1.
+    return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max,
+                         n_colors=n_colors)
 
 
 def mark_x0(ax=None, linewidth=0.5, color='0.5', x0=0, **kwargs):
