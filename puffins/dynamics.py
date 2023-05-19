@@ -4,7 +4,9 @@ import numpy as np
 import xarray as xr
 
 from .constants import (
+    DELTA_V,
     GRAV_EARTH,
+    HEIGHT_TROPO,
     MEAN_SLP_EARTH,
     R_D,
     RAD_EARTH,
@@ -21,13 +23,13 @@ def coriolis_param(lat, rot_rate=ROT_RATE_EARTH):
     return 2.0 * rot_rate * sindeg(lat)
 
 
-def plan_burg_num(height, grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
-                  radius=RAD_EARTH):
+def plan_burg_num(height=HEIGHT_TROPO, grav=GRAV_EARTH,
+                  rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Planetary Burger number"""
     return height * grav / (rot_rate * radius)**2
 
 
-def therm_ross_num(delta_h, height, lat_max=90, grav=GRAV_EARTH,
+def therm_ross_num(delta_h, height=HEIGHT_TROPO, lat_max=90, grav=GRAV_EARTH,
                    rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Thermal Rossby number."""
     return delta_h * sindeg(lat_max) * plan_burg_num(
@@ -108,7 +110,7 @@ def brunt_vaisala_freq(lat, dtheta_dz, theta_ref=THETA_REF, grav=GRAV_EARTH):
     return (grav * dtheta_dz / theta_ref)**0.5
 
 
-def rossby_radius(lat, dtheta_dz, height, theta_ref=THETA_REF,
+def rossby_radius(lat, dtheta_dz, height=HEIGHT_TROPO, theta_ref=THETA_REF,
                   grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH):
     """Rossby radius of deformation"""
     return brunt_vaisala_freq(lat, dtheta_dz, theta_ref=theta_ref,
@@ -179,6 +181,13 @@ def z_from_hypso(temp, p_sfc=MEAN_SLP_EARTH, p_top=1, r_d=R_D, grav=GRAV_EARTH,
     # input temperature array is masked.
     return xr.where(np.isfinite(height) & temp.notnull(),
                     height, np.nan)
+
+
+def u_bci_2layer_qg(lat, height=HEIGHT_TROPO, delta_v=DELTA_V, grav=GRAV_EARTH,
+                    rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Zonal wind shear in 2 layer QG model for baroclinic instability."""
+    return (grav * delta_v * height * cosdeg(lat) /
+            (rot_rate * radius * sindeg(lat) ** 2))
 
 
 if __name__ == '__main__':

@@ -236,7 +236,7 @@ def dmget(files_list):
     """Call GFDL command 'dmget' to access archived files."""
     if isinstance(files_list, str):
         files_list = [files_list]
-    return subprocess.call(["dmget"] + files_list)
+    return subprocess.Popen(["dmget"] + files_list)
 
 
 def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
