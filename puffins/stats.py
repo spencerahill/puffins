@@ -5,6 +5,7 @@ import ruptures as rpt
 from sklearn import linear_model
 import sklearn.metrics
 import scipy.stats
+from statsmodels.distributions.empirical_distribution import ECDF
 import xarray as xr
 
 from .interp import zero_cross_interp
@@ -193,6 +194,7 @@ def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
     """
     def _spearman(x, y):
         """Wrapper around scipy.stats.spearmanr to use in apply_ufunc."""
+        print(x.shape, y.shape)
         return scipy.stats.spearmanr(x, y, **kwargs)[0]
 
     arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
@@ -363,6 +365,45 @@ def xhist(arr, bin_edges, bin_centers=None, **kwargs):
     return xr.ones_like(bin_centers) * counts
 
 
+def hist(arr, dim, bin_edges, bin_centers=None, bin_name="bin", **kwargs):
+    """Vectorized histograms using xr.apply_ufunc."""
+    def _xhist(arr):
+        return xhist(arr, bin_edges, bin_centers=bin_centers, **kwargs).values
+
+    arr_hist = xr.apply_ufunc(
+        _xhist,
+        arr,
+        input_core_dims=[[dim]],
+        output_core_dims=[[bin_name]],
+        vectorize=True,
+        dask="parallelized",
+    )
+    if bin_centers is None:
+        return arr_hist
+    arr_hist.coords["bin"] = bin_centers.values
+    return arr_hist
+
+
 def normalize(arr, *args, **kwargs):
     """Normalize an array by dividing it by its sum."""
     return arr / arr.sum(*args, **kwargs)
+
+
+def cdf_empirical(arr, quantiles=None, side="left"):
+    """Compute empirical cumulative distribution function."""
+    vals_flat_sorted = np.sort(arr.values.flatten())
+    vals = vals_flat_sorted[~np.isnan(vals_flat_sorted)]
+    if quantiles is None:
+        quantiles = vals
+    ecdf = ECDF(vals, side=side)(quantiles)
+    return xr.DataArray(ecdf, dims=["data"],
+                        coords={"data": quantiles}, name="cdf")
+
+
+def risk_ratio(arr1, arr2, quantiles=None, side="left"):
+    """Ratio of exceedance likelihood between two distributions."""
+    if quantiles is None:
+        quantiles = np.union1d(arr1, arr2)
+    cdf1 = cdf_empirical(arr1, quantiles=quantiles, side=side)
+    cdf2 = cdf_empirical(arr2, quantiles=quantiles, side=side)
+    return ((1. - cdf1) / (1. - cdf2)).rename("risk_ratio")
