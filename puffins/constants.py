@@ -7,6 +7,7 @@ C_PD = 1003.5  # Specific heat of dry air at constant pressure.
 C_P = C_PD  # Shorthand for c_pd.
 R_D = 287.06  # Gas constant of dry air.
 C_VD = C_PD - R_D  # Specific heat of dry air at constant volume.
+C_V = C_VD
 KAPPA = R_D / C_PD
 MEAN_SLP_EARTH = 101325.  # Earth's mean sea level pressure (Pa)
 
@@ -22,6 +23,12 @@ EPSILON = R_D / R_V  # Ratio of dry air and vapor gas constants.
 P_TRIP = 611.65  # Pressure of water triple point.
 T_TRIP = 273.16  # Temperature of water triple point.
 DENS_LIQ_WAT = 1000.  # Density of liquid water.
+# Difference in specific internal energy between water vapor and liquid at the
+# triple point; Romps 2017 JAS.
+E_0V = 2.374e6
+# Difference in specific internal energy between water vapor and solid ice at
+# the triple point; Romps 2017 JAS.
+E_0S = 0.3337e6
 
 STEF_BOLTZ_CONST = 5.67e-8
 
