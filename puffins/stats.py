@@ -303,6 +303,29 @@ def regress_resid(arr1, arr2, dim):
     return xr.Dataset(data_vars)
 
 
+def quantile_regress(arr, predictor, quantile, dim="time", solver="highs",
+                     alpha=0):
+    """Apply quantile regression to the non-NaN elements of the given array."""
+    # Drop all-NaN slices since the calculation is expensive and they're
+    # meaningless.  At the end return to the original shape and mask.
+    stacked = arr.stack(location=[dim_ for dim_ in arr.dims if dim_ != dim])
+    stacked_masked = stacked.where(~np.isnan(stacked), drop=True)
+
+    def _qr(x, y):
+        return linear_model.QuantileRegressor(
+            quantile=quantile, solver=solver, alpha=alpha).fit(
+                x[:, np.newaxis], y).coef_
+
+    return xr.apply_ufunc(
+        _qr,
+        predictor,
+        stacked_masked,
+        input_core_dims=[[dim], [dim]],
+        vectorize=True,
+        dask="parallelized",
+    ).unstack("location")
+
+
 def rmse(arr1, arr2, dim):
     """Root mean square error using xr.apply_ufunc to broadcast.
 
@@ -361,6 +384,25 @@ def xhist(arr, bin_edges, bin_centers=None, **kwargs):
         bin_centers = coord_arr_1d(values=bin_centers, dim="bin_center")
     counts, _ = np.histogram(arr, bins=bin_edges, **kwargs)
     return xr.ones_like(bin_centers) * counts
+
+
+def hist2d(arr1, arr2, bin_edges1, bin_edges2, bin_centers1, bin_centers2,
+           **kwargs):
+    """2D histogram for xarray"""
+    aligned1, aligned2 = xr.align(arr1, arr2)
+    arr1_flat = xr.DataArray(aligned1.values.flatten(), dims=["event"])
+    arr2_flat = xr.DataArray(aligned2.values.flatten(), dims=["event"])
+    hist, _, _ = np.histogram2d(
+        arr1_flat, arr2_flat, bins=[bin_edges1, bin_edges2], **kwargs)
+    if bin_centers1.name == bin_centers2.name:
+        name_out2 = f"{bin_centers2.name}2"
+    else:
+        name_out2 = bin_centers2.name
+    return (
+        xr.ones_like(bin_centers1) *
+        xr.ones_like(bin_centers2.rename(**{bin_centers2.name: name_out2})) *
+        hist
+    ).transpose()
 
 
 def normalize(arr, *args, **kwargs):
