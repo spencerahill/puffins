@@ -18,6 +18,7 @@ setuptools.setup(
         "ruptures",
         "scipy",
         "scikit-learn",
+        "statsmodels",
         "xarray",
     ],
     scripts=["puffins/scripts/set_proj_puff_branch.py"],
