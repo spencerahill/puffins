@@ -66,17 +66,15 @@ def dt_std_anom(arr, dim=None, order=1):
 
 # Centroids.
 def centroid(arr, dim, weights=None, centroid_thresh=0.5):
-    """Compute centroid of a given field
-    """
+    """Compute centroid of a given field."""
     if weights is None:
-        weights = 1.
+        weights = 1.0
     arr_int = (weights * arr).cumsum(dim)
     arr_int_norm = arr_int / arr_int.max(dim)
     return zero_cross_interp(arr_int_norm - centroid_thresh, dim)
 
 
-def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5,
-                   do_cos_weight=True):
+def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5, do_cos_weight=True):
     """Compute centroid of a field in latitude.
 
     By default, includes area weighting by cos(lat).
@@ -86,8 +84,7 @@ def merid_centroid(arr, lat_str=LAT_STR, centroid_thresh=0.5,
         weights = np.abs(cosdeg(arr[lat_str]))
     else:
         weights = None
-    return centroid(arr, lat_str, weights=weights,
-                    centroid_thresh=centroid_thresh)
+    return centroid(arr, lat_str, weights=weights, centroid_thresh=centroid_thresh)
 
 
 # Filtering (time or otherwise)
@@ -108,15 +105,17 @@ def avg_monthly(arr, dim="time"):
 
 def rolling_avg(arr, weight, **rolling_kwargs):
     """Rolling weighted average."""
-    return ((arr * weight).rolling(**rolling_kwargs).sum() /
-            weight.rolling(**rolling_kwargs).sum())
+    return (arr * weight).rolling(**rolling_kwargs).sum() / weight.rolling(
+        **rolling_kwargs
+    ).sum()
 
 
 def xwelch(arr, **kwargs):
     """Wrapper for scipy.signal.welch for xr.DataArrays"""
     freqs, psd = scipy.signal.welch(arr, **kwargs)
-    return xr.DataArray(psd, dims=["frequency"], coords={"frequency": freqs},
-                        name="psd")
+    return xr.DataArray(
+        psd, dims=["frequency"], coords={"frequency": freqs}, name="psd"
+    )
 
 
 def welch(arr, dim="time", **welch_kwargs):
@@ -125,6 +124,7 @@ def welch(arr, dim="time", **welch_kwargs):
     For example, over latitude and longitude.
 
     """
+
     def _welch(x):
         """Wrapper around scipy.signal.welch to use in apply_ufunc."""
         freqs, densities = scipy.signal.welch(x, **welch_kwargs)
@@ -140,8 +140,9 @@ def welch(arr, dim="time", **welch_kwargs):
         output_dtypes=["float64"],
         dask_gufunc_kwargs=dict(output_sizes={"parameter": 2}),
     )
-    freqs = arr.isel(parameter=0, lat=0, lon=0).rename(
-        "frequency").reset_coords(drop=True)
+    freqs = (
+        arr.isel(parameter=0, lat=0, lon=0).rename("frequency").reset_coords(drop=True)
+    )
     psd = arr.isel(parameter=1)
     ds = psd.to_dataset(name="psd")
     ds.coords["frequency"] = freqs
@@ -151,8 +152,9 @@ def welch(arr, dim="time", **welch_kwargs):
 def butterworth(arr, n, windows, filttype="bandpass", dim="time"):
     """Apply the Butterworth filter to an xr.DataArray."""
     if filttype == "bandpass" and windows[0] > windows[1]:
-        raise ValueError("windows need to be in (high, low) "
-                         "frequency order; got (low, high)")
+        raise ValueError(
+            "windows need to be in (high, low) " "frequency order; got (low, high)"
+        )
     b, a = scipy.signal.butter(n, windows, filttype)
     axis_num = arr.get_axis_num(dim)
     return scipy.signal.filtfilt(b, a, arr, axis=axis_num)
@@ -172,26 +174,30 @@ def autocorr(arr, lag=None, dim="time", do_detrend=False):
 
     Adapted from https://stackoverflow.com/a/21863139/1706640
 
+    Note: statsmodels implements this in its tsa.stattools.acf function,
+    so that should be used instead of this.
+    See https://www.statsmodels.org/dev/generated/statsmodels.tsa.stattools.acf.html
+
     """
     if do_detrend:
         arr = detrend(arr, dim=dim)
 
     if np.isscalar(lag):
         if lag == 0:
-            return 1.
+            return 1.0
         return np.corrcoef(np.array([arr[:-lag], arr[lag:]]))[0, 1]
     else:
         if lag is None:
             lag = range(len(arr) - 2)
         values = [autocorr(arr, l) for l in lag]
-        return xr.DataArray(values, dims=["lag"], coords={"lag": lag},
-                            name="autocorrelation")
+        return xr.DataArray(
+            values, dims=["lag"], coords={"lag": lag}, name="autocorrelation"
+        )
 
 
 def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
-    """Spearman correlation coefficient using xr.apply_ufunc to broadcast.
+    """Spearman correlation coefficient using xr.apply_ufunc to broadcast."""
 
-    """
     def _spearman(x, y):
         """Wrapper around scipy.stats.spearmanr to use in apply_ufunc."""
         return scipy.stats.spearmanr(x, y, **kwargs)[0]
@@ -200,13 +206,17 @@ def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
     if do_detrend:
         arr1_aligned = detrend(arr1_aligned, dim)
         arr2_aligned = detrend(arr2_aligned, dim)
-    return xr.apply_ufunc(_spearman, arr1_aligned, arr2_aligned,
-                          input_core_dims=[[dim], [dim]],
-                          vectorize=True, dask="parallelized")
+    return xr.apply_ufunc(
+        _spearman,
+        arr1_aligned,
+        arr2_aligned,
+        input_core_dims=[[dim], [dim]],
+        vectorize=True,
+        dask="parallelized",
+    )
 
 
-def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True,
-             do_detrend=False):
+def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True, do_detrend=False):
     """Lag correlation on xarray.DataArrays computed for specified lag(s).
 
     Lags can be negative, zero, or positive.  Positive lag corresponds to arr1
@@ -235,8 +245,9 @@ def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True,
         if lag is None:
             lag = range(min(len(arr1), len(arr2)) - 2)
         values = [lag_corr(arr1, arr2, l) for l in lag]
-        return xr.DataArray(values, dims=["lag"], coords={"lag": lag},
-                            name="lagged-correlation")
+        return xr.DataArray(
+            values, dims=["lag"], coords={"lag": lag}, name="lagged-correlation"
+        )
 
 
 def lin_regress(arr1, arr2, dim):
@@ -249,6 +260,7 @@ def lin_regress(arr1, arr2, dim):
     https://github.com/pydata/xarray/issues/1815#issuecomment-614216243.
 
     """
+
     def _linregress(x, y):
         """Wrapper around scipy.stats.linregress to use in apply_ufunc."""
         slope, intercept, r_val, p_val, std_err = scipy.stats.linregress(x, y)
@@ -264,7 +276,7 @@ def lin_regress(arr1, arr2, dim):
         output_core_dims=[["parameter"]],
         vectorize=True,
         dask="parallelized",
-        output_dtypes=['float64'],
+        output_dtypes=["float64"],
         dask_gufunc_kwargs=dict(output_sizes={"parameter": 5}),
     )
     arr.coords["parameter"] = xr.DataArray(
@@ -334,12 +346,19 @@ def rmse(arr1, arr2, dim):
     https://github.com/pydata/xarray/issues/1815#issuecomment-614216243.
 
     """
+
     def _rmse(x, y):
         """Wrapper around scipy.stats.linregress to use in apply_ufunc."""
         return sklearn.metrics.mean_squared_error(x, y, squared=False)
 
-    return xr.apply_ufunc(_rmse, arr1, arr2, input_core_dims=[[dim], [dim]],
-                          vectorize=True, dask="parallelized")
+    return xr.apply_ufunc(
+        _rmse,
+        arr1,
+        arr2,
+        input_core_dims=[[dim], [dim]],
+        vectorize=True,
+        dask="parallelized",
+    )
 
 
 # Breakpoint detection
@@ -367,8 +386,7 @@ def eof_solver(arr, lat_str=LAT_STR, time_str=YEAR_STR):
     """Generate an EOF solver for gridded lat-lon data."""
     weights = np.sqrt(cosdeg(arr[lat_str])).values[..., np.newaxis]
     # The eofs package requires that the time dimension be named "time".
-    return Eof(arr.rename({time_str: "time"}).transpose("time", ...),
-               weights=weights)
+    return Eof(arr.rename({time_str: "time"}).transpose("time", ...), weights=weights)
 
 
 # Histograms
@@ -409,6 +427,7 @@ def hist2d(arr1, arr2, bin_edges1, bin_edges2, bin_centers1, bin_centers2,
 
 def hist(arr, dim, bin_edges, bin_centers=None, bin_name="bin", **kwargs):
     """Vectorized histograms using xr.apply_ufunc."""
+
     def _xhist(arr):
         return xhist(arr, bin_edges, bin_centers=bin_centers, **kwargs).values
 
