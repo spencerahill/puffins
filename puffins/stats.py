@@ -194,7 +194,6 @@ def spearman(arr1, arr2, dim, do_detrend=False, **kwargs):
     """
     def _spearman(x, y):
         """Wrapper around scipy.stats.spearmanr to use in apply_ufunc."""
-        print(x.shape, y.shape)
         return scipy.stats.spearmanr(x, y, **kwargs)[0]
 
     arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
@@ -432,21 +431,24 @@ def normalize(arr, *args, **kwargs):
     return arr / arr.sum(*args, **kwargs)
 
 
-def cdf_empirical(arr, quantiles=None, side="left"):
+def cdf_empirical(arr, cdf_points=None, side="left"):
     """Compute empirical cumulative distribution function."""
-    vals_flat_sorted = np.sort(arr.values.flatten())
+    try:
+        vals_flat_sorted = np.sort(arr.values.flatten())
+    except AttributeError:
+        vals_flat_sorted = np.sort(arr.flatten())
     vals = vals_flat_sorted[~np.isnan(vals_flat_sorted)]
-    if quantiles is None:
-        quantiles = vals
-    ecdf = ECDF(vals, side=side)(quantiles)
-    return xr.DataArray(ecdf, dims=["data"],
-                        coords={"data": quantiles}, name="cdf")
+    if cdf_points is None:
+        cdf_points = vals
+    ecdf = ECDF(vals, side=side)(cdf_points)
+    return xr.DataArray(
+        ecdf, dims=["data"], coords={"data": cdf_points}, name="cdf")
 
 
-def risk_ratio(arr1, arr2, quantiles=None, side="left"):
+def risk_ratio(arr1, arr2, cdf_points=None, side="left"):
     """Ratio of exceedance likelihood between two distributions."""
-    if quantiles is None:
-        quantiles = np.union1d(arr1, arr2)
-    cdf1 = cdf_empirical(arr1, quantiles=quantiles, side=side)
-    cdf2 = cdf_empirical(arr2, quantiles=quantiles, side=side)
+    if cdf_points is None:
+        cdf_points = np.union1d(arr1, arr2)
+    cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side)
+    cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side)
     return ((1. - cdf1) / (1. - cdf2)).rename("risk_ratio")
