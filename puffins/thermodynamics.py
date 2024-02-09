@@ -7,6 +7,7 @@ from scipy.optimize import brentq
 from .constants import (
     C_P,
     C_PV,
+    C_VL,
     EPSILON,
     GRAV_EARTH,
     L_V,
@@ -17,13 +18,36 @@ from .constants import (
 )
 
 
+def exner_func(pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Exner function."""
+    return (pressure / p0) ** (r_d / c_p)
+
+
+def pot_temp(temp, pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Potential temperature."""
+    return temp / exner_func(pressure, p0=p0, r_d=r_d, c_p=c_p)
+
+
+def moist_enthalpy(temp, sphum, c_p=C_P, l_v=L_V):
+    """Moist enthalpy in units of Kelvin."""
+    return temp + l_v * sphum / c_p
+
+
 def water_vapor_mixing_ratio(vapor_press, pressure, epsilon=EPSILON):
     """Water vapor mixing ratio.
+
+    Both the vapor pressure and pressure must have the same units, e.g. both
+    Pascals or both hectopascals (hPa).
 
     E.g. https://glossary.ametsoc.org/wiki/Mixing_ratio
 
     """
     return epsilon * vapor_press / (pressure - vapor_press)
+
+
+def vap_press_from_mix_ratio(mix_ratio, pressure, epsilon=EPSILON):
+    """Water vapor pressure given mixing ration and pressure."""
+    return mix_ratio * pressure / (epsilon + mix_ratio)
 
 
 def specific_humidity(mixing_ratio):
@@ -33,6 +57,11 @@ def specific_humidity(mixing_ratio):
 
     """
     return mixing_ratio / (1. + mixing_ratio)
+
+
+def mixing_ratio(spec_hum):
+    """Mixing ratio (of water vapor) computed from specific humidity."""
+    return spec_hum / (1. - spec_hum)
 
 
 def sat_vap_press_tetens_kelvin(temp):
@@ -52,7 +81,10 @@ def sat_vap_press_tetens_kelvin(temp):
 
 
 def saturation_mixing_ratio(pressure, temp, epsilon=EPSILON):
-    """Saturation mixing ratio."""
+    """Saturation mixing ratio.
+
+    Pressure must be in Pascals, not hPa.  Temperature must be in Kelvin.
+    """
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     return water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
 
@@ -61,6 +93,33 @@ def saturation_specific_humidity(pressure, temp, epsilon=EPSILON):
     """Saturation specific humidity."""
     sat_mix_ratio = saturation_mixing_ratio(pressure, temp, epsilon=epsilon)
     return specific_humidity(sat_mix_ratio)
+
+
+def relative_humidity(vapor_pressure, sat_vap_press):
+    """Relative humidity.
+
+    C.f. https://glossary.ametsoc.org/wiki/Relative_humidity.
+
+    """
+    return vapor_pressure / sat_vap_press
+
+
+def rel_hum_from_temp_dewpoint(temp, temp_dew):
+    """Relative humidity, given the temperature and dewpoint.
+
+    Conceptually, relative humidity is the ratio of the actual vapor pressure
+    to the saturation vapor pressure.  Tetens equation or the
+    August-Roche-Magnus equation can be used to compute the saturation vapor
+    pressure from the actual temperature.  Separately, the actual vapor
+    pressure can be computed from the dewpoint temperature using the same
+    Tetens etc.  Then you simply take the ratio of the computed vapor pressures
+    to get the RH.
+
+    C.f. https://bmcnoldy.rsmas.miami.edu/Humidity.html.
+
+    """
+    return (sat_vap_press_tetens_kelvin(temp_dew) /
+            sat_vap_press_tetens_kelvin(temp))
 
 
 def moist_static_energy(temp, height, spec_hum, c_p=C_P, grav=GRAV_EARTH,
@@ -104,7 +163,7 @@ def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
     """
     if sat_vap_press is None:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    sat_q = sat_spec_hum(pressure, sat_vap_press=sat_vap_press)
+    sat_q = saturation_specific_humidity(pressure, sat_vap_press=sat_vap_press)
     return (c_p * np.log(temp) - r_d * np.log(pressure) +
             l_v * sat_q / temp)
 
@@ -115,20 +174,42 @@ def dsat_entrop_dtemp_approx(temp, pressure=P0, c_p=C_P, r_v=R_V, l_v=L_V):
     return (c_p + l_v*sat_spec_hum*(l_v/(r_v*temp) - 1)/temp) / temp
 
 
-def equiv_pot_temp(temp, rel_hum, pressure, tot_wat_mix_ratio=None, p0=P0,
-                   c_p=C_P, c_liq=4185.5, l_v=L_V, r_d=R_D, r_v=R_V):
-    """Equivalent potential temperature."""
+def equiv_pot_temp(temp, rel_hum, pressure, tot_wat_mix_ratio=0., p0=P0,
+                   c_p=C_P, c_liq=C_VL, l_v=L_V, r_d=R_D, r_v=R_V):
+    """Equivalent potential temperature.
+
+    Note that pressure must be in Pascals, not hPa.
+
+    """
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     vapor_pressure = rel_hum * sat_vap_press
     pressure_dry = pressure - vapor_pressure
     vap_mix_ratio = water_vapor_mixing_ratio(vapor_pressure, pressure)
-    if tot_wat_mix_ratio is None:
-        denom = c_p
-    else:
-        denom = c_p + c_liq * tot_wat_mix_ratio
+    denom = c_p + c_liq * tot_wat_mix_ratio
     return (temp * (p0 / pressure_dry) ** (r_d / denom) *
-            rel_hum ** (r_v*vap_mix_ratio / denom) *
+            rel_hum ** (-1 * r_v * vap_mix_ratio / denom) *
             np.exp(l_v * vap_mix_ratio / (denom * temp)))
+
+
+def sat_equiv_pot_temp(temp, pressure, tot_wat_mix_ratio=0., p0=P0,
+                       c_p=C_P, c_liq=4185.5, l_v=L_V, r_d=R_D, r_v=R_V):
+    """Saturation equivalent potential temperature.
+
+    Note that pressure must be in Pascals, not hPa.
+
+    """
+    return equiv_pot_temp(
+        temp,
+        1.,
+        pressure,
+        tot_wat_mix_ratio=tot_wat_mix_ratio,
+        p0=p0,
+        c_p=c_p,
+        c_liq=c_liq,
+        l_v=l_v,
+        r_d=r_d,
+        r_v=r_v,
+    )
 
 
 def temp_from_equiv_pot_temp(theta_e, rel_hum=0.7, pressure=P0,
@@ -219,6 +300,21 @@ def pseudoadiabatic_lapse_rate(temp, pressure, rel_hum=REL_HUM,
         l_v**2*vap_mix_ratio * (epsilon + vap_mix_ratio) / (r_d*temp**2)
     )
     return numer / denom
+
+
+def exner_func(pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Exner function."""
+    return (pressure / p0) ** (r_d / c_p)
+
+
+def pot_temp(temp, pressure, p0=1000., r_d=R_D, c_p=C_P):
+    """Potential temperature."""
+    return temp / exner_func(pressure, p0=p0, r_d=r_d, c_p=c_p)
+
+
+def moist_enthalpy(temp, sphum, c_p=C_P, l_v=L_V):
+    """Moist enthalpy in units of Kelvin."""
+    return temp + l_v * sphum / c_p
 
 
 if __name__ == '__main__':
