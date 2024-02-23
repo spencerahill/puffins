@@ -727,20 +727,19 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
-        if ascentlat == 0:
-            return c_descent * lat_fixed_ro_ann
         lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
-        if ascentlat == 0:
-            return c_descent * np.rad2deg(lat_ro_ann)
+
     lat_a = np.deg2rad(ascentlat)
-    return c_descent * np.rad2deg(
+    sol_lata0 = c_descent * np.rad2deg(lat_ro_ann)
+    sol_lata_neq0 = c_descent * np.rad2deg(
         lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
     )
+    return xr.where(lat_a == 0, sol_lata0, sol_lata_neq0)
 
 
 def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
