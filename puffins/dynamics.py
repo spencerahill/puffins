@@ -190,5 +190,13 @@ def u_bci_2layer_qg(lat, height=HEIGHT_TROPO, delta_v=DELTA_V, grav=GRAV_EARTH,
             (rot_rate * radius * sindeg(lat) ** 2))
 
 
+def bulk_stat_stab(pot_temp, lev_upper=500, lev_lower=850,
+                   p_str=LEV_STR, pot_temp_ref=300.):
+    """Bulk (dry) static stability."""
+    return ((pot_temp.sel(**{p_str: lev_upper, "method": "nearest"}) -
+             pot_temp.sel(**{p_str: lev_lower, "method": "nearest"})) /
+            pot_temp_ref)
+
+
 if __name__ == '__main__':
     pass
