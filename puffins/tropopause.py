@@ -8,10 +8,36 @@ from .nb_utils import apply_maybe_groupby
 from .interp import drop_nans_and_interp
 
 
-# TODO: define a decorator that handles this maybe-groupby logic,
-# so that it's unnecessary to define the two separate functions
-# for each case.  It seems like pretty simple boilerplate.
+def tropo_wmo(temp, height, p_str=LEV_STR,
+              threshold=-2e-3, max_pressure=600,
+              do_interp=True, interp_vals=None):
+    """WMO definition of tropopause: lapse rate < 2 K / km."""
+    # Fill nans with zeros so that cubic interpolation works.
+    temp_arr = temp.fillna(0.)
+    z_arr = height.fillna(0.)
+    # Interpolate if desired.
+    if do_interp:
+        if interp_vals is None:
+            interp_vals = np.arange(max_pressure, 20, -0.1)
+        dict_interp = {p_str: interp_vals, "method": "cubic"}
+        t_interp = temp_arr.interp(**dict_interp)
+        z_interp = z_arr.interp(**dict_interp)
+    else:
+        t_interp = temp_arr
+        z_interp = z_arr
+    # Compute the tropopause level and corresponding height.
+    dtemp_dz = t_interp.diff(p_str) / z_interp.diff(p_str)
+    dtemp_dz = dtemp_dz.where(z_interp[p_str] < max_pressure, drop=True)
+    above_thresh = dtemp_dz[p_str].where(dtemp_dz > threshold)
+    tropo_lev = above_thresh.idxmax(p_str)
+    tropo_height = z_interp.sel(level=tropo_lev)
+    return tropo_height.rename("tropopause_wmo")
 
+
+# SAH note 2024-02-23: the logic for all of the functions below, which was
+# written in 2019 or 2020 I believe, is no longer working.  I've defined
+# the "tropo_wmo" function above which does work, but I haven't attempted
+# to update the others.
 def _tropo_wmo(temp, z, p_str=LEV_STR, lat_str=LAT_STR,
                threshold=-2e-3, max_pressure=600,
                interpolate=True):

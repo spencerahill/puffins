@@ -285,10 +285,10 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
 
     # Restrict to streamfunction at level of the specified cell's maximum.
     cell_max = hc_strengths.sel(cell=label)
-    lat_max = cell_max[lat_str]
-    lev_max = cell_max[lev_str]
+    lat_of_max = cell_max[lat_str]
+    lev_of_max = cell_max[lev_str]
     if fixed_plev is None:
-        lev_for_edges = float(lev_max)
+        lev_for_edges = float(lev_of_max)
     else:
         lev_for_edges = fixed_plev
     sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
@@ -297,10 +297,10 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     lat = strmfunc[lat_str]
     if edge == "north":
         which_zero = 0
-        lat_compar = lat >= lat_max
+        lat_compar = lat >= lat_of_max
     elif edge == "south":
         which_zero = -1
-        lat_compar = lat <= lat_max
+        lat_compar = lat <= lat_of_max
     else:
         raise ValueError("`edge` must be either 'north' or 'south'; "
                          f"got {cell}.")
@@ -319,8 +319,7 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     lats_interp = np.arange(sf_one_side[lat_str].min(),
                             sf_one_side[lat_str].max() - 0.2 * dlat_avg,
                             0.1 * dlat_avg)
-    sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp},
-                                            method="cubic")
+    sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp})
     # Explicitly make the last value equal to the original, as otherwise the
     # interp step can overwrite it with nan for some reason.
     sf_one_side_interp = xr.concat([sf_one_side_interp, sf_one_side[-1]],
@@ -330,7 +329,7 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     # using the Singh 2019 cosine weighting if specified.
     if cos_factor:
         sf_norm = ((sf_one_side_interp / cosdeg(sf_one_side_interp[lat_str])) /
-                   (cell_max / cosdeg(lat_max)))
+                   (cell_max / cosdeg(lat_of_max)))
     else:
         sf_norm = sf_one_side_interp / cell_max
 
@@ -728,20 +727,19 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
-        if ascentlat == 0:
-            return c_descent * lat_fixed_ro_ann
         lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
-        if ascentlat == 0:
-            return c_descent * np.rad2deg(lat_ro_ann)
+
     lat_a = np.deg2rad(ascentlat)
-    return c_descent * np.rad2deg(
+    sol_lata0 = c_descent * np.rad2deg(lat_ro_ann)
+    sol_lata_neq0 = c_descent * np.rad2deg(
         lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
     )
+    return xr.where(lat_a == 0, sol_lata0, sol_lata_neq0)
 
 
 def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
