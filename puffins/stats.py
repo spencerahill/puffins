@@ -3,6 +3,7 @@ from eofs.xarray import Eof
 import numpy as np
 import ruptures as rpt
 from sklearn import linear_model
+import pymannkendall as mk
 import sklearn.metrics
 import scipy.stats
 from statsmodels.distributions.empirical_distribution import ECDF
@@ -43,6 +44,30 @@ def detrend(arr, dim=None, order=1):
     """Subtract off the linear or higher order polynomial fit."""
     dim = _infer_dim_if_1d(arr, dim)
     return (arr - trend(arr, dim, order) + arr.mean(dim)).transpose(*arr.dims)
+
+
+def xmannken(arr, dim):
+    """Use xr.apply_ufunc to broadcast the Mann-Kendall test."""
+    dims_bcast = [dim_ for dim_ in arr.dims if dim_ != dim]
+    stacked = arr.stack(location=dims_bcast)
+    stacked_masked = stacked.where(~np.isnan(stacked), drop=True)
+
+    def _xmk(arr):
+        _, _, p, z, tau, s, var_s, slope, intercept = mk.original_test(arr)
+        return np.array([p, z, tau, s, var_s, slope, intercept])
+
+    arr = xr.apply_ufunc(
+        _xmk,
+        stacked_masked,
+        input_core_dims=[[dim]],
+        output_core_dims=[["parameter"]],
+        vectorize=True,
+        dask="parallelized",
+    ).unstack("location")
+    arr.coords["parameter"] = xr.DataArray(
+        ["p", "z", "tau", "s", "var_s", "slope", "intercept"], dims=["parameter"])
+    # The "sortby" call is because in testing an array had its first value moved to the end.
+    return arr.sortby(dims_bcast)
 
 
 # Common timeseries transforms: anomalies, standardized anomalies, etc.
