@@ -15,6 +15,7 @@ setuptools.setup(
         "ipython",
         "matplotlib",
         "numpy",
+        "pymannkendall",
         "ruptures",
         "scipy",
         "scikit-learn",
