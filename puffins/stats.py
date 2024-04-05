@@ -11,7 +11,7 @@ import xarray as xr
 
 from .interp import zero_cross_interp
 from .names import LAT_STR, YEAR_STR
-from .nb_utils import coord_arr_1d, cosdeg
+from .nb_utils import coord_arr_1d, cosdeg, stacked_masked
 
 
 # TODO: make this a decorator.
@@ -498,3 +498,22 @@ def risk_ratio(arr1, arr2, cdf_points=None, side="left"):
     cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side)
     cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side)
     return ((1. - cdf1) / (1. - cdf2)).rename("risk_ratio")
+
+
+# Statistical fits
+def xfit(arr, dim, dist=scipy.stats.genextreme, **fit_kwargs):
+    """Broadcast fitting of scipy.stats distributions."""
+    dims_bcast = [dim_ for dim_ in arr.dims if dim_ != dim]
+
+    def _fit(data):
+        params = dist.fit(data, **fit_kwargs)
+        return np.array(list(params))
+
+    return xr.apply_ufunc(
+        _fit,
+        stacked_masked(arr, dim),
+        input_core_dims=[[dim]],
+        output_core_dims=[["parameter"]],
+        vectorize=True,
+        dask="parallelized",
+    ).unstack("location").sortby(dims_bcast)
