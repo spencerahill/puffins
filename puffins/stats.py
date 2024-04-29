@@ -163,7 +163,9 @@ def butterworth(arr, n, windows, filttype="bandpass", dim="time"):
 # Correlations and linear regression.
 def corr_detrended(arr1, arr2, dim=None, order=1):
     """Correlation coefficient of two arrays after they are detrended."""
-    corr = xr.corr(detrend(arr1, dim, order), detrend(arr2, dim, order), dim)
+    arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
+    corr = xr.corr(detrend(arr1_aligned, dim, order),
+                   detrend(arr2_aligned, dim, order), dim)
     if corr.shape == tuple():
         return float(corr)
     return corr
