@@ -304,5 +304,11 @@ def drop_dupes(sequence):
     return orig_type(list(dict.fromkeys(sequence)))
 
 
+def stacked_masked(arr, dim):
+    """Stack an array along the given dimension and drop any all-nan slices.""" 
+    stacked = arr.stack(location=[dim_ for dim_ in arr.dims if dim_ != dim])
+    return stacked.where(~np.isnan(stacked), drop=True)
+
+
 if __name__ == '__main__':
     pass
