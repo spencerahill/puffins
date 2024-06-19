@@ -15,7 +15,7 @@ from .names import (
     LEV_STR,
     SFC_AREA_STR,
 )
-from .nb_utils import coord_arr_1d, cosdeg, sindeg
+from .nb_utils import cosdeg, sindeg
 
 
 # Derivatives.
