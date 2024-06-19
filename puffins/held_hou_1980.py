@@ -3,15 +3,29 @@
 
 import numpy as np
 
-from .constants import RAD_EARTH, ROT_RATE_EARTH
+from .constants import (
+    DELTA_H, DELTA_V, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH, THETA_REF,
+)
 from .nb_utils import cosdeg, sindeg
 from .num_solver import brentq_solver_sweep_param
 
 
 def pot_temp_rce_hh80(lats, z, theta_ref, height, delta_h, delta_v):
     """Eq. (2) of Held Hou 1980 (slightly rearranged)."""
-    return theta_ref*(1 + delta_h*(cosdeg(lats)**2 - 2/3) +
-                      (z/height - 0.5)*delta_v)
+    return theta_ref*(1 + delta_h * (cosdeg(lats) ** 2 - 2 / 3) +
+                      (z / height - 0.5) * delta_v)
+
+
+def pot_temp_rce_hh80_small_ang(
+        lats,
+        z=0.5 * HEIGHT_TROPO,
+        theta_ref=THETA_REF,
+        height=HEIGHT_TROPO,
+        delta_h=DELTA_H,
+        delta_v=DELTA_V):
+    """Eq. (2) of Held Hou 1980, in small-angle limit."""
+    return theta_ref * (1 + delta_h * (1 - np.deg2rad(lats) ** 2 - 2 / 3) +
+                        delta_v * (z / height - 0.5))
 
 
 def u_rce_hh80(lats, therm_ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
