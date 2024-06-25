@@ -85,7 +85,7 @@ def heat_flux_mean_ro(
         delta_h=DELTA_H,
         tau=20 * 86400,
 ):
-    """Meridional heat flux for fixed-Ro, smal-angle, eq. ascent."""
+    """Meridional heat flux for fixed-Ro, small-angle, eq. ascent."""
     prefac = ((5 / 18) * (5 / 3) ** 0.5 * radius * height * delta_h / tau *
               (therm_ross_num / ross_num) ** 1.5)
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
@@ -97,7 +97,6 @@ def mom_flux_mean_ro(
         lat,
         therm_ross_num,
         ross_num,
-        theta_ref=THETA_REF,
         radius=RAD_EARTH,
         rot_rate=ROT_RATE_EARTH,
         height=HEIGHT_TROPO,
@@ -105,22 +104,14 @@ def mom_flux_mean_ro(
         delta_v=DELTA_V,
         tau=20 * 86400,
 ):
-    """Meridional heat flux for fixed-Ro, smal-angle, eq. ascent.
-
-    The `prefactor` is Omega * a / Delta_v
-    """
-    heat_flux = heat_flux_mean_ro(
-        lat,
-        therm_ross_num,
-        ross_num,
-        theta_ref=theta_ref, 
-        radius=radius,
-        height=height,
-        delta_h=delta_h,
-        tau=tau,
-    )
-    return (ross_num * rot_rate * radius * np.deg2rad(lat) ** 2
-            / (delta_v * theta_ref) * heat_flux)
+    """Meridional momentum flux for fixed-Ro, small-angle, eq. ascent."""
+    prefac = rot_rate * radius ** 2 * height * delta_h / (
+        6 * tau * delta_v)
+    latrad = np.deg2rad(lat)
+    latrad2 = latrad ** 2
+    return prefac * latrad ** 3 * (
+        5 * therm_ross_num / 3 - ross_num * latrad2 * (
+            2 - 3 * ross_num * latrad2 / (5 * therm_ross_num)))
 
 
 def u_sfc_mean_ro(
