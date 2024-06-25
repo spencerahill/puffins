@@ -25,10 +25,11 @@ from .thermodynamics import temp_from_equiv_pot_temp
 
 
 # Angular momentum conserving wind.
-def u_ang_mom_cons(lats, max_lat, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_ang_mom_cons(lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Angular momentum conserving zonal wind."""
     coslat = cosdeg(lats)
-    return rot_rate*radius*coslat*((cosdeg(max_lat) / coslat)**2 - 1)
+    return rot_rate * radius * coslat * (
+        (cosdeg(lat_ascent) / coslat) ** 2 - 1)
 
 
 # Fields corresponding to a specified, meridionally uniform Rossby number.
@@ -98,14 +99,17 @@ def pot_temp_avg_given_ro_small_angle_eq_ascent(
 
 
 # Fields corresponding to a Rossby number varying linearly in latitude.
-def u_lin_ro(lat, lat_descent, ross_ascent, ross_descent,
+def u_lin_ro(lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
              rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Small-angle zonal wind for Rossby number linear in latitude."""
-    u_amc = u_ang_mom_cons(lat, 0, rot_rate=rot_rate, radius=radius)
+    u_ro_a = u_given_ro(lat, lat_ascent, ross_ascent,
+                        rot_rate=rot_rate, radius=radius)
     delta_ro = ross_ascent - ross_descent
+    latrad = np.deg2rad(lat)
     return (
-        ross_ascent * u_amc - 2 * delta_ro * rot_rate * radius *
-        np.deg2rad(lat) ** 3 / (3 * np.deg2rad(lat_descent)))
+        u_ro_a - 2 * delta_ro * rot_rate * radius 
+        / (3 * np.deg2rad(lat_descent))
+        * (latrad ** 3 - np.deg2rad(lat_ascent) ** 3))
 
 
 def pot_temp_lin_ro_lata0(
