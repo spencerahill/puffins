@@ -2,8 +2,8 @@
 """Functionality involving vertical coordinates."""
 import numpy as np
 import xarray as xr
+import warnings
 
-from .calculus import integrate
 from .constants import GRAV_EARTH, MEAN_SLP_EARTH
 from .names import (
     LEV_STR,
@@ -26,7 +26,7 @@ def to_pascal(arr, is_dp=False, warn=False):
 
 def int_dp_g(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
     """Mass weighted integral.  Assumes `dp` is in Pa (not hPa)."""
-    return integrate(arr, dp, dim=dim) / grav
+    return (arr * dp).sum(dim=dim) / grav
 
 
 def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
@@ -34,12 +34,12 @@ def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
     """Integral of array on pressure levels but weighted by log(pressure)."""
     dlogp = dlogp_from_pfull(arr[pfull_str], p_top=p_top, p_bot=p_bot,
                              phalf_str=phalf_str)
-    return integrate(arr, dlogp, dim=pfull_str)
+    return (arr * dlogp).sum(pfull_str)
 
 
 def col_avg(arr, dp, dim=LEV_STR):
     """Pressure-weighted column average."""
-    return integrate(arr, dp, dim=dim) / integrate(1.0, dp, dim=dim)
+    return int_dp_g(arr, dp, dim) / int_dp_g(1.0, dp, dim)
 
 
 def subtract_col_avg(arr, dp, dim=LEV_STR):

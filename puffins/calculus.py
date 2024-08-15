@@ -15,7 +15,7 @@ from .names import (
     LEV_STR,
     SFC_AREA_STR,
 )
-from .nb_utils import coord_arr_1d, cosdeg, sindeg
+from .nb_utils import cosdeg, sindeg
 
 
 # Derivatives.
@@ -33,12 +33,6 @@ def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
                                (radius*cosdeg(arr_merid_flux[lat_str])))
     vert_flux_div = arr_vert_flux.differentiate(vert_str)
     return merid_flux_div + vert_flux_div
-
-
-# Integral.
-def integrate(arr, ddim, dim=LEV_STR):
-    """Integrate along the given dimension."""
-    return (arr * ddim).sum(dim=dim)
 
 
 # Meridional integrals and averages.
