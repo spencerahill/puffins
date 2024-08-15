@@ -5,7 +5,7 @@ setuptools.setup(
     version="0.1.1",
     packages=setuptools.find_packages(),
     author="Spencer A. Hill",
-    author_email="shill@ldeo.columbia.edu",
+    author_email="shill1@ccny.cuny.edu",
     description="Functions for computing things in climate science",
     install_requires=[
         "eofs",
