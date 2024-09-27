@@ -58,7 +58,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
         v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean, dim=lev_str)
     # Ensure the sum is from TOA down, since doing from surface up can
     # generate spurious errors due to larger spatiotemporal variations
-    # in pressure at surface than at TOA.
+    # in pressure at surface than at TOA.  C.f. Adam et al 2018.
     levels = v_znl_mean[lev_str]
     if np.all(np.diff(levels) > 0):
         levslice = slice(None, None, 1)
@@ -742,14 +742,11 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
-        lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+        lat_ro_ann4 = (burg_num * delta_v / ross_num)
 
     lat_a = np.deg2rad(ascentlat)
-    sol_lata0 = c_descent * np.rad2deg(lat_ro_ann)
-    sol_lata_neq0 = c_descent * np.rad2deg(
-        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
-    )
-    return xr.where(lat_a == 0, sol_lata0, sol_lata_neq0)
+    return c_descent * np.rad2deg(np.sqrt(
+        0.5 * lat_a + np.sqrt(0.25 * lat_a ** 4 + lat_ro_ann4)))
 
 
 def lin_ro_bci_edge_small_angle_lata0(
