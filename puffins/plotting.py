@@ -35,6 +35,7 @@ plt_rc_params_custom = {
     "font.family": "Helvetica",  # Use Helvetica font.
     "legend.frameon": False,  # Turn off box around legend.
     "legend.handlelength": 1.,  # Make legend symbols smaller.
+    "legend.labelcolor": "linecolor",  # Make legend text color match that element 
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
     "text.color": GRAY,  # Make text gray.
@@ -259,15 +260,37 @@ def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
 
 
 # Annual cycle plots
-def ann_cyc_xaxis(ax=None, extra_space=False):
+def wrap_ann_cyc(arr, dim="month"):
+    """Append extra Jan and Dec. values to the array.
+
+    So that contour etc. plots of the annual cycle show
+    January and December as full width rather than half.
+
+    """
+    arr_wrapped = arr.pad({dim: 1}, mode="wrap")
+    arr_wrapped.coords["month"] = range(14)
+    return arr_wrapped
+
+
+def ann_cyc_xaxis(ax=None, wrap=True):
+    """Format the x axis to be the calendar months."""
     ax = _gca_if_ax_none(ax)
-    if extra_space:
-        ax.set_xlim(0.8, 12.2)
+    if wrap:
+        ax.set_xlim(0.5, 12.5)
     else:
         ax.set_xlim(1, 12)
     ax.set_xticks(range(1, 13))
     ax.set_xticklabels("JFMAMJJASOND")
     ax.set_xlabel("")
+    return ax
+
+
+def plot_ann_cyc(arr, dim="month", ax=None, **kwargs):
+    """Plot annual cycle along x axis, with wrapping."""
+    ax = _gca_if_ax_none(ax)
+    handle = wrap_ann_cyc(arr, dim=dim).plot(x=dim, **kwargs)
+    ann_cyc_xaxis(ax=ax, wrap=True)
+    return handle
 
 
 # Convenience functions for generating figure and axes instances
