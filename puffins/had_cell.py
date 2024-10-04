@@ -218,6 +218,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
         else:
             center_lats = center_lats[1:]
             cell_strengths = cell_strengths[1:]
+    
     hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
 
     # Order the cells from south to north.
@@ -249,10 +250,10 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, fixed_plev=None,
-                          min_plev=None, max_plev=None, do_avg_vert=False,
-                          min_lat=None, max_lat=None, cos_factor=False,
-                          lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, fixed_plev=None, min_plev=None,
+                          max_plev=None, do_avg_vert=False,
+                          min_lat=None, max_lat=None, lat_str=LAT_STR,
+                          lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
@@ -300,15 +301,19 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
         raise ValueError("`cell` must be either 'north' or 'south'; "
                          f"got {cell}.")
 
-    # Restrict to streamfunction at level of the specified cell's maximum.
+    # Restrict to streamfunction at specified level or average of levels
     cell_max = hc_strengths.sel(cell=label)
     lat_of_max = cell_max[lat_str]
     lev_of_max = cell_max[lev_str]
-    if fixed_plev is None:
-        lev_for_edges = float(lev_of_max)
+
+    if do_avg_vert:
+        sf_at_max = strmfunc.sel(**{lev_str: slice(min_plev, max_plev)}).mean(lev_str)
     else:
-        lev_for_edges = fixed_plev
-    sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
+        if fixed_plev is None:
+            lev_for_edges = float(lev_of_max)
+        else:
+            lev_for_edges = fixed_plev
+        sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
 
     # Restrict to the latitudes north or south of the max, as specified.
     lat = strmfunc[lat_str]
@@ -325,7 +330,7 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
 
     # Restrict to the latitudes from the max to the nearest point with
     # opposite-signed value.  Also apply cubic interpolation in latitude to a
-    # refined mesh.  Otherwise, the cell edge can (unphysically) vary
+    # refined mesh.  Otherwise, the cell edge can unphysically vary
     # non-monotonically with `frac_thresh`.
     dlat_avg = float(sf_one_side[lat_str].diff(lat_str).mean(lat_str).values)
     # If there's only one point, assume it's one of the poles.
