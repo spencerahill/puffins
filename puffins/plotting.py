@@ -296,12 +296,14 @@ def plot_ann_cyc(arr, dim="month", ax=None, **kwargs):
 # Convenience functions for generating figure and axes instances
 def faceted(*args, width=4, aspect=0.618, **kwargs):
     """Wrapper to faceted.faceted w/ a default aspect ratio."""
-    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
+    with plt.rc_context({'figure.constrained_layout.use': False}):
+        return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
 
 
 def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
     """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
-    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
+    with plt.rc_context({'figure.constrained_layout.use': False}):
+        return fac_ax(*args, width=width, aspect=aspect, **kwargs)
 
 
 def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
