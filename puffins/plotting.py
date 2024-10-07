@@ -31,7 +31,6 @@ plt_rc_params_custom = {
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
-    "figure.constrained_layout.use": True,  # Don't cutoff axis labels etc.
     "font.family": "Helvetica",  # Use Helvetica font.
     "legend.frameon": False,  # Turn off box around legend.
     "legend.handlelength": 1.,  # Make legend symbols smaller.
@@ -296,14 +295,12 @@ def plot_ann_cyc(arr, dim="month", ax=None, **kwargs):
 # Convenience functions for generating figure and axes instances
 def faceted(*args, width=4, aspect=0.618, **kwargs):
     """Wrapper to faceted.faceted w/ a default aspect ratio."""
-    with plt.rc_context({'figure.constrained_layout.use': False}):
-        return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
+    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
 
 
 def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
     """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
-    with plt.rc_context({'figure.constrained_layout.use': False}):
-        return fac_ax(*args, width=width, aspect=aspect, **kwargs)
+    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
 
 
 def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
@@ -320,7 +317,7 @@ def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
 
     """
     height = width / aspect
-    return plt.subplots(figsize=(width, height))
+    return plt.subplots(figsize=(width, height), constrained_layout=True)
 
 
 # Panel labeling.
