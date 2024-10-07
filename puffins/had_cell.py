@@ -251,7 +251,7 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
 
 
 def had_cells_shared_edge(strmfunc, fixed_plev=None, min_plev=None,
-                          max_plev=None, do_avg_vert=False,
+                          max_plev=None, do_avg_vert=False, frac_thresh=None,
                           min_lat=None, max_lat=None, lat_str=LAT_STR,
                           lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
@@ -742,16 +742,16 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
-        lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
+        lat_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
         lat_ro_ann4 = (burg_num * delta_v / ross_num)
 
-    lat_a = np.deg2rad(ascentlat)
+    lat_a2 = np.deg2rad(ascentlat) ** 2
     return c_descent * np.rad2deg(np.sqrt(
-        0.5 * lat_a + np.sqrt(0.25 * lat_a ** 4 + lat_ro_ann4)))
+        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_ro_ann4)))
 
 
 def lin_ro_bci_edge_small_angle_lata0(
