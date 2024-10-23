@@ -185,9 +185,9 @@ def z_from_hypso(temp, p_sfc=MEAN_SLP_EARTH, p_top=1, r_d=R_D, grav=GRAV_EARTH,
 
 def u_bci_2layer_qg(lat, height=HEIGHT_TROPO, delta_v=DELTA_V, grav=GRAV_EARTH,
                     rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
-    """Zonal wind shear in 2 layer QG model for baroclinic instability."""
-    return (grav * delta_v * height * cosdeg(lat) /
-            (rot_rate * radius * sindeg(lat) ** 2))
+    """Critical zonal wind shear in 2-layer QG model for baroclinic instability."""
+    return (grav * height * delta_v * cosdeg(lat) /
+            (2 * rot_rate * radius * sindeg(lat) ** 2))
 
 
 def bulk_stat_stab(pot_temp, lev_upper=500, lev_lower=850,
