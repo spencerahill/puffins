@@ -15,7 +15,7 @@ from .names import (
     LEV_STR,
     SFC_AREA_STR,
 )
-from .nb_utils import coord_arr_1d, cosdeg, sindeg
+from .nb_utils import cosdeg, sindeg
 
 
 # Derivatives.
@@ -35,12 +35,6 @@ def flux_div(arr_merid_flux, arr_vert_flux, vert_str=LEV_STR,
     return merid_flux_div + vert_flux_div
 
 
-# Integral.
-def integrate(arr, ddim, dim=LEV_STR):
-    """Integrate along the given dimension."""
-    return (arr * ddim).sum(dim=dim)
-
-
 # Meridional integrals and averages.
 def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
                               do_cumsum=False, lat_str=LAT_STR):
@@ -53,19 +47,21 @@ def merid_integral_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
 
     """
     lat = arr[lat_str]
-    masked = arr.where((lat > min_lat) & (lat < max_lat), drop=True)
-    dlat = lat.diff(lat_str)
-    if (dlat.max() - dlat.min()) / dlat.mean() > unif_thresh:
+    lat_mask = (lat >= min_lat) & (lat <= max_lat)
+    dlat_arr = lat.where(lat_mask, drop=True).diff(lat_str)
+    if (dlat_arr.max() - dlat_arr.min()) / dlat_arr.mean() > unif_thresh:
         raise ValueError("Uniform latitude spacing required; given values "
                          "are not sufficiently uniform.")
-    integrand = masked * cosdeg(lat) * np.deg2rad(dlat)
+    else:
+        dlat = dlat_arr.mean()
+    integrand = arr.where(lat_mask, drop=True) * cosdeg(lat) * np.deg2rad(dlat)
     if do_cumsum:
         return integrand.cumsum(lat_str)
     return integrand.sum(lat_str)
 
 
 def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
-                         lat_str=LAT_STR):
+                         do_cumsum=False, lat_str=LAT_STR):
     """Area-weighted meridional average for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -75,12 +71,12 @@ def merid_avg_point_data(arr, min_lat=-90, max_lat=90, unif_thresh=0.01,
 
     """
     return (merid_integral_point_data(arr, min_lat=min_lat, max_lat=max_lat,
-                                      unif_thresh=unif_thresh, do_cumsum=False,
+                                      unif_thresh=unif_thresh, do_cumsum=do_cumsum,
                                       lat_str=lat_str) /
             merid_integral_point_data(xr.ones_like(arr),
                                       min_lat=min_lat, max_lat=max_lat,
                                       unif_thresh=unif_thresh,
-                                      do_cumsum=False, lat_str=lat_str))
+                                      do_cumsum=do_cumsum, lat_str=lat_str))
 
 
 def merid_integral_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR,
