@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-"""Equal area model solvers."""
+"""Equal area model analytical solutions and numerical solvers."""
 
 import numpy as np
 import scipy.integrate
@@ -8,6 +8,9 @@ import scipy.optimize
 from .constants import (
     C_P,
     DELTA_H,
+    DELTA_V,
+    GRAV_EARTH,
+    HEIGHT_TROPO,
     P0,
     RAD_EARTH,
     REL_HUM,
@@ -16,12 +19,206 @@ from .constants import (
     THETA_REF,
 )
 from .nb_utils import sin2deg
-from .grad_bal import pot_temp_amc_cqe
+from .grad_bal import (
+    pot_temp_amc_cqe,
+    pot_temp_avg_given_ro_small_angle_eq_ascent,
+    pot_temp_lin_ro_lata0,
+)
 from .fixed_temp_tropo import (
     pot_temp_amc_cqe_fixed_tt,
     pot_temp_avg_amc_fixed_tt_bouss,
 )
 from .lindzen_hou_1988 import pot_temp_rce_lh88
+
+
+# Analytical solutions for annual-mean, uniform-Ro, small-angle case
+def eq_pot_temp_mean_ro(
+        ross_num,
+        therm_ross_num,
+        delta_h,
+        theta_ref=THETA_REF,
+):
+    """Fixed-Ro equal-area small-angle solution for equatorial temp."""
+    return theta_ref * (
+        1 + delta_h / 3 - 5 * therm_ross_num * delta_h / (18 * ross_num)
+    )
+
+
+def pot_temp_mean_ro(
+        lat,
+        ross_num,
+        therm_ross_num,
+        delta_h,
+        theta_ref=THETA_REF,
+):
+    """Fixed-Ro equal-area small-angle potential temperature solution."""
+    pot_temp_eq = eq_pot_temp_mean_ro(
+        ross_num,
+        therm_ross_num,
+        delta_h,
+        theta_ref=theta_ref,
+    )
+    return pot_temp_avg_given_ro_small_angle_eq_ascent(
+        lat,
+        pot_temp_eq,
+        ross_num=ross_num,
+        theta_ref=theta_ref,
+        burg_num=therm_ross_num / delta_h,
+    )
+
+
+def cell_edge_mean_ro(
+        ross_num,
+        therm_ross_num,
+):
+    """Cell edge sol. for fixed-Ro, small-angle, eq. ascent."""
+    return np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5)
+
+
+def heat_flux_mean_ro(
+        lat,
+        therm_ross_num,
+        ross_num,
+        theta_ref=THETA_REF,
+        radius=RAD_EARTH,
+        height=HEIGHT_TROPO,
+        delta_h=DELTA_H,
+        tau=20 * 86400,
+):
+    """Meridional heat flux for fixed-Ro, small-angle, eq. ascent."""
+    prefac = ((5 / 18) * (5 / 3) ** 0.5 * radius * height * delta_h / tau *
+              (therm_ross_num / ross_num) ** 1.5)
+    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    return theta_ref * prefac * (lat_div_lat_ro - 2 * lat_div_lat_ro ** 3 +
+                                 lat_div_lat_ro ** 5)
+
+
+def mom_flux_mean_ro(
+        lat,
+        therm_ross_num,
+        ross_num,
+        radius=RAD_EARTH,
+        rot_rate=ROT_RATE_EARTH,
+        height=HEIGHT_TROPO,
+        delta_h=DELTA_H,
+        delta_v=DELTA_V,
+        tau=20 * 86400,
+):
+    """Meridional momentum flux for fixed-Ro, small-angle, eq. ascent."""
+    prefac = rot_rate * radius ** 2 * height * delta_h / (
+        6 * tau * delta_v)
+    latrad = np.deg2rad(lat)
+    latrad2 = latrad ** 2
+    return prefac * latrad ** 3 * (
+        5 * therm_ross_num / 3 - ross_num * latrad2 * (
+            2 - 3 * ross_num * latrad2 / (5 * therm_ross_num)))
+
+
+def u_sfc_mean_ro(
+        lat,
+        therm_ross_num,
+        ross_num,
+        radius=RAD_EARTH,
+        rot_rate=ROT_RATE_EARTH,
+        height=HEIGHT_TROPO,
+        delta_h=DELTA_H,
+        delta_v=DELTA_V,
+        tau=20 * 86400,
+        drag_coeff=0.005,
+):
+    """Meridional heat flux for fixed-Ro, smal-angle, eq. ascent."""
+    prefac = (-25 * rot_rate * radius * height * delta_h /
+              (18 * drag_coeff * tau * delta_v))
+    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    return prefac * (therm_ross_num / ross_num) ** 2 * (
+        lat_div_lat_ro ** 2 - (10 / 3) * lat_div_lat_ro ** 4 +
+        (7 / 3) * lat_div_lat_ro ** 6)
+
+
+# Solutions for small-angle, linear meridional profile in Ro
+def cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent):
+    """Full solution for linear-Ro, lata=0, small-angle cell edge."""
+    delro = ross_ascent - ross_descent
+
+    def _term_latd4(ross_ascent, delro):
+        return (ross_ascent ** 2 / 7 - ross_ascent * delro / 6
+                + 4 * delro ** 2 / 81)
+
+    def _term_latd2(ross_ascent, delro):
+        return 2 * ross_ascent / 5 - 2 * delro / 9 
+
+    def _term_latd0(therm_ro):
+        return -2 * therm_ro / 3
+
+    poly_obj = np.polynomial.Polynomial([
+        _term_latd0(therm_ross),
+        _term_latd2(ross_ascent, delro),
+        _term_latd4(ross_ascent, delro),
+    ])
+    return np.rad2deg(poly_obj.roots()[1] ** 0.5)
+
+
+def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
+    """Leading-order approx. for cell edge for linear Ro profile."""
+    delta_ross = ross_ascent - ross_descent
+    return np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 *
+                                          delta_ross)) ** 0.5)
+
+
+def eq_pot_temp_lin_ro_lata0(
+        therm_ross,
+        ross_ascent,
+        ross_descent,
+        delta_h=DELTA_H,
+        theta_ref=THETA_REF,
+):
+    """Equatorial pot. temp, small-angle, linear-Ro, equal-area."""
+    delro = ross_ascent - ross_descent
+    burg_num = therm_ross / delta_h
+    latd2 = np.deg2rad(cell_edge_lin_ro_lata0_full(
+        therm_ross, ross_ascent, ross_descent)) ** 2
+    return theta_ref * (1 + delta_h / 3 - latd2 * (
+        delta_h + latd2 / burg_num * (4 * delro / 15 - ross_ascent / 2 +
+        (-(ross_ascent ** 2) / 6 + 4 * ross_ascent * delro / 21 - (delro ** 2) / 18) * latd2)))
+
+
+def pot_temp_lin_ro_eq_area(
+        lat,
+        therm_ross,
+        ross_ascent,
+        ross_descent,
+        delta_h=DELTA_H,
+        theta_ref=THETA_REF,
+        rot_rate=ROT_RATE_EARTH,
+        radius=RAD_EARTH,
+        grav=GRAV_EARTH,
+        height=HEIGHT_TROPO,
+):
+    """Fixed-Ro equal-area small-angle potential temperature solution."""
+    pot_temp_eq = eq_pot_temp_lin_ro_lata0(
+        therm_ross=therm_ross,
+        ross_ascent=ross_ascent,
+        ross_descent=ross_descent,
+        delta_h=delta_h,
+        theta_ref=theta_ref,
+    )
+    lat_descent = cell_edge_lin_ro_lata0_full(
+        therm_ross=therm_ross,
+        ross_ascent=ross_ascent,
+        ross_descent=ross_descent,
+    )
+    return pot_temp_lin_ro_lata0(
+        lat=lat,
+        lat_descent=lat_descent,
+        ross_ascent=ross_ascent,
+        ross_descent=ross_descent,
+        pot_temp_lat0=pot_temp_eq,
+        rot_rate=rot_rate,
+        radius=radius,
+        theta_ref=theta_ref,
+        grav=grav,
+        height=height,
+)
 
 
 # Original Lindzen and Hou 1988.

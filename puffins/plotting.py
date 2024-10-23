@@ -8,6 +8,9 @@ from faceted import faceted as fac_faceted
 from faceted import faceted_ax as fac_ax
 from matplotlib import pyplot as plt
 from matplotlib import colors, gridspec, ticker
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
+
 import numpy as np
 import xarray as xr
 
@@ -28,9 +31,10 @@ plt_rc_params_custom = {
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
-    # "font.family": "Helvetica",  # Use Helvetica font.
+    "font.family": "Helvetica",  # Use Helvetica font.
     "legend.frameon": False,  # Turn off box around legend.
     "legend.handlelength": 1.,  # Make legend symbols smaller.
+    "legend.labelcolor": "linecolor",  # Make legend text color match that element 
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
     "text.color": GRAY,  # Make text gray.
@@ -58,6 +62,7 @@ def _left_bottom_spines_only(ax=None, displace=False):
     ax.yaxis.set_ticks_position('left')
 
 
+# Format axes for plots that are functions of latitude.
 def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
                  degr_symbol=False):
     """Make the x-axis be in sin of latitude."""
@@ -228,27 +233,6 @@ def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
                 ax.set_yticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
-def ann_cyc_xaxis(ax=None, extra_space=False):
-    ax = _gca_if_ax_none(ax)
-    if extra_space:
-        ax.set_xlim(0.8, 12.2)
-    else:
-        ax.set_xlim(1, 12)
-    ax.set_xticks(range(1, 13))
-    ax.set_xticklabels("JFMAMJJASOND")
-    ax.set_xlabel("")
-
-
-def faceted(*args, width=4, aspect=0.618, **kwargs):
-    """Wrapper to faceted.faceted w/ a default aspect ratio."""
-    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
-
-
-def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
-    """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
-    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
-
-
 def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
                 ax=None, lat_str=LAT_STR, ax_labels=False, **plot_kwargs):
     """Plot of the given array as a function of latitude."""
@@ -274,12 +258,69 @@ def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
     return handle
 
 
-def _plot_cutoff_ends(lats, arr, ax=None, **kwargs):
-    """Avoid finite-differencing artifacts at endpoints."""
+# Annual cycle plots
+def wrap_ann_cyc(arr, dim="month"):
+    """Append extra Jan and Dec. values to the array.
+
+    So that contour etc. plots of the annual cycle show
+    January and December as full width rather than half.
+
+    """
+    arr_wrapped = arr.pad({dim: 1}, mode="wrap")
+    arr_wrapped.coords["month"] = range(14)
+    return arr_wrapped
+
+
+def ann_cyc_xaxis(ax=None, wrap=True):
+    """Format the x axis to be the calendar months."""
     ax = _gca_if_ax_none(ax)
-    ax.plot(lats[2:-2], arr[2:-2], **kwargs)
+    if wrap:
+        ax.set_xlim(0.5, 12.5)
+    else:
+        ax.set_xlim(1, 12)
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels("JFMAMJJASOND")
+    ax.set_xlabel("")
+    return ax
 
 
+def plot_ann_cyc(arr, dim="month", ax=None, **kwargs):
+    """Plot annual cycle along x axis, with wrapping."""
+    ax = _gca_if_ax_none(ax)
+    handle = wrap_ann_cyc(arr, dim=dim).plot(x=dim, **kwargs)
+    ann_cyc_xaxis(ax=ax, wrap=True)
+    return handle
+
+
+# Convenience functions for generating figure and axes instances
+def faceted(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted w/ a default aspect ratio."""
+    return fac_faceted(*args, width=width, aspect=aspect, **kwargs)
+
+
+def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
+    """Wrapper to faceted.faceted_ax w/ a default aspect ratio."""
+    return fac_ax(*args, width=width, aspect=aspect, **kwargs)
+
+
+def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
+    """
+    Create plt.Figure with single subplot and specified width and aspect ratio.
+
+    Parameters:
+    - width (float): Width of the figure in inches.  Default 3.75 inches.
+    - aspect (float): Ratio of width to height.  Default golden ratio (1.618).
+
+    Returns:
+    - fig (Figure): The created figure.
+    - ax (Axes): The subplot added to the figure.
+
+    """
+    height = width / aspect
+    return plt.subplots(figsize=(width, height), constrained_layout=True)
+
+
+# Panel labeling.
 def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.88,
                 **text_kwargs):
     ax = _gca_if_ax_none(ax)
@@ -295,6 +336,7 @@ def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.88,
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 
+# Colormaps.
 def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
     """Truncate a colormap.
 
@@ -302,7 +344,10 @@ def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
 
     """
     if n_colors is None:
-        n_colors = len(cmap.colors)
+        try:
+            n_colors = len(cmap.colors)
+        except AttributeError:
+            n_colors = 100
     new_cmap = colors.LinearSegmentedColormap.from_list(
         'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
         cmap(np.linspace(minval, maxval, n_colors)))
@@ -333,6 +378,7 @@ def trunc_cmap_about_center(cmap, min_val=None, max_val=None, central_val=0,
                          n_colors=n_colors)
 
 
+# Plot horizontal, vertical, diagonal lines.
 def mark_x0(ax=None, linewidth=0.5, color='0.5', x0=0, **kwargs):
     """Mark the x intercept line on the given axis."""
     ax = _gca_if_ax_none(ax)
@@ -369,6 +415,7 @@ def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
     return ax
 
 
+# Timeseries plots.
 def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
                    **faceted_kwargs):
     """Compare statistics of two 1-D arrays via various plots."""
@@ -440,6 +487,7 @@ def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
     return axarr
 
 
+# Heatmaps.
 def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
             cbarlabel="", top_ticks=False, annotate=True, annotate_kw={},
             **kwargs):
@@ -582,6 +630,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     return texts
 
 
+# Seasonal plots
 def plot_seas_points(arr, ax=None, seas_ordered=None, **kwargs):
     """Plot seasonal values in calendar order on one set of axes."""
     ax = _gca_if_ax_none(ax)
@@ -678,6 +727,7 @@ def ann_seas_labels(
                 ax.set(**yparams_inner)
 
 
+# Writing figures to disk.
 def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
     """Save a figure from a notebook into the desired figures directory."""
     if fig is None:

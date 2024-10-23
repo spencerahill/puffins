@@ -1,9 +1,15 @@
-"""Functionality related to determining overturning cell edges."""
+"""Hadley cells and other meridional overturning circulation things."""
 import numpy as np
 import scipy.ndimage
 import xarray as xr
 
-from .constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
+from .constants import (
+    DELTA_V,
+    GRAV_EARTH,
+    HEIGHT_TROPO,
+    RAD_EARTH,
+    ROT_RATE_EARTH,
+)
 from .dynamics import plan_burg_num
 from .names import LAT_STR, LEV_STR, LON_STR, SIGMA_STR
 from .interp import interpolate, zero_cross_bounds, zero_cross_interp
@@ -33,7 +39,9 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     Returns
     -------
     xarray.DataArray
-        The meridional mass streamfunction.
+        The meridional mass streamfunction, signed such that
+        counter-clockwise circulation in lat-height plane
+        (i.e. Southern Hemisphere Hadley Cell) is positive.
 
     """
     # Zonally average v and dp.
@@ -48,13 +56,22 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     # If desired, impose zero net mass flux at each level.
     if impose_zero_col_flux:
         v_znl_mean = subtract_col_avg(v_znl_mean, dp_znl_mean, dim=lev_str)
+    # Ensure the sum is from TOA down, since doing from surface up can
+    # generate spurious errors due to larger spatiotemporal variations
+    # in pressure at surface than at TOA.  C.f. Adam et al 2018.
+    levels = v_znl_mean[lev_str]
+    if np.all(np.diff(levels) > 0):
+        levslice = slice(None, None, 1)
+    elif np.all(np.diff(levels) < 0):
+        levslice = slice(None, None, -1)
+    else:
+        raise ValueError(f"Levels are not monotonic: {levels}")
     # At each vertical level, integrate from TOA to that level.
-    streamfunc = (v_znl_mean * dp_znl_mean).cumsum(dim=lev_str) / grav
+    streamfunc = (v_znl_mean * dp_znl_mean).sel(
+        **{lev_str: levslice}).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
-    lats = v[lat_str]
-    # Leading minus sign results in southern hemisphere cell
-    # (i.e. counter-clockwise circulation in lat-height plane) being positive.
-    return -(lat_area_weight(lats, radius=radius) * streamfunc).transpose(
+    # Leading minus sign results in positive southern hemisphere cell
+    return -(lat_area_weight(v[lat_str], radius=radius) * streamfunc).transpose(
         *v_znl_mean.dims).rename("streamfunc").where(np.isfinite(v))
 
 
@@ -201,6 +218,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
         else:
             center_lats = center_lats[1:]
             cell_strengths = cell_strengths[1:]
+    
     hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
 
     # Order the cells from south to north.
@@ -232,10 +250,10 @@ def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
     return strmfunc.sel(**{lev_str: lev_avg})
 
 
-def had_cells_shared_edge(strmfunc, fixed_plev=None,
-                          min_plev=None, max_plev=None, do_avg_vert=False,
-                          min_lat=None, max_lat=None, cos_factor=False,
-                          lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cells_shared_edge(strmfunc, fixed_plev=None, min_plev=None,
+                          max_plev=None, do_avg_vert=False, frac_thresh=None,
+                          min_lat=None, max_lat=None, lat_str=LAT_STR,
+                          lev_str=LEV_STR):
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
@@ -283,15 +301,19 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
         raise ValueError("`cell` must be either 'north' or 'south'; "
                          f"got {cell}.")
 
-    # Restrict to streamfunction at level of the specified cell's maximum.
+    # Restrict to streamfunction at specified level or average of levels
     cell_max = hc_strengths.sel(cell=label)
     lat_of_max = cell_max[lat_str]
     lev_of_max = cell_max[lev_str]
-    if fixed_plev is None:
-        lev_for_edges = float(lev_of_max)
+
+    if do_avg_vert:
+        sf_at_max = strmfunc.sel(**{lev_str: slice(min_plev, max_plev)}).mean(lev_str)
     else:
-        lev_for_edges = fixed_plev
-    sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
+        if fixed_plev is None:
+            lev_for_edges = float(lev_of_max)
+        else:
+            lev_for_edges = fixed_plev
+        sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
 
     # Restrict to the latitudes north or south of the max, as specified.
     lat = strmfunc[lat_str]
@@ -308,7 +330,7 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
 
     # Restrict to the latitudes from the max to the nearest point with
     # opposite-signed value.  Also apply cubic interpolation in latitude to a
-    # refined mesh.  Otherwise, the cell edge can (unphysically) vary
+    # refined mesh.  Otherwise, the cell edge can unphysically vary
     # non-monotonically with `frac_thresh`.
     dlat_avg = float(sf_one_side[lat_str].diff(lat_str).mean(lat_str).values)
     # If there's only one point, assume it's one of the poles.
@@ -671,6 +693,7 @@ def _hadley_ferrel_cells(cells, min_frac_strength=0.05, max_num_cells=4,
     return cells
 
 
+# Descending edge predictions based on baroclinic instability onset."""
 def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
     """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
     sinlat = sindeg(lat)
@@ -682,7 +705,7 @@ def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
 
 
 def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
-                      burg_num=None, ross_num=1., delta_v=0.125,
+                      burg_num=None, ross_num=1., delta_v=DELTA_V,
                       height=HEIGHT_TROPO, grav=GRAV_EARTH,
                       rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
                       zero_bounds_guess_range=np.arange(0.1, 90, 5)):
@@ -707,16 +730,8 @@ def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
                           dask="parallelized")
 
 
-def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
-    """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
-    if np.all(therm_ro == 0):
-        return 0.
-    return np.sign(therm_ro) * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro))
-                                          ** (1. / 3.))
-
-
 def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
-                                  burg_num=None, ross_num=1, delta_v=0.125,
+                                  burg_num=None, ross_num=1, delta_v=DELTA_V,
                                   c_descent=1., height=HEIGHT_TROPO,
                                   grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH,
                                   radius=RAD_EARTH):
@@ -727,23 +742,40 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
 
     """
     if lat_fixed_ro_ann is not None:
-        lat_ro_ann = np.deg2rad(lat_fixed_ro_ann)
+        lat_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
     else:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
-        lat_ro_ann = (burg_num * delta_v / ross_num) ** 0.25
+        lat_ro_ann4 = (burg_num * delta_v / ross_num)
 
-    lat_a = np.deg2rad(ascentlat)
-    sol_lata0 = c_descent * np.rad2deg(lat_ro_ann)
-    sol_lata_neq0 = c_descent * np.rad2deg(
-        lat_a * np.sqrt(0.5 + np.sqrt(0.25 + (lat_ro_ann / lat_a) ** 4))
-    )
-    return xr.where(lat_a == 0, sol_lata0, sol_lata_neq0)
+    lat_a2 = np.deg2rad(ascentlat) ** 2
+    return c_descent * np.rad2deg(np.sqrt(
+        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_ro_ann4)))
+
+
+def lin_ro_bci_edge_small_angle_lata0(
+        burg_num,
+        ross_ascent,
+        ross_descent,
+        delta_v=DELTA_V,
+):
+    """Baroclinic instab. est. for cell edge, linear Ro profile."""
+    return np.rad2deg((3 * burg_num * delta_v /
+                       (ross_ascent + 2 * ross_descent)) ** 0.25)
+
+
+# Edge solutions using supercriticality to predict ascent location.
+def lat_ascent_eta0_approx(therm_ro, c_ascent=1.):
+    """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
+    if np.all(therm_ro == 0):
+        return 0.
+    return np.sign(therm_ro) * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro))
+                                          ** (1. / 3.))
 
 
 def fixed_ro_bci_edge_supercrit_ascent(therm_ross, max_lat=90, c_ascent=1,
-                                       c_descent=1, delta_v=0.125,
+                                       c_descent=1, delta_v=DELTA_V,
                                        delta_h=1. / 15., ross_num=1):
     """Descending edge approx including theory for ascent lat.
 

@@ -271,9 +271,10 @@ def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True, do_detrend=False):
     else:
         if lag is None:
             lag = range(min(len(arr1), len(arr2)) - 2)
-        values = [lag_corr(arr1, arr2, l) for l in lag]
+        values = [lag_corr(arr1, arr2, _lag) for _lag in lag]
         return xr.DataArray(
-            values, dims=["lag"], coords={"lag": lag}, name="lagged-correlation"
+            values, dims=["lag"], coords={"lag": lag},
+            name="lagged-correlation"
         )
 
 

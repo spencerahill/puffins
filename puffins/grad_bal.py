@@ -6,6 +6,7 @@ import numpy as np
 from .constants import (
     C_P,
     GRAV_EARTH,
+    HEIGHT_TROPO,
     L_V,
     MEAN_SLP_EARTH,
     P0,
@@ -19,17 +20,19 @@ from .interp import zero_cross_interp
 from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg
 from .calculus import lat_deriv
-from .dynamics import abs_vort_from_u, z_from_hypso
+from .dynamics import abs_vort_from_u, plan_burg_num, z_from_hypso
 from .thermodynamics import temp_from_equiv_pot_temp
 
 
 # Angular momentum conserving wind.
-def u_ang_mom_cons(lats, max_lat, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_ang_mom_cons(lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Angular momentum conserving zonal wind."""
     coslat = cosdeg(lats)
-    return rot_rate*radius*coslat*((cosdeg(max_lat) / coslat)**2 - 1)
+    return rot_rate * radius * coslat * (
+        (cosdeg(lat_ascent) / coslat) ** 2 - 1)
 
 
+# Fields corresponding to a specified, meridionally uniform Rossby number.
 def u_given_ro(lat, lat_ascent, ross_num,
                rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Absolute angular momentum for a given Rossby number."""
@@ -53,10 +56,87 @@ def pot_temp_avg_given_ro(lat, lat_ascent, pot_temp_ascent, ross_num,
     coslat = cosdeg(lat)
     cosascent = cosdeg(lat_ascent)
     cos_ratio = cosascent / coslat
-    return pot_temp_ascent - theta_ref*prefactor*(
-        (2 - ross_num)*coslat**2 + cosascent**2*(
-            4*(1 - ross_num)*np.log(cos_ratio) +
-            ross_num*(cos_ratio)**2 - 2))
+    return pot_temp_ascent - theta_ref * prefactor * (
+        (2 - ross_num) * coslat**2 + cosascent**2 * (
+            4 * (1 - ross_num) * np.log(cos_ratio) +
+            ross_num*(cos_ratio) ** 2 - 2))
+
+
+def pot_temp_avg_given_ro_small_angle(
+        lat, lat_ascent, pot_temp_ascent, ross_num,
+        burg_num=None,
+        height=10e3, theta_ref=THETA_REF,
+        rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
+        grav=GRAV_EARTH,
+):
+    """Small-angle approx for pot. temp. in balance w/ fixed-Ro u wind."""
+    if burg_num is None:
+        burg_num = plan_burg_num(height, grav, rot_rate, radius)
+    prefactor = 0.5 * ross_num / burg_num
+    lat_sq = lat ** 2
+    lata_sq = lat_ascent ** 2
+    return pot_temp_ascent - theta_ref * prefactor * (
+        (2 - ross_num) * (1 - lat_sq) + (1 - lata_sq) * (
+            ross_num * (1 - lat_sq) / (1 - lata_sq) - 2))
+
+
+def pot_temp_avg_given_ro_small_angle_eq_ascent(
+        lat,
+        pot_temp_equator,
+        ross_num=1,
+        theta_ref=THETA_REF,
+        burg_num=None,
+        height=10e3,
+        rot_rate=ROT_RATE_EARTH,
+        radius=RAD_EARTH,
+        grav=GRAV_EARTH,
+):
+    """Small-angle, ann. mean. pot. temp. balanced w/ fixed-Ro u"""
+    if burg_num is None:
+        burg_num = plan_burg_num(height, grav, rot_rate, radius)
+    return pot_temp_equator - (
+        theta_ref * 0.5 * ross_num / burg_num * np.deg2rad(lat) ** 4)
+
+
+# Fields corresponding to a Rossby number varying linearly in latitude.
+def u_lin_ro(lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
+             rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Small-angle zonal wind for Rossby number linear in latitude."""
+    u_ro_a = u_given_ro(lat, lat_ascent, ross_ascent,
+                        rot_rate=rot_rate, radius=radius)
+    delta_ro = ross_ascent - ross_descent
+    latrad = np.deg2rad(lat)
+    return (
+        u_ro_a - 2 * delta_ro * rot_rate * radius 
+        / (3 * np.deg2rad(lat_descent))
+        * (latrad ** 3 - np.deg2rad(lat_ascent) ** 3))
+
+
+def pot_temp_lin_ro_lata0(
+    lat,
+    lat_descent,
+    ross_ascent,
+    ross_descent,
+    pot_temp_lat0,
+    rot_rate=ROT_RATE_EARTH, 
+    radius=RAD_EARTH,
+    theta_ref=THETA_REF,
+    grav=GRAV_EARTH,
+    height=HEIGHT_TROPO,
+):
+    """Column pot. temp. for Rossby number linear in latitude."""  
+    burg_num = plan_burg_num(grav=grav, height=height,
+                             rot_rate=rot_rate, radius=radius)
+    delro = ross_ascent - ross_descent
+    latrad = np.deg2rad(lat)
+    latd_rad = np.deg2rad(lat_descent)
+    return pot_temp_lat0 - theta_ref * (latrad ** 4) / burg_num * (
+        ross_ascent / 2
+        - 4 * delro * latrad / (15 * latd_rad)
+        + (ross_ascent ** 2) * (latrad ** 2) / 6
+        - 4 * delro * ross_ascent * (latrad ** 3) / (21 * latd_rad) 
+        + (delro ** 2) * (latrad ** 4) / (18 * latd_rad ** 2)
+    )
 
 
 # Boussinesq atmospheres.

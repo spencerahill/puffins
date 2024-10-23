@@ -155,7 +155,10 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
         return arr
     arr_mean = arr.mean()
     arr_anom = (arr - arr_mean)
-    mfft = np.fft.fft(arr_anom.values)
+    if isinstance(arr, xr.DataArray):
+        mfft = np.fft.fft(arr_anom.values)
+    else:
+        mfft = np.fft.fft(arr_anom)
     mask = np.zeros_like(mfft)
     if do_sum:
         mask[-num_harm:] = 1
@@ -164,7 +167,9 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     vals = float(arr_mean) + 2. * np.real(np.fft.ifft(mfft * mask))
     if normalize:
         vals /= np.abs(vals).max()
-    return xr.ones_like(arr) * vals
+    if isinstance(arr, xr.DataArray):
+        return xr.ones_like(arr) * vals
+    return vals
     # These two lines below are for if you want the approximation at
     # whatever frequency has the most power.  What I want is the
     # approximation using just the lowest `n` frequencies.

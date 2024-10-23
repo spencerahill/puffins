@@ -174,10 +174,10 @@ def interp_eta_to_plevs(
     interped = []
     for val in ds[dim]:
         pfull_this_val = pfull.sel(**{dim: val}, drop=True)
-        ds_emars_this_val = ds.sel(**{dim: val}, drop=True).assign_coords(
+        ds_this_val = ds.sel(**{dim: val}, drop=True).assign_coords(
             **{pfull_str: pfull_this_val}
         )
-        interped_this_val = ds_emars_this_val.interp(
+        interped_this_val = ds_this_val.interp(
             **{pfull_str: plevs_target}, method=method
         )
         interped.append(interped_this_val)
