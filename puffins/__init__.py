@@ -10,6 +10,7 @@ from . import nb_utils
 from . import interp
 from . import stats
 
+from . import budget_adj
 from . import dynamics
 from . import grad_bal
 from . import eofs
