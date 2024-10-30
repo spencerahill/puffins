@@ -321,9 +321,18 @@ def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
 
 
 # Panel labeling.
-def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.88,
+def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.99,
                 **text_kwargs):
     ax = _gca_if_ax_none(ax)
+
+    if "va" in text_kwargs:
+        vert_align = text_kwargs.pop("va")
+    elif "verticalalignment" in text_kwargs:
+        vert_align = text_kwargs.pop("verticalalignment")
+    else:
+        vert_align = "top"
+    text_kwargs["va"] = vert_align
+
     if panel_num is None:
         for n, ax_ in enumerate(ax):
             panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text,

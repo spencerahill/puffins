@@ -70,8 +70,7 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH,
     streamfunc = (v_znl_mean * dp_znl_mean).sel(
         **{lev_str: levslice}).cumsum(dim=lev_str) / grav
     # Weight by surface area to get a mass overturning rate.
-    # Leading minus sign results in positive southern hemisphere cell
-    return -(lat_area_weight(v[lat_str], radius=radius) * streamfunc).transpose(
+    return (lat_area_weight(v[lat_str], radius=radius) * streamfunc).transpose(
         *v_znl_mean.dims).rename("streamfunc").where(np.isfinite(v))
 
 
@@ -278,10 +277,11 @@ def had_cells_shared_edge(strmfunc, fixed_plev=None, min_plev=None,
     return zero_cross_interp(sf_max2max, lat_str)[lat_str]
 
 
-def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
-                  fixed_plev=None, min_plev=None, max_plev=None,
-                  do_avg_vert=False, min_lat=None, max_lat=None,
-                  cos_factor=False, lat_str=LAT_STR, lev_str=LEV_STR):
+def had_cell_edge(strmfunc, cell="north", edge="north",
+                  frac_thresh=0.1, fixed_plev=None, min_plev=None,
+                  max_plev=None, do_avg_vert=False, min_lat=None,
+                  max_lat=None, cos_factor=False, do_interp=False,
+                  lat_str=LAT_STR, lev_str=LEV_STR):
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(
         strmfunc,
@@ -329,24 +329,28 @@ def had_cell_edge(strmfunc, cell="north", edge="north", frac_thresh=0.1,
     sf_one_side = sf_at_max.where(lat_compar, drop=True)
 
     # Restrict to the latitudes from the max to the nearest point with
-    # opposite-signed value.  Also apply cubic interpolation in latitude to a
-    # refined mesh.  Otherwise, the cell edge can unphysically vary
-    # non-monotonically with `frac_thresh`.
-    dlat_avg = float(sf_one_side[lat_str].diff(lat_str).mean(lat_str).values)
-    # If there's only one point, assume it's one of the poles.
-    if np.isnan(dlat_avg):
-        if edge == "north":
-            return 90
-        return -90
-    lats_interp = np.arange(sf_one_side[lat_str].min(),
-                            sf_one_side[lat_str].max() - 0.2 * dlat_avg,
-                            0.1 * dlat_avg)
-    sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp})
-    # Explicitly make the last value equal to the original, as otherwise the
-    # interp step can overwrite it with nan for some reason.
-    sf_one_side_interp = xr.concat([sf_one_side_interp, sf_one_side[-1]],
-                                   dim=lat_str)
+    # opposite-signed value.
 
+    if do_interp:
+        # Apply cubic interpolation in latitude to a refined mesh.
+        # Otherwise, the cell edge can unphysically vary non-monotonically
+        # with `frac_thresh`.
+        dlat_avg = float(sf_one_side[lat_str].diff(lat_str).mean(lat_str).values)
+        # If there's only one point, assume it's one of the poles.
+        if np.isnan(dlat_avg):
+            if edge == "north":
+                return 90
+            return -90
+        lats_interp = np.arange(sf_one_side[lat_str].min(),
+                                sf_one_side[lat_str].max() - 0.2 * dlat_avg,
+                                0.1 * dlat_avg)
+        sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp})
+        # Explicitly make the last value equal to the original, as otherwise the
+        # interp step can overwrite it with nan for some reason.
+        sf_one_side_interp = xr.concat([sf_one_side_interp, sf_one_side[-1]],
+                                       dim=lat_str)
+    else:
+        sf_one_side_interp = sf_one_side
     # Find where the streamfunction crosses the specified fractional threshold,
     # using the Singh 2019 cosine weighting if specified.
     if cos_factor:
@@ -694,6 +698,16 @@ def _hadley_ferrel_cells(cells, min_frac_strength=0.05, max_num_cells=4,
 
 
 # Descending edge predictions based on baroclinic instability onset."""
+def fixed_ro_bci_edge_small_angle_lata0(
+        burg_num,
+        ross_num=1,
+        delta_v=DELTA_V,
+        c_descent=1,
+):
+    """HC edge for fixed-Ro, BCI model with equatorial ascent."""
+    return c_descent * np.rad2deg(((burg_num * delta_v) / (2. * ross_num)) ** 0.25)
+
+
 def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
     """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
     sinlat = sindeg(lat)
@@ -704,8 +718,8 @@ def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
     return np.rad2deg(term1 + term2 + term3)
 
 
-def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
-                      burg_num=None, ross_num=1., delta_v=DELTA_V,
+def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None, burg_num=None,
+                      ross_num=1., c_descent=1., delta_v=DELTA_V,
                       height=HEIGHT_TROPO, grav=GRAV_EARTH,
                       rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
                       zero_bounds_guess_range=np.arange(0.1, 90, 5)):
@@ -714,7 +728,12 @@ def fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=None,
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
-        lat_fixed_ro_ann = np.rad2deg((burg_num * delta_v / ross_num) ** 0.25)
+        lat_fixed_ro_ann = fixed_ro_bci_edge_small_angle_lata0(
+            burg_num=burg_num,
+            ross_num=ross_num,
+            delta_v=delta_v,
+            c_descent=c_descent,
+        )
 
     def _solver(lat_a, lat_h):
         # Start guess at the average of the two given latitudes.
@@ -741,19 +760,20 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
     And the return value is in degrees, not radians.
 
     """
-    if lat_fixed_ro_ann is not None:
-        lat_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
-    else:
+    if lat_fixed_ro_ann is None:
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
-        lat_ro_ann4 = (burg_num * delta_v / ross_num)
+        lat_fixed_ro_ann = np.deg2rad(fixed_ro_bci_edge_small_angle_lata0(
+            burg_num, ross_num=ross_num, delta_v=delta_v))
 
     lat_a2 = np.deg2rad(ascentlat) ** 2
     return c_descent * np.rad2deg(np.sqrt(
-        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_ro_ann4)))
+        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_fixed_ro_ann ** 4)))
 
 
+# TODO: for all below, correct the missing 2 factor multiplying Ro,
+# which I've corrected for above already.
 def lin_ro_bci_edge_small_angle_lata0(
         burg_num,
         ross_ascent,
