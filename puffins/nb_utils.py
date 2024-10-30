@@ -310,5 +310,15 @@ def stacked_masked(arr, dim):
     return stacked.where(~np.isnan(stacked), drop=True)
 
 
+def flat_dropna(arr, copy=True):
+    """Return array values as 1-D numpy array and with NaNs dropped."""
+    if copy:
+        arr_ = arr.copy()
+    else:
+        arr_ = arr
+    flat_vals = arr_.values.flatten()
+    return flat_vals[~np.isnan(flat_vals)]
+
+
 if __name__ == '__main__':
     pass
