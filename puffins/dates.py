@@ -170,3 +170,8 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     # approximation using just the lowest `n` frequencies.
     # imax = np.argmax(np.absolute(mfft))
     # mask[[imax]] = 1
+
+
+def time_to_year_and_day(arr, dim="time"):
+    """Split time index into two, one for the year, one for the day of year"""
+    return arr.groupby(f"{dim}.year").apply(lambda x: x.groupby(f"{dim}.dayofyear").first())
