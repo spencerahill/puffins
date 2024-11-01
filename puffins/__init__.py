@@ -9,6 +9,7 @@ from . import calculus
 from . import nb_utils
 from . import interp
 from . import stats
+from . import bootstrap
 
 from . import dynamics
 from . import grad_bal
