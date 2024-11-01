@@ -45,8 +45,14 @@ def corr_sig_nonzero_bootstrap(arr1, arr2, dim, num_bootstraps=1000, alpha=0.05,
     return corr_sig_nonzero_from_full_and_boot(corr_full, corrs_boot, alpha=alpha, dim_boot=dim_boot)
 
 
-def boot_risk_ratio(arr, num_numer, num_denom, dim, cdf_points, n_samples=100, side="left"):
-    """Bootstrap risk ratio."""
+def boot_risk_ratio(arr, num_numer, num_denom, dim, cdf_points, num_bootstraps=1000, side="left"):
+    """Bootstrap risk ratio.
+
+    Note that this is slow: each risk ratio calculation can be slow, especially if
+    there are a lot of points sampled along the CDF, and then you're repeating it
+    a large number of times.
+
+    """
     assert num_numer + num_denom <= len(arr[dim])
 
     def _rr_one_sample():
@@ -60,5 +66,5 @@ def boot_risk_ratio(arr, num_numer, num_denom, dim, cdf_points, n_samples=100, s
             side=side,
         )
 
-    boot_rr_vals = [_rr_one_sample() for _ in range(n_samples)]
+    boot_rr_vals = [_rr_one_sample() for _ in range(num_bootstraps)]
     return xr.concat(boot_rr_vals, dim="nboot")
