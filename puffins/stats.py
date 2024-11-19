@@ -278,7 +278,7 @@ def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True, do_detrend=False):
         )
 
 
-def lin_regress(arr1, arr2, dim):
+def lin_regress(arr1, arr2, dim, do_detrend=False):
     """Use xr.apply_ufunc to broadcast scipy.stats.linregress.
 
     For example, over latitude and longitude.  The regression is performed
@@ -295,6 +295,10 @@ def lin_regress(arr1, arr2, dim):
         return np.array([slope, intercept, r_val, p_val, std_err])
 
     arr1_trunc, arr2_trunc = xr.align(arr1, arr2)
+
+    if do_detrend:
+        arr1_trunc = detrend(arr1_trunc, dim=dim)
+        arr2_trunc = detrend(arr2_trunc, dim=dim)
 
     arr = xr.apply_ufunc(
         _linregress,
