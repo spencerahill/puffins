@@ -764,12 +764,13 @@ def fixed_ro_bci_edge_small_angle(ascentlat, lat_fixed_ro_ann=None,
         if burg_num is None:
             burg_num = plan_burg_num(height, grav=grav, rot_rate=rot_rate,
                                      radius=radius)
-        lat_fixed_ro_ann = np.deg2rad(fixed_ro_bci_edge_small_angle_lata0(
-            burg_num, ross_num=ross_num, delta_v=delta_v))
+        lat_fixed_ro_ann4 = burg_num * delta_v / (2. * ross_num)
+    else:
+        lat_fixed_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
 
     lat_a2 = np.deg2rad(ascentlat) ** 2
     return c_descent * np.rad2deg(np.sqrt(
-        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_fixed_ro_ann ** 4)))
+        0.5 * lat_a2 + np.sqrt(0.25 * lat_a2 ** 2 + lat_fixed_ro_ann4)))
 
 
 # TODO: for all below, correct the missing 2 factor multiplying Ro,
