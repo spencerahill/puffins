@@ -126,7 +126,7 @@ def u_sfc_mean_ro(
         tau=20 * 86400,
         drag_coeff=0.005,
 ):
-    """Meridional heat flux for fixed-Ro, smal-angle, eq. ascent."""
+    """Meridional heat flux for fixed-Ro, small-angle, eq. ascent."""
     prefac = (-25 * rot_rate * radius * height * delta_h /
               (18 * drag_coeff * tau * delta_v))
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
