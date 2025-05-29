@@ -142,7 +142,7 @@ def saturation_mse(temp, height, pressure=P0, c_p=C_P, grav=GRAV_EARTH,
 
 
 def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
-                       c_p=C_P, r_d=R_D, l_v=L_V):
+                       c_p=C_P, r_d=R_D, l_v=L_V, epsilon=EPSILON):
     """Saturation entropy, from Emanuel and Rotunno 2011, JAS.
 
     Saturation vapor pressure can be provided as `sat_vap_press`, otherwise it
@@ -163,7 +163,7 @@ def saturation_entropy(temp, pressure=P0, sat_vap_press=None,
     """
     if sat_vap_press is None:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    sat_q = saturation_specific_humidity(pressure, sat_vap_press=sat_vap_press)
+    sat_q = saturation_specific_humidity(pressure, temp, epsilon=epsilon)
     return (c_p * np.log(temp) - r_d * np.log(pressure) +
             l_v * sat_q / temp)
 
