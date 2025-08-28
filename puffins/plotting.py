@@ -284,10 +284,17 @@ def ann_cyc_xaxis(ax=None, wrap=True):
     return ax
 
 
-def plot_ann_cyc(arr, dim="month", ax=None, **kwargs):
+def plot_ann_cyc(arr, dim="month", ax=None, plot_type=None, **kwargs):
     """Plot annual cycle along x axis, with wrapping."""
     ax = _gca_if_ax_none(ax)
-    handle = wrap_ann_cyc(arr, dim=dim).plot(x=dim, **kwargs)
+    plot_arr = wrap_ann_cyc(arr, dim=dim)
+    plot_funcs = {
+        None: plot_arr.plot,
+        "contour": plot_arr.plot.contour,
+        "contourf": plot_arr.plot.contourf,
+    }
+    plot_func = plot_funcs[plot_type]
+    handle = plot_func(ax=ax, x=dim, **kwargs)
     ann_cyc_xaxis(ax=ax, wrap=True)
     return handle
 
