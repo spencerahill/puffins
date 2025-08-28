@@ -1,6 +1,43 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
-]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "puffins"
+version = "0.1.1"
+description = "Functions for computing things in climate science"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Spencer A. Hill", email = "shill1@ccny.cuny.edu" }]
+keywords = ["climate", "science"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Natural Language :: English",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Atmospheric Science"
+]
+dependencies = [
+  "eofs",
+  "faceted",
+  "gitpython",
+  "matplotlib",
+  "numpy",
+  "pymannkendall",
+  "ruptures",
+  "scipy",
+  "scikit-learn",
+  "statsmodels",
+  "xarray",
+]
+
+[project.urls]
+Homepage = "https://github.com/spencerahill/puffins"
+
+[tool.setuptools.packages.find]
+include = ["puffins*"]
+
+[project.scripts]
+set-proj-puff-branch = "puffins.scripts.set_proj_puff_branch:main"
