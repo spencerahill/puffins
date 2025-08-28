@@ -7,7 +7,6 @@ import os.path
 import subprocess
 import warnings
 
-from IPython.display import display, Javascript
 import git
 import numpy as np
 import xarray as xr
@@ -39,44 +38,6 @@ def setup_puffins(branch_name="master"):
     """Switch puffins to the specified branch, if current branch is clean."""
     puffins_repo = git.Repo(_package_rootdir("puffins"))
     _checkout_if_clean(puffins_repo, branch_name)
-
-
-def save_jupyter_nb():
-    """From within a Jupyter notebook, save that notebook.
-
-    Adapted from https://stackoverflow.com/a/57814673/
-
-    Note that this doesn't work for Jupyterlab, only for Jupyter Notebook,
-    c.f. https://github.com/jupyterlab/jupyterlab/issues/7627.
-
-    """
-    display(Javascript('Jupyter.notebook.save_checkpoint();'))
-
-
-def check_nb_unused_imports(nb_path):
-    """List all instances of unused imports in the given Jupyter notebook
-
-    Adapted from:
-    - https://stackoverflow.com/a/56591258
-    - https://stackoverflow.com/a/15100663
-
-    """
-    p1 = subprocess.Popen(
-        f"jupyter nbconvert {nb_path} --stdout --to python".split(),
-        stdout=subprocess.PIPE)
-    p2 = subprocess.Popen(
-        "flake8 - --select=F401".split(), stdin=p1.stdout,
-        stdout=subprocess.PIPE)
-    p1.stdout.close()
-    return p2.communicate()[0].decode("utf-8")
-
-
-def warn_if_unused_imports(nb_path):
-    """Issue warning if unused imports are found in this notebook."""
-    warnlog = check_nb_unused_imports(nb_path)
-    if warnlog:
-        warnings.warn("This notebook has the following unused imports: "
-                      f"\n\n{warnlog}")
 
 
 # Coordinate arrays.
