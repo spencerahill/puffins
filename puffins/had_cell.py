@@ -127,7 +127,7 @@ def had_cell_strength(streamfunc, dim=None, min_plev=None, max_plev=None,
 
 def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
                        do_avg_vert=False, min_lat=None, max_lat=None,
-                       do_interp_lat=False, lat_str=LAT_STR, lev_str=LEV_STR):
+                       do_interp_lat=False, compat="override", lat_str=LAT_STR, lev_str=LEV_STR):
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -198,7 +198,7 @@ def had_cells_strength(strmfunc, min_plev=None, max_plev=None,
     # The above procedure generates up to 6 cells, of which up to 2 are
     # duplicates.  Now, get rid of the duplicates.
     cell_strengths = xr.concat(cell_strength_vals, dim=lat_str,
-                               coords=[lev_str])
+                               coords=[lev_str], compat=compat)
     dupes = cell_strengths.get_index(lat_str).duplicated()
     cell_strengths = cell_strengths[~dupes]
 
