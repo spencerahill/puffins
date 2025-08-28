@@ -26,7 +26,6 @@ dependencies = [
   "matplotlib",
   "numpy",
   "pymannkendall",
-  "ruptures",
   "scipy",
   "scikit-learn",
   "statsmodels",
