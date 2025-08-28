@@ -1,7 +1,7 @@
 """Functionality relating to statistics, timeseries, etc."""
 from eofs.xarray import Eof
 import numpy as np
-import ruptures as rpt
+# import ruptures as rpt  # commented due to build issues
 from sklearn import linear_model
 import pymannkendall as mk
 import sklearn.metrics
@@ -394,23 +394,24 @@ def rmse(arr1, arr2, dim):
 
 
 # Breakpoint detection
-def detect_breakpoint(arr, dim, rpt_class=rpt.Binseg, model="l2", n_bkps=1):
-    """Use xr.apply_ufunc to broadcast breakpoint detections using ruptures"""
+# Commenting all this out due to build errors stemming from ruptures imports.
+# def detect_breakpoint(arr, dim, rpt_class=rpt.Binseg, model="l2", n_bkps=1):
+#     """Use xr.apply_ufunc to broadcast breakpoint detections using ruptures"""
 
-    rpt_instance = rpt_class(model=model)
+#     rpt_instance = rpt_class(model=model)
 
-    def _detect_bp(arr):
-        """Wrapper to use in apply_ufunc."""
-        return rpt_instance.fit(arr).predict(n_bkps=n_bkps)[0]
+#     def _detect_bp(arr):
+#         """Wrapper to use in apply_ufunc."""
+#         return rpt_instance.fit(arr).predict(n_bkps=n_bkps)[0]
 
-    inds_bp = xr.apply_ufunc(
-        _detect_bp,
-        arr,
-        input_core_dims=[[dim]],
-        vectorize=True,
-        dask="parallelized",
-    )
-    return arr[dim][inds_bp]
+#     inds_bp = xr.apply_ufunc(
+#         _detect_bp,
+#         arr,
+#         input_core_dims=[[dim]],
+#         vectorize=True,
+#         dask="parallelized",
+#     )
+#     return arr[dim][inds_bp]
 
 
 # Empirical orthogonal functions (EOFs)
