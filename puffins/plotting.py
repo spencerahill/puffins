@@ -31,8 +31,8 @@ plt_rc_params_custom = {
     "axes.spines.top": False,  # Turn off top spine in plots.
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
-    "font.family": "sans-serif"
-    "font.sans-serif"] = ["Helvetica", "DejaVu Sans"]  # Use Helvetica font if it's available.
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "DejaVu Sans"],  # Use Helvetica font if it's available.
     "legend.frameon": False,  # Turn off box around legend.
     "legend.handlelength": 1.,  # Make legend symbols smaller.
     "legend.labelcolor": "linecolor",  # Make legend text color match that element 
