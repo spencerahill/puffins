@@ -28,26 +28,38 @@ from .thermodynamics import temp_from_equiv_pot_temp
 def u_ang_mom_cons(lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Angular momentum conserving zonal wind."""
     coslat = cosdeg(lats)
-    return rot_rate * radius * coslat * (
-        (cosdeg(lat_ascent) / coslat) ** 2 - 1)
+    return rot_rate * radius * (
+        (cosdeg(lat_ascent) ** 2 - coslat ** 2 ) / coslat)
+
+
+def u_ang_mom_cons_small_ang(lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Angular momentum conserving zonal wind in the small-angle limit"""
+    return rot_rate * radius * (np.deg2rad(lats) ** 2 - np.deg2rad(lat_ascent) ** 2)
 
 
 # Fields corresponding to a specified, meridionally uniform Rossby number.
-def u_given_ro(lat, lat_ascent, ross_num,
+def u_unif_ro(lat, lat_ascent, ross_num,
                rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
-    """Absolute angular momentum for a given Rossby number."""
+    """Zonal wind for a specified uniform local Rossby number"""
     return ross_num * u_ang_mom_cons(lat, lat_ascent, rot_rate=rot_rate,
                                      radius=radius)
 
 
-def abs_ang_mom_given_ro(lat, lat_ascent, ross_num,
+def u_unif_ro_small_ang(lat, lat_ascent, ross_num,
+                        rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Zonal wind for a specified uniform local Rossby number, small-angle limit"""
+    return ross_num * u_ang_mom_cons_small_ang(
+        lat, lat_ascent, rot_rate=rot_rate, radius=radius)
+
+
+def abs_ang_mom_unif_ro(lat, lat_ascent, ross_num,
                          rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Absolute angular momentum for a given Rossby number."""
     return rot_rate*radius**2*((1 - ross_num)*cosdeg(lat)**2 +
                                ross_num*cosdeg(lat_ascent)**2)
 
 
-def pot_temp_avg_given_ro(lat, lat_ascent, pot_temp_ascent, ross_num,
+def pot_temp_avg_unif_ro(lat, lat_ascent, pot_temp_ascent, ross_num,
                           height=10e3, theta_ref=THETA_REF,
                           rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH,
                           grav=GRAV_EARTH):
@@ -62,7 +74,7 @@ def pot_temp_avg_given_ro(lat, lat_ascent, pot_temp_ascent, ross_num,
             ross_num*(cos_ratio) ** 2 - 2))
 
 
-def pot_temp_avg_given_ro_small_angle(
+def pot_temp_avg_unif_ro_small_ang(
         lat, lat_ascent, pot_temp_ascent, ross_num,
         burg_num=None,
         height=10e3, theta_ref=THETA_REF,
@@ -80,7 +92,7 @@ def pot_temp_avg_given_ro_small_angle(
             ross_num * (1 - lat_sq) / (1 - lata_sq) - 2))
 
 
-def pot_temp_avg_given_ro_small_angle_eq_ascent(
+def pot_temp_avg_unif_ro_small_ang_eq_ascent(
         lat,
         pot_temp_equator,
         ross_num=1,
@@ -99,11 +111,41 @@ def pot_temp_avg_given_ro_small_angle_eq_ascent(
 
 
 # Fields corresponding to a Rossby number varying linearly in latitude.
-def u_lin_ro(lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
-             rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
-    """Small-angle zonal wind for Rossby number linear in latitude."""
-    u_ro_a = u_given_ro(lat, lat_ascent, ross_ascent,
-                        rot_rate=rot_rate, radius=radius)
+def u_lin_ro(
+        lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
+        rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
+):
+    """Zonal wind for Rossby number linear in sin(latitude).
+
+    Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
+    inputted separately, they only appear together in the combination
+    (\Ro_a-\Ro_d)/lat_d, resulting in only three rather than four free
+    parameters (for fixed planetary rotation rate and radius).
+
+    """
+    u_ro_a = u_unif_ro(lat, lat_ascent, ross_ascent,
+                       rot_rate=rot_rate, radius=radius)
+    sinlat = sindeg(lat)
+    return (
+        u_ro_a - 2 * rot_rate * radius * (ross_ascent - ross_descent)
+        / (3 * sindeg(lat_descent) * cosdeg(lat))
+        * (sinlat ** 3 - sindeg(lat_ascent) ** 3))
+
+
+def u_lin_ro_small_ang(
+        lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
+        rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
+):
+    """Small-angle zonal wind for Rossby number linear in latitude.
+
+    Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
+    inputted separately, they only appear together in the combination
+    (\Ro_a-\Ro_d)/lat_d, resulting in only three rather than four free
+    parameters (for fixed planetary rotation rate and radius).
+
+    """
+    u_ro_a = u_unif_ro_small_ang(lat, lat_ascent, ross_ascent,
+                                 rot_rate=rot_rate, radius=radius)
     delta_ro = ross_ascent - ross_descent
     latrad = np.deg2rad(lat)
     return (
@@ -112,7 +154,8 @@ def u_lin_ro(lat, lat_ascent, lat_descent, ross_ascent, ross_descent,
         * (latrad ** 3 - np.deg2rad(lat_ascent) ** 3))
 
 
-def pot_temp_lin_ro_lata0(
+
+def pot_temp_lin_ro_lata0_small_ang(
     lat,
     lat_descent,
     ross_ascent,
@@ -124,7 +167,7 @@ def pot_temp_lin_ro_lata0(
     grav=GRAV_EARTH,
     height=HEIGHT_TROPO,
 ):
-    """Column pot. temp. for Rossby number linear in latitude."""  
+    """Column pot. temp. for Rossby number linear in latitude, small-angle."""  
     burg_num = plan_burg_num(grav=grav, height=height,
                              rot_rate=rot_rate, radius=radius)
     delro = ross_ascent - ross_descent
