@@ -21,8 +21,8 @@ from .constants import (
 from .nb_utils import sin2deg
 from .grad_bal import (
     pot_temp_amc_cqe,
-    pot_temp_avg_given_ro_small_angle_eq_ascent,
-    pot_temp_lin_ro_lata0,
+    pot_temp_avg_unif_ro_small_ang_eq_ascent,
+    pot_temp_lin_ro_lata0_small_ang,
 )
 from .fixed_temp_tropo import (
     pot_temp_amc_cqe_fixed_tt,
@@ -58,7 +58,7 @@ def pot_temp_mean_ro(
         delta_h,
         theta_ref=theta_ref,
     )
-    return pot_temp_avg_given_ro_small_angle_eq_ascent(
+    return pot_temp_avg_unif_ro_small_ang_eq_ascent(
         lat,
         pot_temp_eq,
         ross_num=ross_num,
@@ -165,7 +165,7 @@ def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
                                           delta_ross)) ** 0.5)
 
 
-def eq_pot_temp_lin_ro_lata0(
+def eq_pot_temp_lin_ro_lata0_small_ang(
         therm_ross,
         ross_ascent,
         ross_descent,
@@ -195,7 +195,7 @@ def pot_temp_lin_ro_eq_area(
         height=HEIGHT_TROPO,
 ):
     """Fixed-Ro equal-area small-angle potential temperature solution."""
-    pot_temp_eq = eq_pot_temp_lin_ro_lata0(
+    pot_temp_eq = eq_pot_temp_lin_ro_lata0_small_ang(
         therm_ross=therm_ross,
         ross_ascent=ross_ascent,
         ross_descent=ross_descent,
@@ -207,7 +207,7 @@ def pot_temp_lin_ro_eq_area(
         ross_ascent=ross_ascent,
         ross_descent=ross_descent,
     )
-    return pot_temp_lin_ro_lata0(
+    return pot_temp_lin_ro_lata0_small_ang(
         lat=lat,
         lat_descent=lat_descent,
         ross_ascent=ross_ascent,
