@@ -29,6 +29,7 @@ dependencies = [
   "scipy",
   "scikit-learn",
   "statsmodels",
+  "windspharm",
   "xarray",
 ]
 
