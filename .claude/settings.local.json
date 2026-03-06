@@ -4,6 +4,8 @@
       "Bash(grep:*)",
       "WebSearch",
       "Grep",
+      "Glob",
+      "Read",
       "Bash(pytest:*)",
       "Bash(git add:*)"
     ]
