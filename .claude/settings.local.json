@@ -1,8 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)",
-      "Bash(git:*)"
+      "Bash(grep:*)",
+      "WebSearch",
+      "Grep",
+      "Bash(pytest:*)",
+      "Bash(git add:*)"
     ]
   }
 }
