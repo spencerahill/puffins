@@ -13,12 +13,7 @@ Install the package in editable mode:
 pip install -e .
 ```
 
-Build the package:
-```bash
-python setup.py build
-```
-
-Run tests (when test suite exists):
+Run tests:
 ```bash
 pytest
 ```
@@ -34,12 +29,16 @@ The package is structured into several functional groups:
 - `calculus.py`: Numerical differentiation and integration operations
 - `interp.py`: Interpolation utilities
 - `num_solver.py`: Numerical solvers
+- `dates.py`: Date utilities
+- `longitude.py`: Longitude utilities and `Longitude` class
+- `bootstrap.py`: Bootstrap statistical methods
 
 ### Physical Calculations
 - `dynamics.py`: Fundamental dynamical quantities (Coriolis parameter, absolute angular momentum, vorticity, Rossby number)
 - `thermodynamics.py`: Thermodynamic calculations
 - `tropopause.py`: Tropopause diagnostics
 - `vert_coords.py`: Vertical coordinate transformations
+- `lcl.py`: Lifted condensation level calculations
 
 ### Climate Dynamics
 - `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent)
@@ -47,6 +46,7 @@ The package is structured into several functional groups:
 - `eq_area.py`: Equal-area coordinate transformations
 - `eofs.py`: Empirical Orthogonal Function analysis
 - `stats.py`: Statistical analysis tools
+- `budget_adj.py`: Column budget adjustment via spherical harmonic wind inversion
 
 ### Theoretical Models
 - `held_hou_1980.py`: Held-Hou 1980 model implementation
