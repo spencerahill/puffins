@@ -92,7 +92,7 @@ Use builtin methods and functions whenever possible:
 3. Last resort: custom implementations only when no existing solution exists
 
 ### Git Practices
-Always follow git best practices: clear commit messages, logical commits, and clean history.
+Always create a feature branch before starting work. Never commit directly to master. Branch naming: `<topic>` (e.g., `add-lcl-tests`, `fix-streamfunc-sign`). Clear commit messages, logical commits, and clean history.
 
 ### Type Hints
 All new code must include type hints for function parameters and return values.
