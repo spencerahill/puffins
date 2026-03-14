@@ -172,8 +172,9 @@ def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
 
 
 # Surface area of lat-lon data.
-def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR,
-                 spacing_tol: float = 0.01):
+def infer_bounds(arr: xr.DataArray, dim: str, dim_bounds: str | None = None,
+                 bounds_str: str = BOUNDS_STR,
+                 spacing_tol: float = 0.01) -> xr.DataArray:
     """Infer bounding values from evenly spaced coordinate centers.
 
     Parameters
