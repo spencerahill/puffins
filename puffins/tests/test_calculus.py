@@ -72,3 +72,22 @@ class TestInferBounds:
         # First lower bound should be -91, last upper bound should be 91
         np.testing.assert_allclose(result.values[0, 0], -91.0)
         np.testing.assert_allclose(result.values[-1, 1], 91.0)
+
+    def test_wrong_arr_type_raises(self) -> None:
+        """Passing a non-DataArray for arr should raise."""
+        with pytest.raises(AttributeError):
+            infer_bounds(np.array([1.0, 2.0, 3.0]), "x")
+
+    def test_wrong_dim_type_raises(self) -> None:
+        """Passing a non-string for dim should raise."""
+        vals = np.array([0.0, 1.0, 2.0])
+        arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
+        with pytest.raises(TypeError):
+            infer_bounds(arr, 123)
+
+    def test_wrong_spacing_tol_type_raises(self) -> None:
+        """Passing a non-numeric spacing_tol should raise."""
+        vals = np.array([0.0, 1.0, 2.0])
+        arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
+        with pytest.raises(TypeError):
+            infer_bounds(arr, "x", spacing_tol="strict")
