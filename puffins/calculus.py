@@ -238,14 +238,14 @@ def _bounds_from_array(arr, dim, bounds_dim=BOUNDS_STR):
     are simply halfway between each pair of center values.
 
     """
-    # TODO: don't assume needed dimension is in axis=0
-    spacing = arr.diff(dim).values
-    lower = xr.DataArray(np.empty_like(arr), dims=arr.dims, coords=arr.coords)
-    lower.values[:-1] = arr.values[:-1] - 0.5*spacing
-    lower.values[-1] = arr.values[-1] - 0.5*spacing[-1]
-    upper = xr.DataArray(np.empty_like(arr), dims=arr.dims, coords=arr.coords)
-    upper.values[:-1] = arr.values[:-1] + 0.5*spacing
-    upper.values[-1] = arr.values[-1] + 0.5*spacing[-1]
+    spacing = arr.diff(dim)
+    last_spacing = spacing.isel({dim: -1})
+    spacing_padded = xr.concat(
+        [spacing, last_spacing.expand_dims(dim)], dim=dim
+    )
+    spacing_padded[dim] = arr[dim]
+    lower = arr - 0.5 * spacing_padded
+    upper = arr + 0.5 * spacing_padded
     bounds = xr.concat([lower, upper], dim=bounds_dim)
     return bounds.T
 
