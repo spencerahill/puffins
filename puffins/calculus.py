@@ -172,10 +172,41 @@ def merid_avg_sinlat_data(arr, min_lat=-90, max_lat=90, sinlat=None,
 
 
 # Surface area of lat-lon data.
-# TODO: add check that spacing is (nearly) uniform.
-def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR):
-    """Requires that array be evenly spaced (up to an error threshold)."""
+def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR,
+                 spacing_tol: float = 0.01):
+    """Infer bounding values from evenly spaced coordinate centers.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Coordinate array whose bounds are to be inferred.
+    dim : str
+        Name of the dimension along which to infer bounds.
+    dim_bounds : str or None
+        Name to assign to the resulting bounds DataArray.
+    bounds_str : str
+        Name of the bounds dimension.
+    spacing_tol : float
+        Maximum allowed fractional deviation from uniform spacing.
+
+    Raises
+    ------
+    ValueError
+        If the spacing along ``dim`` is not nearly uniform.
+
+    """
     arr_vals = arr.values
+    spacing = np.diff(arr_vals)
+    spacing_mean = spacing.mean()
+    if spacing_mean == 0:
+        raise ValueError("Array values are all identical; cannot infer bounds.")
+    max_frac_dev = float(np.max(np.abs((spacing - spacing_mean) / spacing_mean)))
+    if max_frac_dev > spacing_tol:
+        raise ValueError(
+            f"Uniform spacing required along '{dim}' to within {spacing_tol}. "
+            f"Actual max fractional deviation from uniform: {max_frac_dev}"
+        )
+
     midpoint_vals = 0.5*(arr_vals[:-1] + arr_vals[1:])
 
     bound_left = arr_vals[0] - (midpoint_vals[0] - arr_vals[0])
