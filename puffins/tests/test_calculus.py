@@ -36,8 +36,7 @@ class TestBoundsFromArray:
         used raw numpy [:-1]/[-1] indexing which assumes axis=0.
         """
         # Create a 2D array where the target dim 'x' is axis=1
-        data = np.array([[10.0, 20.0, 30.0],
-                         [40.0, 50.0, 60.0]])
+        data = np.array([[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])
         arr = xr.DataArray(
             data,
             dims=["y", "x"],
@@ -47,18 +46,18 @@ class TestBoundsFromArray:
         lower = bounds.isel(bounds=0)
         upper = bounds.isel(bounds=1)
         # .T transposes, so result dims are (x, y) with shape (3, 2)
-        np.testing.assert_allclose(lower.values, [[5.0, 35.0],
-                                                   [15.0, 45.0],
-                                                   [25.0, 55.0]])
-        np.testing.assert_allclose(upper.values, [[15.0, 45.0],
-                                                   [25.0, 55.0],
-                                                   [35.0, 65.0]])
+        np.testing.assert_allclose(
+            lower.values,
+            [[5.0, 35.0], [15.0, 45.0], [25.0, 55.0]],
+        )
+        np.testing.assert_allclose(
+            upper.values,
+            [[15.0, 45.0], [25.0, 55.0], [35.0, 65.0]],
+        )
 
     def test_2d_dim_is_axis0(self):
         """When target dim is axis 0, should also work."""
-        data = np.array([[10.0, 40.0],
-                         [20.0, 50.0],
-                         [30.0, 60.0]])
+        data = np.array([[10.0, 40.0], [20.0, 50.0], [30.0, 60.0]])
         arr = xr.DataArray(
             data,
             dims=["x", "y"],
@@ -68,7 +67,11 @@ class TestBoundsFromArray:
         lower = bounds.isel(bounds=0)
         upper = bounds.isel(bounds=1)
         # .T transposes, so result dims are (y, x) with shape (2, 3)
-        np.testing.assert_allclose(lower.values, [[5.0, 15.0, 25.0],
-                                                   [35.0, 45.0, 55.0]])
-        np.testing.assert_allclose(upper.values, [[15.0, 25.0, 35.0],
-                                                   [45.0, 55.0, 65.0]])
+        np.testing.assert_allclose(
+            lower.values,
+            [[5.0, 15.0, 25.0], [35.0, 45.0, 55.0]],
+        )
+        np.testing.assert_allclose(
+            upper.values,
+            [[15.0, 25.0, 35.0], [45.0, 55.0, 65.0]],
+        )
