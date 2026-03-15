@@ -1,4 +1,5 @@
 """Tests for kuo_el module."""
+
 import numpy as np
 import pytest
 import xarray as xr
