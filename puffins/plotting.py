@@ -1,29 +1,28 @@
 #! /usr/bin/env python
 """Helper functions for creating plots."""
 
-from collections import namedtuple
 import os.path
-
-from faceted import faceted as fac_faceted
-from faceted import faceted_ax as fac_ax
-from matplotlib import pyplot as plt
-from matplotlib import colors, gridspec, ticker
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
+from collections import namedtuple
 
 import numpy as np
 import xarray as xr
+from faceted import faceted as fac_faceted
+from faceted import faceted_ax as fac_ax
+from matplotlib import colors, gridspec, ticker
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from .names import LAT_STR
 from .nb_utils import sindeg
 from .stats import detrend, dt_std_anom, lin_regress, trend
 
-_DEGR = r'$^\circ$'
-_DEGR_S = _DEGR + 'S'
-_DEGR_N = _DEGR + 'N'
+_DEGR = r"$^\circ$"
+_DEGR_S = _DEGR + "S"
+_DEGR_N = _DEGR + "N"
 GRAY = "0.4"
 
-PlotArr = namedtuple('PlotArr', ['func', 'label', 'plot_kwargs'])
+PlotArr = namedtuple("PlotArr", ["func", "label", "plot_kwargs"])
 
 plt_rc_params_custom = {
     "axes.edgecolor": GRAY,  # Make axis spines gray.
@@ -32,10 +31,13 @@ plt_rc_params_custom = {
     "axes.spines.right": False,  # Turn off right spine in plots.
     "figure.dpi": 100,  # Make inline figures larger in Jupyter notebooks.
     "font.family": "sans-serif",
-    "font.sans-serif": ["Helvetica", "DejaVu Sans"],  # Use Helvetica font if it's available.
+    "font.sans-serif": [
+        "Helvetica",
+        "DejaVu Sans",
+    ],  # Use Helvetica font if it's available.
     "legend.frameon": False,  # Turn off box around legend.
-    "legend.handlelength": 1.,  # Make legend symbols smaller.
-    "legend.labelcolor": "linecolor",  # Make legend text color match that element 
+    "legend.handlelength": 1.0,  # Make legend symbols smaller.
+    "legend.labelcolor": "linecolor",  # Make legend text color match that element
     "mathtext.fontset": "cm",  # Use serifed font in equations.
     "pdf.fonttype": 42,  # Bug workaround: https://stackoverflow.com/a/60384073
     "text.color": GRAY,  # Make text gray.
@@ -54,18 +56,19 @@ def _gca_if_ax_none(ax):
 def _left_bottom_spines_only(ax=None, displace=False):
     """Don't plot top or right border."""
     ax = _gca_if_ax_none(ax)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
     if displace:
-        ax.spines['left'].set_position(('outward', 20))
-        ax.spines['bottom'].set_position(('outward', 20))
-    ax.xaxis.set_ticks_position('bottom')
-    ax.yaxis.set_ticks_position('left')
+        ax.spines["left"].set_position(("outward", 20))
+        ax.spines["bottom"].set_position(("outward", 20))
+    ax.xaxis.set_ticks_position("bottom")
+    ax.yaxis.set_ticks_position("left")
 
 
 # Format axes for plots that are functions of latitude.
-def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
-                 degr_symbol=False):
+def sinlat_xaxis(
+    ax=None, start_lat=-90, end_lat=90, do_ticklabels=False, degr_symbol=False
+):
     """Make the x-axis be in sin of latitude."""
     ax = _gca_if_ax_none(ax)
     ax.set_xlim([sindeg(start_lat), sindeg(end_lat)])
@@ -74,19 +77,26 @@ def sinlat_xaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
         ax.set_xticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
         if do_ticklabels:
             if degr_symbol:
-                ax.set_xticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
-                                    r'90$^\circ$'])
+                ax.set_xticklabels(["EQ", r"30$^\circ$" r"60$^\circ$", r"90$^\circ$"])
             else:
-                ax.set_xticklabels(['EQ', r'30N' r'60N', r'90N'])
+                ax.set_xticklabels(["EQ", r"30N" r"60N", r"90N"])
     elif start_lat == -90 and end_lat == 90:
         ax.set_xticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
-        minorticks = [-80, -70, -50, -40, -20, -10,
-                      10, 20, 40, 50, 70, 80]
+        minorticks = [-80, -70, -50, -40, -20, -10, 10, 20, 40, 50, 70, 80]
         ax.set_xticks(sindeg(minorticks), minor=True)
         if do_ticklabels:
             if degr_symbol:
-                ax.set_xticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
-                                    '30' + _DEGR_N, " ", '90' + _DEGR_N])
+                ax.set_xticklabels(
+                    [
+                        "90" + _DEGR_S,
+                        " ",
+                        "30" + _DEGR_S,
+                        "EQ",
+                        "30" + _DEGR_N,
+                        " ",
+                        "90" + _DEGR_N,
+                    ]
+                )
             else:
                 ax.set_xticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
@@ -100,24 +110,37 @@ def lat_xaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         ticks = [0, 30, 60, 90]
         minor_ticks = [10, 20, 40, 50, 70, 80]
         if degr_symbol:
-            ticklabels = ['EQ', '30' + _DEGR, '60' + _DEGR, '90' + _DEGR]
+            ticklabels = ["EQ", "30" + _DEGR, "60" + _DEGR, "90" + _DEGR]
         else:
-            ticklabels = ['EQ', '30N', '60N', '90N']
+            ticklabels = ["EQ", "30N", "60N", "90N"]
     elif start_lat == -90 and end_lat == 90:
         ticks = [-90, -60, -30, 0, 30, 60, 90]
-        minor_ticks = [-80, -70, -50, -40, -20, -10,
-                       10, 20, 40, 50, 70, 80]
+        minor_ticks = [-80, -70, -50, -40, -20, -10, 10, 20, 40, 50, 70, 80]
         if degr_symbol:
-            ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
-                          "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
+            ticklabels = [
+                f"90{_DEGR_S}",
+                f"60{_DEGR_S}",
+                f"30{_DEGR_S}",
+                "EQ",
+                f"30{_DEGR_N}",
+                f"60{_DEGR_N}",
+                f"90{_DEGR_N}",
+            ]
         else:
             ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
     elif start_lat == -30 and end_lat == 30:
         ticks = [-30, -20, -10, 0, 10, 20, 30]
         minor_ticks = [-25, -15, -5, 5, 15, 25]
         if degr_symbol:
-            ticklabels = [f"30{_DEGR_S}", f"20{_DEGR_S}", f"10{_DEGR_S}",
-                          "EQ", f"10{_DEGR_N}", f"20{_DEGR_N}", f"30{_DEGR_N}"]
+            ticklabels = [
+                f"30{_DEGR_S}",
+                f"20{_DEGR_S}",
+                f"10{_DEGR_S}",
+                "EQ",
+                f"10{_DEGR_N}",
+                f"20{_DEGR_N}",
+                f"30{_DEGR_N}",
+            ]
         else:
             ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
 
@@ -125,16 +148,28 @@ def lat_xaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         ticks = [-45, -30, -15, 0, 15, 30, 45]
         minor_ticks = [-40, -35, -25, -20, -10, -5, 5, 10, 20, 25, 35, 40]
         if degr_symbol:
-            ticklabels = [f"45{_DEGR_S}", f"30{_DEGR_S}", f"15{_DEGR_S}",
-                          "EQ", f"15{_DEGR_N}", f"30{_DEGR_N}", f"45{_DEGR_N}"]
+            ticklabels = [
+                f"45{_DEGR_S}",
+                f"30{_DEGR_S}",
+                f"15{_DEGR_S}",
+                "EQ",
+                f"15{_DEGR_N}",
+                f"30{_DEGR_N}",
+                f"45{_DEGR_N}",
+            ]
         else:
             ticklabels = ["45S", "30S", "15S", "EQ", "15N", "30N", "45N"]
     elif start_lat == -60 and end_lat == 60:
         ticks = [-60, -30, 0, 30, 60]
         minor_ticks = [-50, -40, -20, -10, 10, 20, 40, 50]
         if degr_symbol:
-            ticklabels = [f"60{_DEGR_S}", f"30{_DEGR_S}", "EQ",
-                          f"30{_DEGR_N}", f"60{_DEGR_N}"]
+            ticklabels = [
+                f"60{_DEGR_S}",
+                f"30{_DEGR_S}",
+                "EQ",
+                f"30{_DEGR_N}",
+                f"60{_DEGR_N}",
+            ]
         else:
             ticklabels = ["60S", "30S", "EQ", "30N", "60N"]
     else:
@@ -158,24 +193,37 @@ def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         ticks = [0, 30, 60, 90]
         minor_ticks = [10, 20, 40, 50, 70, 80]
         if degr_symbol:
-            ticklabels = ['EQ', '30' + _DEGR, '60' + _DEGR, '90' + _DEGR]
+            ticklabels = ["EQ", "30" + _DEGR, "60" + _DEGR, "90" + _DEGR]
         else:
-            ticklabels = ['EQ', '30N', '60N', '90N']
+            ticklabels = ["EQ", "30N", "60N", "90N"]
     elif start_lat == -90 and end_lat == 90:
         ticks = [-90, -60, -30, 0, 30, 60, 90]
-        minor_ticks = [-80, -70, -50, -40, -20, -10,
-                       10, 20, 40, 50, 70, 80]
+        minor_ticks = [-80, -70, -50, -40, -20, -10, 10, 20, 40, 50, 70, 80]
         if degr_symbol:
-            ticklabels = [f"90{_DEGR_S}", f"60{_DEGR_S}", f"30{_DEGR_S}",
-                          "EQ", f"30{_DEGR_N}", f"60{_DEGR_N}", f"90{_DEGR_N}"]
+            ticklabels = [
+                f"90{_DEGR_S}",
+                f"60{_DEGR_S}",
+                f"30{_DEGR_S}",
+                "EQ",
+                f"30{_DEGR_N}",
+                f"60{_DEGR_N}",
+                f"90{_DEGR_N}",
+            ]
         else:
             ticklabels = ["90S", "60S", "30S", "EQ", "30N", "60N", "90N"]
     elif start_lat == -30 and end_lat == 30:
         ticks = [-30, -20, -10, 0, 10, 20, 30]
         minor_ticks = [-25, -15, -5, 5, 15, 25]
         if degr_symbol:
-            ticklabels = [f"30{_DEGR_S}", f"20{_DEGR_S}", f"10{_DEGR_S}",
-                          "EQ", f"10{_DEGR_N}", f"20{_DEGR_N}", f"30{_DEGR_N}"]
+            ticklabels = [
+                f"30{_DEGR_S}",
+                f"20{_DEGR_S}",
+                f"10{_DEGR_S}",
+                "EQ",
+                f"10{_DEGR_N}",
+                f"20{_DEGR_N}",
+                f"30{_DEGR_N}",
+            ]
         else:
             ticklabels = ["30S", "20S", "10S", "EQ", "10N", "20N", "30N"]
 
@@ -183,16 +231,28 @@ def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
         ticks = [-45, -30, -15, 0, 15, 30, 45]
         minor_ticks = [-40, -35, -25, -20, -10, -5, 5, 10, 20, 25, 35, 40]
         if degr_symbol:
-            ticklabels = [f"45{_DEGR_S}", f"30{_DEGR_S}", f"15{_DEGR_S}",
-                          "EQ", f"15{_DEGR_N}", f"30{_DEGR_N}", f"45{_DEGR_N}"]
+            ticklabels = [
+                f"45{_DEGR_S}",
+                f"30{_DEGR_S}",
+                f"15{_DEGR_S}",
+                "EQ",
+                f"15{_DEGR_N}",
+                f"30{_DEGR_N}",
+                f"45{_DEGR_N}",
+            ]
         else:
             ticklabels = ["45S", "30S", "15S", "EQ", "15N", "30N", "45N"]
     elif start_lat == -60 and end_lat == 60:
         ticks = [-60, -30, 0, 30, 60]
         minor_ticks = [-50, -40, -20, -10, 10, 20, 40, 50]
         if degr_symbol:
-            ticklabels = [f"60{_DEGR_S}", f"30{_DEGR_S}", "EQ",
-                          f"30{_DEGR_N}", f"60{_DEGR_N}"]
+            ticklabels = [
+                f"60{_DEGR_S}",
+                f"30{_DEGR_S}",
+                "EQ",
+                f"30{_DEGR_N}",
+                f"60{_DEGR_N}",
+            ]
         else:
             ticklabels = ["60S", "30S", "EQ", "30N", "60N"]
     else:
@@ -207,8 +267,9 @@ def lat_yaxis(ax=None, start_lat=-90, end_lat=90, degr_symbol=False, **kwargs):
     ax.set_ylabel("")
 
 
-def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
-                 degr_symbol=False):
+def sinlat_yaxis(
+    ax=None, start_lat=-90, end_lat=90, do_ticklabels=False, degr_symbol=False
+):
     """Make the x-axis be in sin of latitude."""
     ax = _gca_if_ax_none(ax)
     ax.set_ylim([sindeg(start_lat), sindeg(end_lat)])
@@ -217,29 +278,43 @@ def sinlat_yaxis(ax=None, start_lat=-90, end_lat=90, do_ticklabels=False,
         ax.set_yticks(sindeg([10, 20, 40, 50, 70, 80]), minor=True)
         if do_ticklabels:
             if degr_symbol:
-                ax.set_yticklabels(['EQ', r'30$^\circ$' r'60$^\circ$',
-                                    r'90$^\circ$'])
+                ax.set_yticklabels(["EQ", r"30$^\circ$" r"60$^\circ$", r"90$^\circ$"])
             else:
-                ax.set_yticklabels(['EQ', r'30N' r'60N', r'90N'])
+                ax.set_yticklabels(["EQ", r"30N" r"60N", r"90N"])
     elif start_lat == -90 and end_lat == 90:
         ax.set_yticks(sindeg([-90, -60, -30, 0, 30, 60, 90]))
-        minorticks = [-80, -70, -50, -40, -20, -10,
-                      10, 20, 40, 50, 70, 80]
+        minorticks = [-80, -70, -50, -40, -20, -10, 10, 20, 40, 50, 70, 80]
         ax.set_yticks(sindeg(minorticks), minor=True)
         if do_ticklabels:
             if degr_symbol:
-                ax.set_yticklabels(['90' + _DEGR_S, " ", '30' + _DEGR_S, 'EQ',
-                                    '30' + _DEGR_N, " ", '90' + _DEGR_N])
+                ax.set_yticklabels(
+                    [
+                        "90" + _DEGR_S,
+                        " ",
+                        "30" + _DEGR_S,
+                        "EQ",
+                        "30" + _DEGR_N,
+                        " ",
+                        "90" + _DEGR_N,
+                    ]
+                )
             else:
                 ax.set_yticklabels(["90S", "", "30S", "EQ", "30N", "", "90N"])
 
 
-def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
-                ax=None, lat_str=LAT_STR, ax_labels=False, **plot_kwargs):
+def plot_lat_1d(
+    arr,
+    start_lat=-90,
+    end_lat=90,
+    sinlat=False,
+    ax=None,
+    lat_str=LAT_STR,
+    ax_labels=False,
+    **plot_kwargs,
+):
     """Plot of the given array as a function of latitude."""
     ax = _gca_if_ax_none(ax)
-    arr_plot = arr.where((arr[lat_str] > start_lat) &
-                         (arr[lat_str] < end_lat))
+    arr_plot = arr.where((arr[lat_str] > start_lat) & (arr[lat_str] < end_lat))
     if sinlat:
         lat = sindeg(arr_plot[lat_str])
         sinlat_xaxis(ax, start_lat=start_lat, end_lat=end_lat)
@@ -252,7 +327,7 @@ def plot_lat_1d(arr, start_lat=-90, end_lat=90, sinlat=False,
     _left_bottom_spines_only(ax, displace=False)
 
     if ax_labels:
-        ax.set_xlabel(r'Latitude [$^\circ$]')
+        ax.set_xlabel(r"Latitude [$^\circ$]")
         if arr.name:
             ax.set_ylabel(arr.name)
 
@@ -329,8 +404,9 @@ def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
 
 
 # Panel labeling.
-def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.99,
-                **text_kwargs):
+def panel_label(
+    panel_num=None, ax=None, extra_text=None, x=0.01, y=0.99, **text_kwargs
+):
     ax = _gca_if_ax_none(ax)
 
     if "va" in text_kwargs:
@@ -343,13 +419,12 @@ def panel_label(panel_num=None, ax=None, extra_text=None, x=0.01, y=0.99,
 
     if panel_num is None:
         for n, ax_ in enumerate(ax):
-            panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text,
-                        **text_kwargs)
+            panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text, **text_kwargs)
         return
-    letters = 'abcdefghijklmnopqrstuvwxyz'
-    label = '({})'.format(letters[panel_num])
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    label = f"({letters[panel_num]})"
     if extra_text is not None:
-        label += ' {}'.format(extra_text)
+        label += f" {extra_text}"
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 
@@ -366,13 +441,15 @@ def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
         except AttributeError:
             n_colors = 100
     new_cmap = colors.LinearSegmentedColormap.from_list(
-        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
-        cmap(np.linspace(minval, maxval, n_colors)))
+        f"trunc({cmap.name},{minval:.2f},{maxval:.2f})",
+        cmap(np.linspace(minval, maxval, n_colors)),
+    )
     return new_cmap
 
 
-def trunc_cmap_about_center(cmap, min_val=None, max_val=None, central_val=0,
-                            arr=None, n_colors=None):
+def trunc_cmap_about_center(
+    cmap, min_val=None, max_val=None, central_val=0, arr=None, n_colors=None
+):
     """Diverging colormap centered at specified value w/ asymmetric extent.
 
     I.e. stops at the specified minimum and maximum values while retaining
@@ -386,38 +463,39 @@ def trunc_cmap_about_center(cmap, min_val=None, max_val=None, central_val=0,
     min_central_diff = central_val - min_val
     max_central_diff = max_val - central_val
     if min_central_diff > max_central_diff:
-        cmap_min = 0.
+        cmap_min = 0.0
         cmap_max = 0.5 * (max_val - min_val) / min_central_diff
     else:
-        cmap_min = 1. - 0.5 * (max_val - min_val) / max_central_diff
-        cmap_max = 1.
-    return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max,
-                         n_colors=n_colors)
+        cmap_min = 1.0 - 0.5 * (max_val - min_val) / max_central_diff
+        cmap_max = 1.0
+    return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max, n_colors=n_colors)
 
 
 # Plot horizontal, vertical, diagonal lines.
-def mark_x0(ax=None, linewidth=0.5, color='0.5', x0=0, **kwargs):
+def mark_x0(ax=None, linewidth=0.5, color="0.5", x0=0, **kwargs):
     """Mark the x intercept line on the given axis."""
     ax = _gca_if_ax_none(ax)
     return ax.axvline(x=x0, linewidth=linewidth, color=color, **kwargs)
 
 
-def mark_y0(ax=None, linewidth=0.5, color='0.5', y0=0, **kwargs):
+def mark_y0(ax=None, linewidth=0.5, color="0.5", y0=0, **kwargs):
     """Mark the y intercept on the given axis."""
     ax = _gca_if_ax_none(ax)
     return ax.axhline(y=y0, linewidth=linewidth, color=color, **kwargs)
 
 
-def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
-                 linewidth=0.8, **line_kwargs):
+def mark_one2one(
+    ax=None, *line_args, linestyle=":", color="0.7", linewidth=0.8, **line_kwargs
+):
     """Mark the identity line, y=x, on the given axis.
 
     From https://stackoverflow.com/a/28216751/1706640.
 
     """
     ax = _gca_if_ax_none(ax)
-    identity, = ax.plot([], [], *line_args, linestyle=linestyle,
-                        color=color, **line_kwargs)
+    (identity,) = ax.plot(
+        [], [], *line_args, linestyle=linestyle, color=color, **line_kwargs
+    )
 
     def callback(axes):
         low_x, high_x = axes.get_xlim()
@@ -427,18 +505,18 @@ def mark_one2one(ax=None, *line_args, linestyle=':', color='0.7',
         identity.set_data([low, high], [low, high])
 
     callback(ax)
-    ax.callbacks.connect('xlim_changed', callback)
-    ax.callbacks.connect('ylim_changed', callback)
+    ax.callbacks.connect("xlim_changed", callback)
+    ax.callbacks.connect("ylim_changed", callback)
     return ax
 
 
 # Timeseries plots.
-def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
-                   **faceted_kwargs):
+def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None, **faceted_kwargs):
     """Compare statistics of two 1-D arrays via various plots."""
     if fig is None and axarr is None:
-        fig, axarr = faceted(3, 2, width=8, sharex=False, sharey=False,
-                             **faceted_kwargs)
+        fig, axarr = faceted(
+            3, 2, width=8, sharex=False, sharey=False, **faceted_kwargs
+        )
 
     def identity(x, *args, **kwargs):
         return x
@@ -464,10 +542,8 @@ def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
             mean2_plot = xr.ones_like(arr2) * arr2.mean(dim)
             mean1_plot.plot(ax=axarr[0], linestyle=":", color=color_arr1)
             mean2_plot.plot(ax=axarr[0], linestyle=":", color=color_arr2)
-            trend(arr1, dim=dim).plot(ax=axarr[0], linestyle="--",
-                                      color=color_arr1)
-            trend(arr2, dim=dim).plot(ax=axarr[0], linestyle="--",
-                                      color=color_arr2)
+            trend(arr1, dim=dim).plot(ax=axarr[0], linestyle="--", color=color_arr1)
+            trend(arr2, dim=dim).plot(ax=axarr[0], linestyle="--", color=color_arr2)
 
     # Row 2: histograms
     for n, (ax, func, label) in enumerate(zip(axarr[2:4], funcs, labels)):
@@ -477,8 +553,13 @@ def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
         arr_plot2.plot.hist(ax=ax, color=color_arr2, alpha=0.5)
         stdev1 = float(arr_plot1.std(dim))
         stdev2 = float(arr_plot2.std(dim))
-        extra_text = (f"{label}, " + r"$\sigma_1$=" +
-                      f"{stdev1:.2f}, " + r"$\sigma_2$=" + f"{stdev2:.2f}")
+        extra_text = (
+            f"{label}, "
+            + r"$\sigma_1$="
+            + f"{stdev1:.2f}, "
+            + r"$\sigma_2$="
+            + f"{stdev2:.2f}"
+        )
         panel_label(n + 2, ax=ax, extra_text=extra_text)
 
     # Row 3: scatterplots and linear regression
@@ -490,14 +571,16 @@ def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
 
         # Overlay ordinary least squares regression.
         regress = lin_regress(arr_plot1, arr_plot2, dim)
-        rsquare = float(regress.sel(parameter="r_value")**2)
+        rsquare = float(regress.sel(parameter="r_value") ** 2)
         slope = float(regress.sel(parameter="slope"))
         intercept = float(regress.sel(parameter="intercept"))
         ax.scatter(*xr.align(arr_plot1, arr_plot2), s=8)
-        ax.axline((min(arr_plot1), min(arr_plot1) * slope + intercept),
-                  slope=slope, color="0.5")
-        extra_text = (f"{label}, slope={slope:.2f}, " + r"r$^2$=" +
-                      f"{rsquare:.2f}")
+        ax.axline(
+            (min(arr_plot1), min(arr_plot1) * slope + intercept),
+            slope=slope,
+            color="0.5",
+        )
+        extra_text = f"{label}, slope={slope:.2f}, " + r"r$^2$=" + f"{rsquare:.2f}"
         panel_label(n + 4, ax=ax, extra_text=extra_text)
 
     [ax.set(title="", xlabel="", ylabel="") for ax in axarr]
@@ -505,9 +588,19 @@ def plot_ts_compar(arr1, arr2, dim="year", fig=None, axarr=None,
 
 
 # Heatmaps.
-def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
-            cbarlabel="", top_ticks=False, annotate=True, annotate_kw={},
-            **kwargs):
+def heatmap(
+    data,
+    row_labels,
+    col_labels,
+    ax=None,
+    do_cbar=False,
+    cbar_kw=None,
+    cbarlabel="",
+    top_ticks=False,
+    annotate=True,
+    annotate_kw=None,
+    **kwargs,
+):
     """
     Create a heatmap from a numpy array and two lists of labels.
 
@@ -532,6 +625,10 @@ def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
         All other arguments are forwarded to `imshow`.
 
     """
+    if cbar_kw is None:
+        cbar_kw = {}
+    if annotate_kw is None:
+        annotate_kw = {}
     ax = _gca_if_ax_none(ax)
 
     # Plot the heatmap
@@ -551,24 +648,20 @@ def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
     ax.set_xticklabels(col_labels)
     ax.set_yticklabels(row_labels)
 
-
     if top_ticks:
         # Let the horizontal axes labeling appear on top.
-        ax.tick_params(top=True, bottom=False,
-                       labeltop=True, labelbottom=False)
-        plt.setp(ax.get_xticklabels(), rotation=-30, ha="right",
-                 rotation_mode="anchor")
+        ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
+        plt.setp(ax.get_xticklabels(), rotation=-30, ha="right", rotation_mode="anchor")
     else:
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-                 rotation_mode="anchor")
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     # Turn spines off and create white grid.
-    for edge, spine in ax.spines.items():
+    for _edge, spine in ax.spines.items():
         spine.set_visible(False)
 
-    ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
-    ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
-    ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
+    ax.set_xticks(np.arange(data.shape[1] + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(data.shape[0] + 1) - 0.5, minor=True)
+    ax.grid(which="minor", color="w", linestyle="-", linewidth=3)
     ax.tick_params(which="minor", bottom=False, left=False)
 
     if annotate:
@@ -578,11 +671,18 @@ def heatmap(data, row_labels, col_labels, ax=None, do_cbar=False, cbar_kw={},
 
 
 def _corrs_txt_format(x, pos):
-    return "{:.2f}".format(x).replace("0.", ".").replace("1.00", "")
+    return f"{x:.2f}".replace("0.", ".").replace("1.00", "")
 
 
-def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
-                     threshold=None, include_diag=False, **textkw):
+def annotate_heatmap(
+    im,
+    data=None,
+    valfmt=None,
+    textcolors=("black", "white"),
+    threshold=None,
+    include_diag=False,
+    **textkw,
+):
     """
     A function to annotate a heatmap.
 
@@ -617,7 +717,7 @@ def annotate_heatmap(im, data=None, valfmt=None, textcolors=("black", "white"),
     if threshold is not None:
         threshold = im.norm(threshold)
     else:
-        threshold = im.norm(data.max())/2.
+        threshold = im.norm(data.max()) / 2.0
 
     # Set default alignment to center.
     kw = dict(horizontalalignment="center", verticalalignment="center")
@@ -661,14 +761,13 @@ def plot_seas_points(arr, ax=None, seas_ordered=None, **kwargs):
         arr.sel(season=seas_ordered),
         linestyle=linestyle,
         marker=marker,
-        **kwargs
+        **kwargs,
     )
     ax.set_xticks(xrange)
     ax.set_xticklabels(seas_ordered)
 
 
-def plot_seas_ann_points(arr_seas, arr_ann, ax=None, seas_ordered=None,
-                         **kwargs):
+def plot_seas_ann_points(arr_seas, arr_ann, ax=None, seas_ordered=None, **kwargs):
     """Plot seasonal and annual-mean values on one set of axes."""
     ax = _gca_if_ax_none(ax)
     if seas_ordered is None:
@@ -752,5 +851,5 @@ def nb_savefig(name, fig=None, fig_dir="../figs", **kwargs):
     fig.savefig(os.path.join(fig_dir, name), **kwargs)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass

@@ -1,8 +1,10 @@
 #! /usr/bin/env python
 """Functionality involving vertical coordinates."""
+
+import warnings
+
 import numpy as np
 import xarray as xr
-import warnings
 
 from .constants import GRAV_EARTH, MEAN_SLP_EARTH
 from .names import (
@@ -18,8 +20,8 @@ def to_pascal(arr, is_dp=False, warn=False):
     threshold = 400 if is_dp else 1200
     if np.max(np.abs(arr)) < threshold:
         if warn:
-            warn_msg = "Conversion applied: hPa -> Pa to array: {}".format(arr)
-            warnings.warn(warn_msg)
+            warn_msg = f"Conversion applied: hPa -> Pa to array: {arr}"
+            warnings.warn(warn_msg, stacklevel=2)
         return arr * 100.0
     return arr
 
@@ -29,11 +31,13 @@ def int_dp_g(arr, dp, dim=LEV_STR, grav=GRAV_EARTH):
     return (arr * dp).sum(dim=dim) / grav
 
 
-def int_dlogp(arr, p_top=0., p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR,
-              phalf_str=PHALF_STR):
+def int_dlogp(
+    arr, p_top=0.0, p_bot=MEAN_SLP_EARTH, pfull_str=LEV_STR, phalf_str=PHALF_STR
+):
     """Integral of array on pressure levels but weighted by log(pressure)."""
-    dlogp = dlogp_from_pfull(arr[pfull_str], p_top=p_top, p_bot=p_bot,
-                             phalf_str=phalf_str)
+    dlogp = dlogp_from_pfull(
+        arr[pfull_str], p_top=p_top, p_bot=p_bot, phalf_str=phalf_str
+    )
     return (arr * dlogp).sum(pfull_str)
 
 
@@ -54,8 +58,7 @@ def subtract_col_avg(arr, dp, dim=LEV_STR):
     return arr - col_avg(arr, dp, dim=dim)
 
 
-def phalf_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
-                     phalf_str=PHALF_STR):
+def phalf_from_pfull(pfull, p_top=0.0, p_bot=MEAN_SLP_EARTH, phalf_str=PHALF_STR):
     """Pressure at half levels given pressures at level centers."""
     if pfull[0] < pfull[1]:
         p_first = p_top
@@ -63,12 +66,12 @@ def phalf_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
     else:
         p_first = p_bot
         p_last = p_top
-    phalf_inner_vals = 0.5*(pfull.values[1:] + pfull.values[:-1])
+    phalf_inner_vals = 0.5 * (pfull.values[1:] + pfull.values[:-1])
     phalf_vals = np.concatenate([[p_first], phalf_inner_vals, [p_last]])
     return coord_arr_1d(values=phalf_vals, dim=phalf_str)
 
 
-def dp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH):
+def dp_from_pfull(pfull, p_top=0.0, p_bot=MEAN_SLP_EARTH):
     """Pressure thickness of levels given pressures at level centers."""
     phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot)
     return np.abs(xr.ones_like(pfull) * np.diff(phalf.values))
@@ -76,8 +79,10 @@ def dp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH):
 
 def dp_from_phalf(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
     """Pressure thickness of vertical levels given interface pressures."""
-    dp_vals = np.abs(phalf.isel(**{phalf_str: slice(None, -1)}).values -
-                     phalf.isel(**{phalf_str: slice(1, None)}).values)
+    dp_vals = np.abs(
+        phalf.isel(**{phalf_str: slice(None, -1)}).values
+        - phalf.isel(**{phalf_str: slice(1, None)}).values
+    )
     dims_out = []
     for dim in phalf.dims:
         if dim == "phalf":
@@ -85,9 +90,10 @@ def dp_from_phalf(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
         else:
             dims_out.append(dim)
 
-    vals_template = ([xr.ones_like(phalf[dim]) for dim in phalf.dims
-                      if dim != phalf_str] + [pfull_ref])
-    arr_template = xr.ones_like(np.product(vals_template)).transpose(*dims_out)
+    vals_template = [
+        xr.ones_like(phalf[dim]) for dim in phalf.dims if dim != phalf_str
+    ] + [pfull_ref]
+    arr_template = xr.ones_like(np.prod(vals_template)).transpose(*dims_out)
     return (arr_template * dp_vals).rename("dp").astype("float")
 
 
@@ -103,11 +109,9 @@ def dlogp_from_phalf(phalf, pressure):
     return xr.ones_like(pressure) * dlogp_vals
 
 
-def dlogp_from_pfull(pfull, p_top=0., p_bot=MEAN_SLP_EARTH,
-                     phalf_str=PHALF_STR):
+def dlogp_from_pfull(pfull, p_top=0.0, p_bot=MEAN_SLP_EARTH, phalf_str=PHALF_STR):
     """Thickness in log(p) of vertical levels given level-center pressures."""
-    phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot,
-                             phalf_str=phalf_str)
+    phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot, phalf_str=phalf_str)
     return dlogp_from_phalf(phalf, pfull)
 
 
@@ -116,13 +120,12 @@ def phalf_from_psfc(bk, pk, p_sfc):
     return p_sfc * bk + pk
 
 
-def pfull_from_phalf_avg(phalf, pfull_ref, phalf_str=PHALF_STR,
-                         pfull_str=PFULL_STR):
+def pfull_from_phalf_avg(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
     """Compute pressure of half levels of hybrid sigma-pressure coordinates."""
-    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str,
-                       pfull_str=pfull_str)
-    return (phalf.isel(**{phalf_str: slice(None, -1)}).values +
-            0.5 * dp).rename(pfull_str)
+    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
+    return (phalf.isel(**{phalf_str: slice(None, -1)}).values + 0.5 * dp).rename(
+        pfull_str
+    )
 
 
 def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
@@ -141,7 +144,7 @@ def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
     dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
     phalf_over_dp_vals = phalf_above.values / dp_vals
 
-    alpha_vals = 1. - phalf_over_dp_vals*dlog_phalf_vals
+    alpha_vals = 1.0 - phalf_over_dp_vals * dlog_phalf_vals
 
     ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
     pfull_vals = np.exp(ln_pfull_vals)
@@ -150,8 +153,9 @@ def pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR):
     return pfull_vals
 
 
-def pfull_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR,
-                    pfull_str=PFULL_STR):
+def pfull_simm_burr(
+    phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR
+):
     """Compute pressure at full levels using Simmons-Burridge spacing.
 
     See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
@@ -173,10 +177,9 @@ def pfull_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR,
 
     dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
 
-    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str,
-                       pfull_str=pfull_str)
+    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
     phalf_over_dp_vals = phalf_above.values / dp.values
-    alpha_vals = 1. - phalf_over_dp_vals * dlog_phalf_vals
+    alpha_vals = 1.0 - phalf_over_dp_vals * dlog_phalf_vals
 
     ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
     pfull_vals = np.exp(ln_pfull_vals)
@@ -190,10 +193,8 @@ def pfull_simm_burr(phalf, phalf_ref, pfull_ref, phalf_str=PHALF_STR,
         ind_top = -1
         pfull_not_top = pfull.isel(**{pfull_str: slice(None, -1)})
 
-    top_lev_factor = float(pfull_ref[ind_top] /
-                           phalf_ref[ind_phalf_next_to_top])
-    pfull_top = top_lev_factor * phalf.isel(
-        **{phalf_str: ind_phalf_next_to_top})
+    top_lev_factor = float(pfull_ref[ind_top] / phalf_ref[ind_phalf_next_to_top])
+    pfull_top = top_lev_factor * phalf.isel(**{phalf_str: ind_phalf_next_to_top})
     pfull_top.coords["pfull"] = pfull_ref.isel(**{pfull_str: ind_top})
 
     if p_is_increasing:
@@ -214,7 +215,7 @@ def avg_p_weighted(arr, phalf, pressure, p_str=LEV_STR):
     else:
         arr_out = arr
         dp_out = dp
-    return (arr_out*dp_out).cumsum(p_str) / dp_out.cumsum(p_str)
+    return (arr_out * dp_out).cumsum(p_str) / dp_out.cumsum(p_str)
 
 
 def avg_logp_weighted(arr, phalf, pressure, p_str=LEV_STR):
