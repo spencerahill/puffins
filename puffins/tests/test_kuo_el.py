@@ -11,16 +11,12 @@ class TestCheckUniformSpacing:
 
     def test_uniform_spacing_passes(self) -> None:
         """Uniform spacing should not raise."""
-        coord = xr.DataArray(
-            np.linspace(0, 10, 11), dims=["x"]
-        )
+        coord = xr.DataArray(np.linspace(0, 10, 11), dims=["x"])
         _check_uniform_spacing(coord, "x", "test")
 
     def test_nonuniform_spacing_raises(self) -> None:
         """Non-uniform spacing should raise ValueError."""
-        coord = xr.DataArray(
-            np.array([0.0, 1.0, 2.0, 5.0, 10.0]), dims=["x"]
-        )
+        coord = xr.DataArray(np.array([0.0, 1.0, 2.0, 5.0, 10.0]), dims=["x"])
         with pytest.raises(ValueError, match="Uniform test spacing required"):
             _check_uniform_spacing(coord, "x", "test")
 
@@ -34,9 +30,7 @@ class TestCheckUniformSpacing:
 
     def test_custom_tolerance(self) -> None:
         """Custom tol should be respected."""
-        coord = xr.DataArray(
-            np.array([0.0, 1.0, 2.0, 2.5]), dims=["x"]
-        )
+        coord = xr.DataArray(np.array([0.0, 1.0, 2.0, 2.5]), dims=["x"])
         # Should raise with tight tolerance
         with pytest.raises(ValueError):
             _check_uniform_spacing(coord, "x", "test", tol=0.01)
@@ -45,8 +39,6 @@ class TestCheckUniformSpacing:
 
     def test_error_message_contains_max_deviation(self) -> None:
         """Error message should report actual max fractional deviation."""
-        coord = xr.DataArray(
-            np.array([0.0, 1.0, 2.0, 5.0]), dims=["x"]
-        )
+        coord = xr.DataArray(np.array([0.0, 1.0, 2.0, 5.0]), dims=["x"])
         with pytest.raises(ValueError, match="Actual max fractional deviation"):
             _check_uniform_spacing(coord, "x", "test")
