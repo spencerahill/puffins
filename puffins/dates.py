@@ -1,4 +1,5 @@
 """Functionality relating to calendars, times, and dates."""
+
 import numpy as np
 import xarray as xr
 
@@ -88,16 +89,15 @@ ann_subsets = {}
 
 
 def subset_ann(arr, months, dim_time=TIME_STR, drop=False):
-    """Restrict array values to a subset of each calendar year.
-
-    """
+    """Restrict array values to a subset of each calendar year."""
     if isinstance(months, str):
         if months == "ann":
             return arr
         months = ann_subsets[months.lower()]
     time = arr[dim_time]
-    return arr.where((time.dt.month >= np.min(months)) &
-                     (time.dt.month <= np.max(months)), drop=drop)
+    return arr.where(
+        (time.dt.month >= np.min(months)) & (time.dt.month <= np.max(months)), drop=drop
+    )
 
 
 def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
@@ -154,7 +154,7 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     if num_harm == len(arr):
         return arr
     arr_mean = arr.mean()
-    arr_anom = (arr - arr_mean)
+    arr_anom = arr - arr_mean
     if isinstance(arr, xr.DataArray):
         mfft = np.fft.fft(arr_anom.values)
     else:
@@ -164,7 +164,7 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
         mask[-num_harm:] = 1
     else:
         mask[-num_harm] = 1
-    vals = float(arr_mean) + 2. * np.real(np.fft.ifft(mfft * mask))
+    vals = float(arr_mean) + 2.0 * np.real(np.fft.ifft(mfft * mask))
     if normalize:
         vals /= np.abs(vals).max()
     if isinstance(arr, xr.DataArray):
@@ -179,4 +179,6 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
 
 def time_to_year_and_day(arr, dim="time"):
     """Split time index into two, one for the year, one for the day of year"""
-    return arr.groupby(f"{dim}.year").apply(lambda x: x.groupby(f"{dim}.dayofyear").first())
+    return arr.groupby(f"{dim}.year").apply(
+        lambda x: x.groupby(f"{dim}.dayofyear").first()
+    )

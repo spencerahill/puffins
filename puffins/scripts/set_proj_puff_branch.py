@@ -1,7 +1,10 @@
 #! /usr/bin/env python
 """Switch puffins to the git branch corresponding to a particular project."""
+
 import argparse
+
 from puffins.nb_utils import setup_puffins
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
@@ -15,6 +18,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     setup_puffins(args.branch_name)
+
 
 if __name__ == "__main__":
     main()

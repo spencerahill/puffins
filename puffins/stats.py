@@ -1,13 +1,15 @@
 """Functionality relating to statistics, timeseries, etc."""
-from eofs.xarray import Eof
+
 import numpy as np
+import pymannkendall as mk
+import scipy.stats
+import sklearn.metrics
+import xarray as xr
+from eofs.xarray import Eof
+
 # import ruptures as rpt  # commented due to build issues
 from sklearn import linear_model
-import pymannkendall as mk
-import sklearn.metrics
-import scipy.stats
 from statsmodels.distributions.empirical_distribution import ECDF
-import xarray as xr
 
 from .interp import zero_cross_interp
 from .names import LAT_STR, YEAR_STR
@@ -65,7 +67,8 @@ def xmannken(arr, dim):
         dask="parallelized",
     ).unstack("location")
     arr.coords["parameter"] = xr.DataArray(
-        ["p", "z", "tau", "s", "var_s", "slope", "intercept"], dims=["parameter"])
+        ["p", "z", "tau", "s", "var_s", "slope", "intercept"], dims=["parameter"]
+    )
     # The "sortby" call is because in testing an array had its first value moved to the end.
     return arr.sortby(dims_bcast)
 
@@ -178,7 +181,7 @@ def butterworth(arr, n, windows, filttype="bandpass", dim="time"):
     """Apply the Butterworth filter to an xr.DataArray."""
     if filttype == "bandpass" and windows[0] > windows[1]:
         raise ValueError(
-            "windows need to be in (high, low) " "frequency order; got (low, high)"
+            "windows need to be in (high, low) frequency order; got (low, high)"
         )
     b, a = scipy.signal.butter(n, windows, filttype)
     axis_num = arr.get_axis_num(dim)
@@ -189,8 +192,9 @@ def butterworth(arr, n, windows, filttype="bandpass", dim="time"):
 def corr_detrended(arr1, arr2, dim=None, order=1):
     """Correlation coefficient of two arrays after they are detrended."""
     arr1_aligned, arr2_aligned = xr.align(arr1, arr2)
-    corr = xr.corr(detrend(arr1_aligned, dim, order),
-                   detrend(arr2_aligned, dim, order), dim)
+    corr = xr.corr(
+        detrend(arr1_aligned, dim, order), detrend(arr2_aligned, dim, order), dim
+    )
     if corr.shape == tuple():
         return float(corr)
     return corr
@@ -273,8 +277,7 @@ def lag_corr(arr1, arr2, lag=None, dim="time", do_align=True, do_detrend=False):
             lag = range(min(len(arr1), len(arr2)) - 2)
         values = [lag_corr(arr1, arr2, _lag) for _lag in lag]
         return xr.DataArray(
-            values, dims=["lag"], coords={"lag": lag},
-            name="lagged-correlation"
+            values, dims=["lag"], coords={"lag": lag}, name="lagged-correlation"
         )
 
 
@@ -348,8 +351,7 @@ def regress_resid(arr1, arr2, dim):
     return xr.Dataset(data_vars)
 
 
-def quantile_regress(arr, predictor, quantile, dim="time", solver="highs",
-                     alpha=0):
+def quantile_regress(arr, predictor, quantile, dim="time", solver="highs", alpha=0):
     """Apply quantile regression to the non-NaN elements of the given array."""
     # Drop all-NaN slices since the calculation is expensive and they're
     # meaningless.  At the end return to the original shape and mask.
@@ -357,9 +359,13 @@ def quantile_regress(arr, predictor, quantile, dim="time", solver="highs",
     stacked_masked = stacked.where(~np.isnan(stacked), drop=True)
 
     def _qr(x, y):
-        return linear_model.QuantileRegressor(
-            quantile=quantile, solver=solver, alpha=alpha).fit(
-                x[:, np.newaxis], y).coef_
+        return (
+            linear_model.QuantileRegressor(
+                quantile=quantile, solver=solver, alpha=alpha
+            )
+            .fit(x[:, np.newaxis], y)
+            .coef_
+        )
 
     return xr.apply_ufunc(
         _qr,
@@ -438,23 +444,22 @@ def xhist(arr, bin_edges, bin_centers=None, **kwargs):
     return xr.ones_like(bin_centers) * counts
 
 
-
-def hist2d(arr1, arr2, bin_edges1, bin_edges2, bin_centers1, bin_centers2,
-           **kwargs):
+def hist2d(arr1, arr2, bin_edges1, bin_edges2, bin_centers1, bin_centers2, **kwargs):
     """2D histogram for xarray"""
     aligned1, aligned2 = xr.align(arr1, arr2)
     arr1_flat = xr.DataArray(aligned1.values.flatten(), dims=["event"])
     arr2_flat = xr.DataArray(aligned2.values.flatten(), dims=["event"])
     hist, _, _ = np.histogram2d(
-        arr1_flat, arr2_flat, bins=[bin_edges1, bin_edges2], **kwargs)
+        arr1_flat, arr2_flat, bins=[bin_edges1, bin_edges2], **kwargs
+    )
     if bin_centers1.name == bin_centers2.name:
         name_out2 = f"{bin_centers2.name}2"
     else:
         name_out2 = bin_centers2.name
     return (
-        xr.ones_like(bin_centers1) *
-        xr.ones_like(bin_centers2.rename(**{bin_centers2.name: name_out2})) *
-        hist
+        xr.ones_like(bin_centers1)
+        * xr.ones_like(bin_centers2.rename(**{bin_centers2.name: name_out2}))
+        * hist
     ).transpose()
 
 
@@ -488,8 +493,7 @@ def cdf_empirical(arr, cdf_points=None, side="left"):
     if cdf_points is None:
         cdf_points = vals
     ecdf = ECDF(vals, side=side)(cdf_points)
-    return xr.DataArray(
-        ecdf, dims=["data"], coords={"data": cdf_points}, name="cdf")
+    return xr.DataArray(ecdf, dims=["data"], coords={"data": cdf_points}, name="cdf")
 
 
 def risk_ratio(arr1, arr2, cdf_points=None, side="left"):
@@ -498,7 +502,7 @@ def risk_ratio(arr1, arr2, cdf_points=None, side="left"):
         cdf_points = np.union1d(arr1, arr2)
     cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side)
     cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side)
-    return ((1. - cdf1) / (1. - cdf2)).rename("risk_ratio")
+    return ((1.0 - cdf1) / (1.0 - cdf2)).rename("risk_ratio")
 
 
 # Statistical fits
@@ -510,22 +514,26 @@ def xfit(arr, dim, dist=scipy.stats.genextreme, **fit_kwargs):
         params = dist.fit(data, **fit_kwargs)
         return np.array(list(params))
 
-    return xr.apply_ufunc(
-        _fit,
-        stacked_masked(arr, dim),
-        input_core_dims=[[dim]],
-        output_core_dims=[["parameter"]],
-        vectorize=True,
-        dask="parallelized",
-    ).unstack("location").sortby(dims_bcast)
+    return (
+        xr.apply_ufunc(
+            _fit,
+            stacked_masked(arr, dim),
+            input_core_dims=[[dim]],
+            output_core_dims=[["parameter"]],
+            vectorize=True,
+            dask="parallelized",
+        )
+        .unstack("location")
+        .sortby(dims_bcast)
+    )
 
 
 # False Discovery Rate
 def false_disc_rate_thresh_pval(pvals, target_fdr=0.05):
     """Threshold p value for significance based on False Discovery Rate.
-    
+
     From Wilks 2016, BAMS, Eq. 3.
-    
+
     """
     pvals_sorted = flat_dropna(pvals)
     pvals_sorted.sort()

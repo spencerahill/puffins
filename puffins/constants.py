@@ -9,20 +9,20 @@ R_D = 287.06  # Gas constant of dry air.
 C_VD = C_PD - R_D  # Specific heat of dry air at constant volume.
 C_V = C_VD
 KAPPA = R_D / C_PD
-MEAN_SLP_EARTH = 101325.  # Earth's mean sea level pressure (Pa)
+MEAN_SLP_EARTH = 101325.0  # Earth's mean sea level pressure (Pa)
 
 # Water.
 L_F = 3.34e5  # Latent heat of fusion.
 L_V = 2.5e6  # Latent heat of vaporization.
-C_VL = 4186.  # Specific heat of liquid water at constant volume.
-C_VS = 2106.  # Specific heat of solid water at constant volume.
-C_VV = 1418.  # Specific heat of water vapor at constant volume.
+C_VL = 4186.0  # Specific heat of liquid water at constant volume.
+C_VS = 2106.0  # Specific heat of solid water at constant volume.
+C_VV = 1418.0  # Specific heat of water vapor at constant volume.
 R_V = 461.4  # Gas constant of water vapor.
 C_PV = C_VV + R_V  # Specific heat of water vapor at constant pressure.
 EPSILON = R_D / R_V  # Ratio of dry air and vapor gas constants.
 P_TRIP = 611.65  # Pressure of water triple point.
 T_TRIP = 273.16  # Temperature of water triple point.
-DENS_LIQ_WAT = 1000.  # Density of liquid water.
+DENS_LIQ_WAT = 1000.0  # Density of liquid water.
 # Difference in specific internal energy between water vapor and liquid at the
 # triple point; Romps 2017 JAS.
 E_0V = 2.374e6
@@ -34,9 +34,9 @@ E_0S = 0.3337e6
 STEF_BOLTZ_CONST = 5.67e-8
 
 # Time
-SECONDS_PER_MIN = 60.
-SECONDS_PER_HR = 3600.
-HR_PER_DAY = 24.
+SECONDS_PER_MIN = 60.0
+SECONDS_PER_HR = 3600.0
+HR_PER_DAY = 24.0
 SECONDS_PER_EARTH_DAY = SECONDS_PER_HR * HR_PER_DAY
 
 # Earth's solid body and orbit.
@@ -47,7 +47,7 @@ RAD_EARTH = 6.371e6
 ROT_RATE_EARTH = 2 * math.pi / SECONDS_PER_EARTH_DAY
 OBLIQ_EARTH = 23.437
 ORB_PERIOD_EARTH = 365.25 * SECONDS_PER_EARTH_DAY
-ORB_FREQ_EARTH = 2. * math.pi / ORB_PERIOD_EARTH
+ORB_FREQ_EARTH = 2.0 * math.pi / ORB_PERIOD_EARTH
 SOLAR_CONST_EARTH = 1365.2
 
 # Mars.  https://nssdc.gsfc.nasa.gov/planetary/factsheet/marsfact.html
@@ -65,7 +65,7 @@ ROT_RATE_MARS = 2 * math.pi / LEN_DAY_MARS
 HEIGHT_TROPO_MARS = 40.0e3
 OBLIQ_MARS = 25.2
 ORB_PERIOD_MARS = 686.98 * SECONDS_PER_EARTH_DAY
-ORB_FREQ_MARS = 2. * math.pi / ORB_PERIOD_MARS
+ORB_FREQ_MARS = 2.0 * math.pi / ORB_PERIOD_MARS
 SOLAR_CONST_MARS = 586.2
 
 # Saturn.  https://nssdc.gsfc.nasa.gov/planetary/factsheet/saturnfact.html
@@ -87,8 +87,8 @@ OBLIQ_VENUS = 177.36
 LEN_DAY_VENUS = 5832.6 * SECONDS_PER_HR
 
 # Default values for parameters that appear in many functions.
-DELTA_H = 1./6.
-DELTA_V = 1./8.
+DELTA_H = 1.0 / 6.0
+DELTA_V = 1.0 / 8.0
 HEIGHT_TROPO = 10.0e3
 HEIGHT_TROPO_EARTH = 10.0e3
 P0 = 1.0e5

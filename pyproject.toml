@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "puffins"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Functions for computing things in climate science"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Spencer A. Hill", email = "shill1@ccny.cuny.edu" }]
 keywords = ["climate", "science"]
@@ -17,7 +17,11 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Natural Language :: English",
   "Programming Language :: Python :: 3",
-  "Topic :: Scientific/Engineering :: Atmospheric Science"
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 dependencies = [
   "eofs",
@@ -29,8 +33,19 @@ dependencies = [
   "scipy",
   "scikit-learn",
   "statsmodels",
-  "windspharm",
   "xarray",
+]
+
+[project.optional-dependencies]
+# windspharm/pyspharm require a Fortran compiler and legacy numpy.distutils.
+# Install via: conda install -c conda-forge windspharm
+fortran = ["windspharm"]
+dev = [
+  "mypy",
+  "pre-commit",
+  "pytest",
+  "pytest-cov",
+  "ruff",
 ]
 
 [project.urls]
@@ -39,5 +54,54 @@ Homepage = "https://github.com/spencerahill/puffins"
 [tool.setuptools.packages.find]
 include = ["puffins*"]
 
+[tool.setuptools_scm]
+
 [project.scripts]
 set-proj-puff-branch = "puffins.scripts.set_proj_puff_branch:main"
+
+# --- Tool Configuration ---
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "W",   # pycodestyle warnings
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # flake8-bugbear
+  "SIM", # flake8-simplify
+  "NPY", # numpy-specific rules
+]
+ignore = [
+  # TODO: tighten these incrementally
+  "F401",   # unused imports (many are intentional re-exports)
+  "F811",   # redefined unused name
+  "F821",   # undefined name (cross-module references)
+  "F841",   # local variable assigned but never used
+  "E501",   # line too long (formatter handles most; a few remain)
+  "E741",   # ambiguous variable name (common in math/physics code)
+  "B904",   # raise ... from err (requires code audit)
+  "B905",   # zip() without strict= (requires code audit)
+  "SIM108", # use ternary operator (readability preference)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports are intentional
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["puffins/tests"]
+addopts = "-v --tb=short"
+
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
