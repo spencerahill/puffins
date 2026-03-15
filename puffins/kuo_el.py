@@ -3,43 +3,12 @@
 import numpy as np
 import xarray as xr
 
-from .calculus import lat_deriv
+from .calculus import _check_uniform_spacing, lat_deriv
 from .constants import C_P, GRAV_EARTH, P0, R_D, RAD_EARTH, ROT_RATE_EARTH
 from .dynamics import coriolis_param
 from .names import LAT_STR, LEV_STR, SIGMA_STR
 from .nb_utils import coord_arr_1d, cosdeg, sindeg
 from .num_solver import kj_from_n, setup_bc_row, sor_solver
-
-
-def _check_uniform_spacing(
-    coord: xr.DataArray,
-    dim: str,
-    name: str,
-    tol: float = 0.01,
-) -> None:
-    """Raise ValueError if coordinate spacing is not nearly uniform.
-
-    Parameters
-    ----------
-    coord : xr.DataArray
-        The coordinate array to check.
-    dim : str
-        The dimension name along which to compute differences.
-    name : str
-        Human-readable name for error messages.
-    tol : float
-        Maximum allowed fractional deviation from uniform spacing.
-
-    """
-    diff = coord.diff(dim)
-    mean_diff = diff.mean(dim)
-    frac_var = (diff - mean_diff) / mean_diff
-    if np.any(np.abs(frac_var) > tol):
-        max_frac_var = float(np.max(np.abs(frac_var)))
-        raise ValueError(
-            f"Uniform {name} spacing required to within {tol}. "
-            f"Actual max fractional deviation from uniform: {max_frac_var}"
-        )
 
 
 def kuo_el_eddy_mom_term(

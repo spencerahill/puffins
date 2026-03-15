@@ -192,10 +192,73 @@ def merid_avg_sinlat_data(
 
 
 # Surface area of lat-lon data.
-# TODO: add check that spacing is (nearly) uniform.
-def infer_bounds(arr, dim, dim_bounds=None, bounds_str=BOUNDS_STR):
-    """Requires that array be evenly spaced (up to an error threshold)."""
+def _check_uniform_spacing(
+    coord: xr.DataArray,
+    dim: str,
+    name: str,
+    tol: float = 0.01,
+) -> None:
+    """Raise ValueError if coordinate spacing is not nearly uniform.
+
+    Parameters
+    ----------
+    coord : xr.DataArray
+        The coordinate array to check.
+    dim : str
+        The dimension name along which to compute differences.
+    name : str
+        Human-readable name used in error messages.
+    tol : float
+        Maximum allowed fractional deviation from uniform spacing.
+
+    """
+    diff = coord.diff(dim)
+    mean_diff = diff.mean(dim)
+    frac_var = (diff - mean_diff) / mean_diff
+    if np.any(np.abs(frac_var) > tol):
+        max_frac_var = float(np.max(np.abs(frac_var)))
+        raise ValueError(
+            f"Uniform {name} spacing required to within {tol}. "
+            f"Actual max fractional deviation from uniform: {max_frac_var}"
+        )
+
+
+def infer_bounds(
+    arr: xr.DataArray,
+    dim: str,
+    dim_bounds: str | None = None,
+    bounds_str: str = BOUNDS_STR,
+    spacing_tol: float = 0.01,
+) -> xr.DataArray:
+    """Infer bounding values from evenly spaced coordinate centers.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Coordinate array whose bounds are to be inferred.
+    dim : str
+        Name of the dimension along which to infer bounds.
+    dim_bounds : str or None
+        Name to assign to the resulting bounds DataArray.
+    bounds_str : str
+        Name of the bounds dimension.
+    spacing_tol : float
+        Maximum allowed fractional deviation from uniform spacing.
+
+    Raises
+    ------
+    ValueError
+        If the spacing along ``dim`` is not nearly uniform.
+
+    """
+    if not isinstance(dim, str):
+        raise TypeError(f"dim must be a str, got {type(dim).__name__!r}")
     arr_vals = arr.values
+    spacing = np.diff(arr_vals)
+    if spacing.mean() == 0:
+        raise ValueError("Array values are all identical; cannot infer bounds.")
+    _check_uniform_spacing(arr, dim, dim, tol=spacing_tol)
+
     midpoint_vals = 0.5 * (arr_vals[:-1] + arr_vals[1:])
 
     bound_left = arr_vals[0] - (midpoint_vals[0] - arr_vals[0])
