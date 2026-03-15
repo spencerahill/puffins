@@ -1,6 +1,7 @@
 """Functions for Empirical Orthogonal Functions (EOF) analyses."""
-from eofs.xarray import Eof
+
 import numpy as np
+from eofs.xarray import Eof
 
 from .names import LAT_STR, YEAR_STR
 from .nb_utils import cosdeg
