@@ -265,9 +265,7 @@ def _bounds_from_array(arr, dim, bounds_dim=BOUNDS_STR):
     """
     spacing = arr.diff(dim)
     last_spacing = spacing.isel({dim: -1})
-    spacing_padded = xr.concat(
-        [spacing, last_spacing.expand_dims(dim)], dim=dim
-    )
+    spacing_padded = xr.concat([spacing, last_spacing.expand_dims(dim)], dim=dim)
     spacing_padded[dim] = arr[dim]
     lower = arr - 0.5 * spacing_padded
     upper = arr + 0.5 * spacing_padded
