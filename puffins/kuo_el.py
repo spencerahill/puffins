@@ -11,6 +11,37 @@ from .nb_utils import coord_arr_1d, cosdeg, sindeg
 from .num_solver import kj_from_n, setup_bc_row, sor_solver
 
 
+def _check_uniform_spacing(
+    coord: xr.DataArray,
+    dim: str,
+    name: str,
+    tol: float = 0.01,
+) -> None:
+    """Raise ValueError if coordinate spacing is not nearly uniform.
+
+    Parameters
+    ----------
+    coord : xr.DataArray
+        The coordinate array to check.
+    dim : str
+        The dimension name along which to compute differences.
+    name : str
+        Human-readable name for error messages.
+    tol : float
+        Maximum allowed fractional deviation from uniform spacing.
+
+    """
+    diff = coord.diff(dim)
+    mean_diff = diff.mean(dim)
+    frac_var = (diff - mean_diff) / mean_diff
+    if np.any(np.abs(frac_var) > tol):
+        max_frac_var = float(np.max(np.abs(frac_var)))
+        raise ValueError(
+            f"Uniform {name} spacing required to within {tol}. "
+            f"Actual max fractional deviation from uniform: {max_frac_var}"
+        )
+
+
 def kuo_el_eddy_mom_term(
     u_merid_flux_eddy,
     p_sfc=None,
@@ -98,8 +129,8 @@ def _kuo_el_matrix(
 ):
     """Generate the matrix used in the Kuo-Eliassen equation solver.
 
-    Warning: assumes that pressure and latitude spacing are both uniform but
-    doesn't warn or raise an error if they aren't.
+    Assumes that pressure and latitude spacing are both uniform and raises
+    a ValueError if they aren't.
 
     """
     lats = pot_temp[lat_str]
@@ -107,7 +138,8 @@ def _kuo_el_matrix(
     coslat = cosdeg(lats)
     f = coriolis_param(lats, rot_rate=rot_rate)
 
-    # TODO: insert check that lat and pressure spacings are uniform.
+    _check_uniform_spacing(plevs, lev_str, "pressure")
+    _check_uniform_spacing(lats, lat_str, "latitude")
     dp = float(plevs.diff(lev_str).mean())
     dlat = float(np.deg2rad(lats.diff(lat_str).mean()))
 
@@ -200,9 +232,8 @@ def kuo_el_solver(
 ):
     """Numerical solver of Kuo-Eliassen equation.
 
-    Note that numerics assume data on uniformly spaced pressure levels and
-    uniformly spaced latitudes.  Answer will be incorrect (but no warning or
-    error will be raised) if these conditions aren't met.
+    Numerics assume data on uniformly spaced pressure levels and uniformly
+    spaced latitudes.  A ValueError is raised if these conditions aren't met.
 
     """
     kuo_el_matrix = _kuo_el_matrix(
