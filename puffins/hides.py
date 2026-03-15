@@ -21,14 +21,15 @@ def _maybe_flip_lats(arr, do_flip, lat_str=LAT_STR):
     return arr
 
 
-def hides_above_eq_mom(ang_mom, radius=RAD_EARTH, flip_lats=False,
-                       rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR):
+def hides_above_eq_mom(
+    ang_mom, radius=RAD_EARTH, flip_lats=False, rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR
+):
     """Poleward-most latitude where angular momentum exceeds planetary
     equatorial value.
 
     """
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return arr.where(arr > rot_rate*radius**2, drop=True)[-1][lat_str]
+    return arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]
 
 
 def hides_negative(ang_mom, flip_lats=False, lat_str=LAT_STR):
@@ -40,9 +41,8 @@ def hides_negative(ang_mom, flip_lats=False, lat_str=LAT_STR):
 def hides_vort_zero_cross(abs_vort, flip_lats=False, lat_str=LAT_STR):
     """Poleward-most latitude where absolute vorticity changes sign."""
     arr = _maybe_flip_lats(abs_vort, flip_lats)
-    return arr.where(np.sign(arr).diff(
-        lat_str), drop=True).dropna(lat_str)[-1][lat_str]
+    return arr.where(np.sign(arr).diff(lat_str), drop=True).dropna(lat_str)[-1][lat_str]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass
