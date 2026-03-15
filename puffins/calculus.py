@@ -251,6 +251,8 @@ def infer_bounds(
         If the spacing along ``dim`` is not nearly uniform.
 
     """
+    if not isinstance(dim, str):
+        raise TypeError(f"dim must be a str, got {type(dim).__name__!r}")
     arr_vals = arr.values
     spacing = np.diff(arr_vals)
     if spacing.mean() == 0:

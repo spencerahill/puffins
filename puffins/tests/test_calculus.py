@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from puffins.calculus import infer_bounds
+from puffins.calculus import _bounds_from_array, infer_bounds
 from puffins.names import BOUNDS_STR, LAT_STR
 
 
@@ -91,7 +91,6 @@ class TestInferBounds:
         arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
         with pytest.raises(TypeError):
             infer_bounds(arr, "x", spacing_tol="strict")
-from puffins.calculus import _bounds_from_array
 
 
 class TestBoundsFromArray:
