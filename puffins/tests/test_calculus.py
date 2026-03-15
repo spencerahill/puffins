@@ -27,7 +27,7 @@ class TestInferBounds:
         """Non-uniform spacing should raise ValueError."""
         vals = np.array([0.0, 1.0, 2.0, 5.0, 6.0])
         arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
-        with pytest.raises(ValueError, match="Uniform spacing required"):
+        with pytest.raises(ValueError, match="Uniform.*spacing required"):
             infer_bounds(arr, "x")
 
     def test_nearly_uniform_within_tolerance(self) -> None:
@@ -43,7 +43,7 @@ class TestInferBounds:
         vals = np.array([0.0, 1.0, 2.1, 3.1, 4.1])
         arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
         # Should fail with tight tolerance
-        with pytest.raises(ValueError, match="Uniform spacing required"):
+        with pytest.raises(ValueError, match="Uniform.*spacing required"):
             infer_bounds(arr, "x", spacing_tol=0.01)
         # Should pass with loose tolerance
         result = infer_bounds(arr, "x", spacing_tol=0.15)
