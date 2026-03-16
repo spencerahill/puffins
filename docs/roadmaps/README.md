@@ -6,6 +6,6 @@ the goals, phases, and acceptance criteria for a body of work.
 | ID | Title | Status | Created |
 |----|-------|--------|---------|
 | [001](001-modernize-repo-standards.md) | Modernize Repository Standards | In Progress | 2026-03-16 |
-| [002](002-testing-overhaul.md) | Testing Overhaul | Not Started | 2026-03-16 |
-| [002](002-type-hints.md) | Type Hints | In Progress | 2026-03-16 |
 | [002](002-documentation.md) | Documentation | Not Started | 2026-03-16 |
+| [003](003-type-hints.md) | Type Hints | In Progress | 2026-03-16 |
+| [004](004-testing-overhaul.md) | Testing Overhaul | Not Started | 2026-03-16 |
