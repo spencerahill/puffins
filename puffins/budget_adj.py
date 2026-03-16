@@ -1,4 +1,5 @@
 """Column budget adjustment quantities."""
+
 import numpy as np
 import windspharm.xarray
 import xarray as xr
@@ -42,17 +43,13 @@ def uv_col_budg_adj(
     )
     vort_adj_spec = np.zeros_like(div_adj_spec)
     # Invert to get gridded wind adjustment.
-    u_adj_vals, v_adj_vals = vecwind_col._api.s.getuv(
-        vort_adj_spec, div_adj_spec
-    )
+    u_adj_vals, v_adj_vals = vecwind_col._api.s.getuv(vort_adj_spec, div_adj_spec)
     # Wrap back into DataArrays with original dimension order.
     u_col_adj = (
-        xr.ones_like(u_col_int.transpose(lat_str, lon_str, time_str))
-        * u_adj_vals
+        xr.ones_like(u_col_int.transpose(lat_str, lon_str, time_str)) * u_adj_vals
     ).transpose(*u_col_int.dims)
     v_col_adj = (
-        xr.ones_like(v_col_int.transpose(lat_str, lon_str, time_str))
-        * v_adj_vals
+        xr.ones_like(v_col_int.transpose(lat_str, lon_str, time_str)) * v_adj_vals
     ).transpose(*v_col_int.dims)
     return u_col_int - u_col_adj, v_col_int - v_col_adj
 

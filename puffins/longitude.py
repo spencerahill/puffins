@@ -26,14 +26,11 @@ def lon_to_0360(lon):
 
     """
     quotient = lon // 360
-    return lon - quotient*360
+    return lon - quotient * 360
 
 
 def _lon_in_west_hem(lon):
-    if lon_to_0360(lon) >= 180:
-        return True
-    else:
-        return False
+    return lon_to_0360(lon) >= 180
 
 
 def lon_to_pm180(lon):
@@ -77,12 +74,14 @@ def _maybe_cast_to_lon(obj, strict=False):
 
 def _other_to_lon(func):
     """Wrapper for casting Longitude operator arguments to Longitude"""
+
     def func_other_to_lon(obj, other):
         return func(obj, _maybe_cast_to_lon(other))
+
     return func_other_to_lon
 
 
-class Longitude(object):
+class Longitude:
     """Geographic longitude.
 
     Enables unambiguous comparison of longitudes using the standard comparison
@@ -102,6 +101,7 @@ class Longitude(object):
     can be casted to Longitude objects.
 
     """
+
     def __init__(self, value):
         """
         Parameters
@@ -121,28 +121,30 @@ class Longitude(object):
             val_as_float = float(value)
         except (ValueError, TypeError):
             if not isinstance(value, str):
-                raise ValueError('value must be a scalar or a string')
-            if value[-1].lower() not in ('w', 'e'):
+                raise ValueError("value must be a scalar or a string")
+            if value[-1].lower() not in ("w", "e"):
                 raise ValueError("string inputs must end in 'e' or 'w'")
             try:
                 lon_value = float(value[:-1])
             except ValueError:
-                raise ValueError('improperly formatted string')
+                raise ValueError("improperly formatted string")
             if (lon_value < 0) or (lon_value > 180):
-                raise ValueError('Value given as strings with hemisphere '
-                                 'identifier must have numerical values '
-                                 'within 0 and +180.  Value given: '
-                                 '{}'.format(lon_value))
+                raise ValueError(
+                    "Value given as strings with hemisphere "
+                    "identifier must have numerical values "
+                    "within 0 and +180.  Value given: "
+                    f"{lon_value}"
+                )
             self._longitude = lon_value
             self._hemisphere = value[-1].upper()
         else:
             lon_pm180 = lon_to_pm180(val_as_float)
             if _lon_in_west_hem(val_as_float):
                 self._longitude = abs(lon_pm180)
-                self._hemisphere = 'W'
+                self._hemisphere = "W"
             else:
                 self._longitude = lon_pm180
-                self._hemisphere = 'E'
+                self._hemisphere = "E"
 
     @property
     def longitude(self):
@@ -156,8 +158,10 @@ class Longitude(object):
 
     @longitude.setter
     def longitude(self, value):
-        raise ValueError("'longitude' property cannot be modified after "
-                         "Longitude object has been created.")
+        raise ValueError(
+            "'longitude' property cannot be modified after "
+            "Longitude object has been created."
+        )
 
     @property
     def hemisphere(self):
@@ -166,30 +170,34 @@ class Longitude(object):
 
     @hemisphere.setter
     def hemisphere(self, value):
-        raise ValueError("'hemisphere' property cannot be modified after "
-                         "Longitude object has been created.")
+        raise ValueError(
+            "'hemisphere' property cannot be modified after "
+            "Longitude object has been created."
+        )
 
     def __repr__(self):
-        return "Longitude('{0}{1}')".format(self.longitude, self.hemisphere)
+        return f"Longitude('{self.longitude}{self.hemisphere}')"
 
     @_other_to_lon
     def __eq__(self, other):
         if isinstance(other, Longitude):
-            return (self.hemisphere == other.hemisphere and
-                    self.longitude == other.longitude)
+            return (
+                self.hemisphere == other.hemisphere
+                and self.longitude == other.longitude
+            )
         else:
             return xr.apply_ufunc(np.equal, other, self)
 
     @_other_to_lon
     def __lt__(self, other):
         if isinstance(other, Longitude):
-            if self.hemisphere == 'W':
-                if other.hemisphere == 'E':
+            if self.hemisphere == "W":
+                if other.hemisphere == "E":
                     return True
                 else:
                     return self.longitude > other.longitude
             else:
-                if other.hemisphere == 'W':
+                if other.hemisphere == "W":
                     return False
                 else:
                     return self.longitude < other.longitude
@@ -199,13 +207,13 @@ class Longitude(object):
     @_other_to_lon
     def __gt__(self, other):
         if isinstance(other, Longitude):
-            if self.hemisphere == 'W':
-                if other.hemisphere == 'E':
+            if self.hemisphere == "W":
+                if other.hemisphere == "E":
                     return False
                 else:
                     return self.longitude < other.longitude
             else:
-                if other.hemisphere == 'W':
+                if other.hemisphere == "W":
                     return True
                 else:
                     return self.longitude > other.longitude
@@ -228,15 +236,15 @@ class Longitude(object):
 
     def to_0360(self):
         """Convert longitude to its numerical value within [0, 360)."""
-        if self.hemisphere == 'W':
-            return -1*self.longitude + 360
+        if self.hemisphere == "W":
+            return -1 * self.longitude + 360
         else:
             return self.longitude
 
     def to_pm180(self):
         """Convert longitude to its numerical value within [-180, 180)."""
-        if self.hemisphere == 'W':
-            return -1*self.longitude
+        if self.hemisphere == "W":
+            return -1 * self.longitude
         else:
             return self.longitude
 
@@ -249,5 +257,5 @@ class Longitude(object):
         return Longitude(self.to_0360() - other.to_0360())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass

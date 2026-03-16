@@ -1,11 +1,10 @@
 #! /usr/bin/env python
 """Utility functions useful for interactive work in Jupyter notebooks."""
 
-from glob import glob
 import importlib
 import os.path
 import subprocess
-import warnings
+from glob import glob
 
 import git
 import numpy as np
@@ -22,10 +21,12 @@ def _checkout_if_clean(repo, branch_name):
     if clean_and_tracked:
         repo.git.checkout(branch_name)
     else:
-        raise Exception(f"The repo in the directory '{repo.working_dir}' "
-                        "has an untracked file or uncommitted changes.  These "
-                        "must be handled before puffins gets switched to "
-                        "this project's branch.")
+        raise Exception(
+            f"The repo in the directory '{repo.working_dir}' "
+            "has an untracked file or uncommitted changes.  These "
+            "must be handled before puffins gets switched to "
+            "this project's branch."
+        )
 
 
 def _package_rootdir(name):
@@ -41,33 +42,33 @@ def setup_puffins(branch_name="master"):
 
 
 # Coordinate arrays.
-def coord_arr_1d(start=None, stop=None, spacing=None, dim=None, values=None,
-                 dtype=None):
+def coord_arr_1d(
+    start=None, stop=None, spacing=None, dim=None, values=None, dtype=None
+):
     """Create xr.DataArray of an evenly spaced 1D coordinate ."""
     if values is None:
-        arr_np = np.arange(start, stop + 0.1*spacing, spacing)
+        arr_np = np.arange(start, stop + 0.1 * spacing, spacing)
     else:
         arr_np = np.asarray(values)
     if dtype is not None:
         arr_np = arr_np.astype(dtype)
-    return xr.DataArray(arr_np, name=dim, dims=[dim],
-                        coords={dim: arr_np})
+    return xr.DataArray(arr_np, name=dim, dims=[dim], coords={dim: arr_np})
 
 
-def lat_arr(start=-90, stop=90, spacing=1., dim=LAT_STR):
+def lat_arr(start=-90, stop=90, spacing=1.0, dim=LAT_STR):
     """Convenience function to create an array of latitudes."""
     if start is None and stop is None:
-        start = -90 + 0.5*spacing
-        stop = 90 - 0.5*spacing
+        start = -90 + 0.5 * spacing
+        stop = 90 - 0.5 * spacing
     return coord_arr_1d(start, stop, spacing, dim)
 
 
-def time_arr(start=0, stop=100, spacing=1., dim=TIME_STR):
+def time_arr(start=0, stop=100, spacing=1.0, dim=TIME_STR):
     """Convenience function to create an array of times."""
     return coord_arr_1d(start, stop, spacing, dim)
 
 
-def days_of_year_arr(start=1, stop=365, spacing=1., dim=DAY_OF_YEAR_STR):
+def days_of_year_arr(start=1, stop=365, spacing=1.0, dim=DAY_OF_YEAR_STR):
     """Convenience function to create an array of times."""
     return coord_arr_1d(start, stop, spacing, dim)
 
@@ -105,30 +106,40 @@ def _arrs_to_ds(arrs, names=None):
 
 def _func_arrs_to_ds(func, args=None, kwargs=None):
     """Create new function that calls the original on a Dataset."""
+
     def func_on_ds(ds, args=args, kwargs=kwargs):
         if args is None:
             args = []
         if kwargs is None:
             kwargs = {}
         return func(*ds.data_vars.values(), *args, **kwargs)
+
     return func_on_ds
 
 
-def groupby_apply_func(func, arrs, groupby_dims,
-                       func_args=None, func_kwargs=None,
-                       stacked_dim="dummy_stacked_dim"):
+def groupby_apply_func(
+    func,
+    arrs,
+    groupby_dims,
+    func_args=None,
+    func_kwargs=None,
+    stacked_dim="dummy_stacked_dim",
+):
     """Apply a function via 'groupby' over the given dimensions."""
     ds = _arrs_to_ds(arrs)
-    func_on_ds = _func_arrs_to_ds(func, args=func_args,
-                                  kwargs=func_kwargs)
+    func_on_ds = _func_arrs_to_ds(func, args=func_args, kwargs=func_kwargs)
     if isinstance(groupby_dims, str):
         groupby_dims = (groupby_dims,)
 
     # Stack/unstack to iterate over all dims that are to be grouped/applied
     # over.
     assert stacked_dim not in ds.dims
-    return ds.stack(**{stacked_dim: groupby_dims}).groupby(
-        stacked_dim).apply(func_on_ds).unstack(stacked_dim)
+    return (
+        ds.stack(**{stacked_dim: groupby_dims})
+        .groupby(stacked_dim)
+        .apply(func_on_ds)
+        .unstack(stacked_dim)
+    )
 
 
 def apply_maybe_groupby(func, non_groupby_dims, arrs, args=None, kwargs=None):
@@ -142,8 +153,9 @@ def apply_maybe_groupby(func, non_groupby_dims, arrs, args=None, kwargs=None):
         if args is not None:
             func_args += args
         return func(*func_args, **kwargs)
-    return groupby_apply_func(func, arrs, groupby_dims,
-                              func_args=args, func_kwargs=kwargs)
+    return groupby_apply_func(
+        func, arrs, groupby_dims, func_args=args, func_kwargs=kwargs
+    )
 
 
 # Find locations of array extrema and nearest neighbors.
@@ -177,6 +189,7 @@ def read_netcdfs(files, dim="time", transform_func=None, pre_func=None):
     Adapted from https://xarray.pydata.org/en/stable/user-guide/io.html#netcdf
 
     """
+
     def process_one_path(path):
         with xr.open_dataset(path) as ds:
             if transform_func is not None:
@@ -231,28 +244,28 @@ def symmetrize_hemispheres(ds, vars_to_flip_sign=None, lat_str=LAT_STR):
     if vars_to_flip_sign is None:
         vars_to_flip_sign = []
     for varname in vars_to_flip_sign:
-        south_hem[varname] = -1*south_hem[varname]
+        south_hem[varname] = -1 * south_hem[varname]
 
     south_hem[lat_str] = north_hem[lat_str]
-    ds_hem_avg = 0.5*(south_hem + north_hem)
+    ds_hem_avg = 0.5 * (south_hem + north_hem)
 
     ds_opp = ds_hem_avg.copy(deep=True)
     ds_opp = ds_opp.isel(lat=slice(-1, None, -1))
 
     # Note: because of an xarray bug, can't use `ds_opp[lat_str] *= -1` here,
     # because in that case it also multiplies `ds_avg[lat_str]` by -1.
-    ds_opp[lat_str] = ds_opp[lat_str]*-1
+    ds_opp[lat_str] = ds_opp[lat_str] * -1
     ds_symm = xr.concat([ds_opp, ds_hem_avg], dim=lat_str)
 
     for varname in vars_to_flip_sign:
-        ds_symm[varname] = ds_symm[varname]*np.sign(ds_symm[lat_str])
+        ds_symm[varname] = ds_symm[varname] * np.sign(ds_symm[lat_str])
     return ds_symm
 
 
 # Misc.
 def lat_area_weight(lat, radius=RAD_EARTH):
     """Geometric factor corresponding to surface area at each latitude."""
-    return 2.*np.pi*radius*cosdeg(lat)
+    return 2.0 * np.pi * radius * cosdeg(lat)
 
 
 def drop_dupes(sequence):
@@ -266,7 +279,7 @@ def drop_dupes(sequence):
 
 
 def stacked_masked(arr, dim):
-    """Stack an array along the given dimension and drop any all-nan slices.""" 
+    """Stack an array along the given dimension and drop any all-nan slices."""
     stacked = arr.stack(location=[dim_ for dim_ in arr.dims if dim_ != dim])
     return stacked.where(~np.isnan(stacked), drop=True)
 
@@ -281,5 +294,5 @@ def flat_dropna(arr, copy=True):
     return flat_vals[~np.isnan(flat_vals)]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass
