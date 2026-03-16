@@ -15,7 +15,8 @@ from puffins.names import LAT_STR
 
 
 def _make_lat_array(
-    values: list[float], lats: list[float] | None = None
+    values: list[float],
+    lats: list[float] | None = None,
 ) -> xr.DataArray:
     """Create a 1-D DataArray along the latitude dimension."""
     if lats is None:
