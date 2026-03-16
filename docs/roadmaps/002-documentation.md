@@ -1,25 +1,45 @@
-# Documentation Roadmap
+# Roadmap 002: Documentation
 
-A phased plan to bring `puffins` documentation from its current state to comprehensive, state-of-the-art research software docs.
+| Field | Value |
+|-------|-------|
+| **Status** | Not Started |
+| **Created** | 2026-03-16 |
+| **Last updated** | 2026-03-16 |
+| **Author** | Spencer A. Hill |
+
+## Objective
+
+Bring `puffins` documentation from its current mixed state to comprehensive,
+state-of-the-art research software docs: complete docstrings, auto-generated
+API reference, narrative tutorials, theory pages, and sustainable hosting.
+
+## Success Criteria
+
+- 100% NumPy-style docstring coverage on all public functions
+- Auto-generated, browsable API reference hosted online
+- 4–6 tutorial notebooks and 5+ how-to guides
+- Theory/concept pages for all theoretical model modules
+- Docstring standards enforced in CI
 
 ## Current State Assessment
 
 - **Docstring coverage**: ~71% overall, ranging from 33% (`hides.py`) to 100% (`dates.py`, `therm_inert.py`, `budget_adj.py`)
 - **Docstring style**: NumPy-style where present, but quality varies from one-liners to full Parameters/Returns sections
-- **Type hints**: Sporadic; most modules lack them
+- **Type hints**: Sporadic; most modules lack them (covered by [Roadmap 001](001-modernize-repo-standards.md) Phase 4)
 - **Doc build system**: None (no Sphinx, no generated API docs)
 - **Tutorials/examples**: None beyond two one-liners in `README.md`
-- **No dedicated `docs/` directory**
 
 ---
 
-## Phase 1: Foundation — Docstring Coverage and Consistency
+## Phase 1: Docstring Coverage and Consistency
 
-**Goal**: Every public function has a complete, standardized NumPy-style docstring. Establish the docstring format contract.
+**Goal**: Every public function has a complete, standardized NumPy-style
+docstring. Establish the docstring format contract.
 
 ### 1.1 Define the docstring standard
 
-Adopt NumPy-style (already the dominant convention) with these mandatory sections for all public functions:
+Adopt NumPy-style (already the dominant convention) with these mandatory
+sections for all public functions:
 
 ```python
 def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH):
@@ -59,7 +79,9 @@ def merid_streamfunc(v, dp, grav=GRAV_EARTH, radius=RAD_EARTH):
     """
 ```
 
-Sections by priority: Summary (required) → Parameters (required) → Returns (required) → References (when applicable) → See Also (when applicable) → Examples (add in Phase 3).
+Sections by priority: Summary (required) > Parameters (required) > Returns
+(required) > References (when applicable) > See Also (when applicable) >
+Examples (add in Phase 3).
 
 ### 1.2 Triage modules by coverage gap
 
@@ -80,25 +102,24 @@ Sections by priority: Summary (required) → Parameters (required) → Returns (
 - `interp.py` (67%) — 4 functions
 - `lindzen_hou_1988.py` (59%) — 7 functions
 
-**Priority 3 — Upgrade existing one-liner docstrings** to full NumPy-style across all modules.
+**Priority 3 — Upgrade existing one-liner docstrings** to full NumPy-style
+across all modules.
 
-### 1.3 Add type hints to all public functions
+### 1.3 Add module-level docstrings
 
-Add type hints alongside docstring work — one pass per module.
-
-### 1.4 Add module-level docstrings
-
-Each `.py` file should have a module docstring describing its purpose, key functions, and physical context.
+Each `.py` file should have a module docstring describing its purpose, key
+functions, and physical context.
 
 ### Deliverable
 
-100% public function docstring coverage, consistent NumPy-style, type hints on all public APIs.
+100% public function docstring coverage, consistent NumPy-style format.
 
 ---
 
 ## Phase 2: API Reference — Automated Doc Generation
 
-**Goal**: Sphinx-based API reference auto-generated from docstrings, hosted and versioned.
+**Goal**: Sphinx-based API reference auto-generated from docstrings, hosted
+and versioned.
 
 ### 2.1 Set up Sphinx
 
@@ -126,8 +147,6 @@ Theme: `pydata-sphinx-theme` (standard for scientific Python).
 
 ### 2.2 Organize API reference by functional group
 
-Mirror the groups from `CLAUDE.md`:
-
 1. **Core Utilities**: `constants`, `names`, `nb_utils`, `calculus`, `interp`, `num_solver`, `dates`, `longitude`, `bootstrap`
 2. **Physical Calculations**: `dynamics`, `thermodynamics`, `tropopause`, `vert_coords`, `lcl`
 3. **Climate Dynamics**: `had_cell`, `grad_bal`, `eq_area`, `eofs`, `stats`, `budget_adj`
@@ -150,7 +169,8 @@ where :math:`\\Omega` is the planetary rotation rate and
 """
 ```
 
-Priority: theoretical model modules (`held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `grad_bal`, `kuo_el`).
+Priority: theoretical model modules (`held_hou_1980`, `lindzen_hou_1988`,
+`plumb_hou_1992`, `grad_bal`, `kuo_el`).
 
 ### 2.4 CI integration
 
@@ -160,7 +180,8 @@ Priority: theoretical model modules (`held_hou_1980`, `lindzen_hou_1988`, `plumb
 
 ### Deliverable
 
-Browsable, searchable API reference with full cross-linking, equations, and source links. Built automatically on every push.
+Browsable, searchable API reference with full cross-linking, equations, and
+source links. Built automatically on every push.
 
 ---
 
@@ -170,7 +191,7 @@ Browsable, searchable API reference with full cross-linking, equations, and sour
 
 ### 3.1 Getting Started guide
 
-- Installation (pip, editable mode, dependencies)
+- Installation (pip, uv, editable mode, dependencies)
 - Quick-start code showing a complete workflow
 - Coordinate conventions and input expectations
 
@@ -197,17 +218,21 @@ Suggested notebooks:
 
 ### 3.4 Inline examples in docstrings
 
-Add `Examples` sections to the most-used functions (start with `dynamics.py`, `had_cell.py`, `thermodynamics.py`, `plotting.py`). Use `doctest`-compatible format.
+Add `Examples` sections to the most-used functions (start with `dynamics.py`,
+`had_cell.py`, `thermodynamics.py`, `plotting.py`). Use `doctest`-compatible
+format.
 
 ### Deliverable
 
-4–6 executed tutorial notebooks, 5+ how-to guides, docstring examples on high-traffic functions.
+4–6 executed tutorial notebooks, 5+ how-to guides, docstring examples on
+high-traffic functions.
 
 ---
 
 ## Phase 4: Explanations and Theory — Deep Reference Material
 
-**Goal**: Connect code to the underlying atmospheric dynamics theory for researchers new to the field or the specific implementations.
+**Goal**: Connect code to the underlying atmospheric dynamics theory for
+researchers new to the field or the specific implementations.
 
 ### 4.1 Concept pages
 
@@ -224,15 +249,19 @@ For each theoretical model module, a dedicated page covering:
 - Known limitations and edge cases
 - Reproduction of key figures from the original papers
 
-Modules: `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `kuo_el`, `fixed_temp_tropo`.
+Modules: `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `kuo_el`,
+`fixed_temp_tropo`.
 
 ### 4.3 Glossary
 
-Define terms used throughout the codebase: streamfunction, Hadley cell edge/strength, thermal Rossby number, Coriolis parameter, lifted condensation level, etc.
+Define terms used throughout the codebase: streamfunction, Hadley cell
+edge/strength, thermal Rossby number, Coriolis parameter, lifted condensation
+level, etc.
 
 ### Deliverable
 
-Concept and theory pages bridging textbook knowledge to code, glossary, diagrams.
+Concept and theory pages bridging textbook knowledge to code, glossary,
+diagrams.
 
 ---
 
@@ -242,7 +271,8 @@ Concept and theory pages bridging textbook knowledge to code, glossary, diagrams
 
 ### 5.1 Hosting
 
-Host on Read the Docs (free for open-source) with versioned docs tied to releases.
+Host on Read the Docs (free for open-source) with versioned docs tied to
+releases.
 
 ### 5.2 Contributor guide
 
@@ -262,22 +292,39 @@ Maintain a `CHANGELOG.md` tied to releases and linked from docs.
 
 ### 5.5 README refresh
 
-Update `README.md` with badges (docs build status, test coverage, PyPI version) and a link to the full documentation site.
+Update `README.md` with badges (docs build status, test coverage, PyPI
+version) and a link to the full documentation site.
 
 ### Deliverable
 
-Hosted, versioned docs. CI-enforced docstring standards. Contributor documentation workflow.
+Hosted, versioned docs. CI-enforced docstring standards. Contributor
+documentation workflow.
 
 ---
 
-## Summary Timeline
+## Cross-References
+
+- **Type hints** (Phase 1.3 of this roadmap) overlap with [Roadmap 001](001-modernize-repo-standards.md) Phase 4. Coordinate to avoid duplicate work — add docstrings and type hints in the same pass per module.
+- **Documentation site** (Phase 2 of this roadmap) supersedes Roadmap 001 Phase 7, which is a placeholder for this more detailed plan.
+- **README refresh** and **Changelog** overlap with Roadmap 001 Phases 3 and 8.
+
+## Summary
 
 | Phase | Focus | Key Metric |
 |-------|-------|-----------|
-| **1** | Docstrings + type hints | 100% public API coverage |
+| **1** | Docstrings | 100% public API coverage |
 | **2** | Sphinx API reference | Browsable, auto-generated docs |
 | **3** | Tutorials + how-tos | 4–6 notebooks, 5+ guides |
 | **4** | Theory + concepts | Concept pages for all model modules |
 | **5** | Hosting + CI + sustainability | Read the Docs live, CI-enforced standards |
 
-Each phase builds on the previous. Phase 1 is the foundation — without complete docstrings, auto-generated API docs are hollow. Phases 3–4 are where the docs become genuinely valuable to researchers beyond the author. Phase 5 keeps it all from decaying.
+Each phase builds on the previous. Phase 1 is the foundation — without
+complete docstrings, auto-generated API docs are hollow. Phases 3–4 are where
+the docs become genuinely valuable to researchers beyond the author. Phase 5
+keeps it all from decaying.
+
+---
+
+## Notes
+
+- This is a living document. Update it as phases are completed.
