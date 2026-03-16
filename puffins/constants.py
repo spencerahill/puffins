@@ -31,7 +31,11 @@ E_0V = 2.374e6
 E_0S = 0.3337e6
 
 # Radiation
-STEF_BOLTZ_CONST = 5.67e-8
+BOLTZ_CONST = 1.381e-23  # Boltzmann constant (J/K).
+PLANCK_CONST = 6.626e-34  # Planck constant (J s).
+SPEED_OF_LIGHT = 2.998e8  # Speed of light (m/s).
+STEF_BOLTZ_CONST = 5.67e-8  # Stefan-Boltzmann constant (W/m^2/K^4).
+WIEN_DISP_CONST = 2.898e-3  # Wien displacement constant (m K).
 
 # Time
 SECONDS_PER_MIN = 60.0
