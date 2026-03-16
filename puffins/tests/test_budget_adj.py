@@ -1,10 +1,15 @@
 """Tests for budget_adj module."""
-import numpy as np
-import spharm
-import xarray as xr
-from windspharm.xarray import VectorWind
 
-from puffins.budget_adj import resid_after_col_adj, uv_col_budg_adj
+import numpy as np
+import pytest
+import xarray as xr
+
+spharm = pytest.importorskip("spharm")
+pytest.importorskip("windspharm")
+
+from windspharm.xarray import VectorWind  # noqa: E402
+
+from puffins.budget_adj import resid_after_col_adj, uv_col_budg_adj  # noqa: E402
 
 
 def _make_gaussian_grid(
@@ -75,8 +80,16 @@ class TestResidualNearZeroAfterAdjustment:
         # Create non-trivial wind fields (spherical harmonic pattern).
         lat_rad = np.deg2rad(lat)
         lon_rad = np.deg2rad(lon)
-        u_vals = np.cos(lat_rad)[:, None, None] * np.sin(lon_rad)[None, :, None] * np.ones(ntime)
-        v_vals = np.sin(lat_rad)[:, None, None] * np.cos(lon_rad)[None, :, None] * np.ones(ntime)
+        u_vals = (
+            np.cos(lat_rad)[:, None, None]
+            * np.sin(lon_rad)[None, :, None]
+            * np.ones(ntime)
+        )
+        v_vals = (
+            np.sin(lat_rad)[:, None, None]
+            * np.cos(lon_rad)[None, :, None]
+            * np.ones(ntime)
+        )
 
         u = _make_field(lat, lon, time, u_vals)
         v = _make_field(lat, lon, time, v_vals)
@@ -129,8 +142,16 @@ class TestNoAdjustmentWhenBudgetClosed:
         lat_rad = np.deg2rad(lat)
         lon_rad = np.deg2rad(lon)
 
-        u_vals = np.cos(lat_rad)[:, None, None] * np.sin(lon_rad)[None, :, None] * np.ones(ntime)
-        v_vals = np.sin(lat_rad)[:, None, None] * np.cos(lon_rad)[None, :, None] * np.ones(ntime)
+        u_vals = (
+            np.cos(lat_rad)[:, None, None]
+            * np.sin(lon_rad)[None, :, None]
+            * np.ones(ntime)
+        )
+        v_vals = (
+            np.sin(lat_rad)[:, None, None]
+            * np.cos(lon_rad)[None, :, None]
+            * np.ones(ntime)
+        )
         u = _make_field(lat, lon, time, u_vals)
         v = _make_field(lat, lon, time, v_vals)
 

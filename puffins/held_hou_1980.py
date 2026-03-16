@@ -4,7 +4,12 @@
 import numpy as np
 
 from .constants import (
-    DELTA_H, DELTA_V, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH, THETA_REF,
+    DELTA_H,
+    DELTA_V,
+    HEIGHT_TROPO,
+    RAD_EARTH,
+    ROT_RATE_EARTH,
+    THETA_REF,
 )
 from .nb_utils import cosdeg, sindeg
 from .num_solver import brentq_solver_sweep_param
@@ -12,35 +17,38 @@ from .num_solver import brentq_solver_sweep_param
 
 def pot_temp_rce_hh80(lats, z, theta_ref, height, delta_h, delta_v):
     """Eq. (2) of Held Hou 1980 (slightly rearranged)."""
-    return theta_ref*(1 + delta_h * (cosdeg(lats) ** 2 - 2 / 3) +
-                      (z / height - 0.5) * delta_v)
+    return theta_ref * (
+        1 + delta_h * (cosdeg(lats) ** 2 - 2 / 3) + (z / height - 0.5) * delta_v
+    )
 
 
 def pot_temp_rce_hh80_small_ang(
-        lats,
-        z=0.5 * HEIGHT_TROPO,
-        theta_ref=THETA_REF,
-        height=HEIGHT_TROPO,
-        delta_h=DELTA_H,
-        delta_v=DELTA_V):
+    lats,
+    z=0.5 * HEIGHT_TROPO,
+    theta_ref=THETA_REF,
+    height=HEIGHT_TROPO,
+    delta_h=DELTA_H,
+    delta_v=DELTA_V,
+):
     """Eq. (2) of Held Hou 1980, in small-angle limit."""
-    return theta_ref * (1 + delta_h * (1 - np.deg2rad(lats) ** 2 - 2 / 3) +
-                        delta_v * (z / height - 0.5))
+    return theta_ref * (
+        1 + delta_h * (1 - np.deg2rad(lats) ** 2 - 2 / 3) + delta_v * (z / height - 0.5)
+    )
 
 
 def u_rce_hh80(lats, therm_ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Zonal wind in gradient balance with equilibrium temperatures."""
-    return rot_rate*radius*cosdeg(lats)*((1 + 2*therm_ross_num)**0.5 - 1)
+    return rot_rate * radius * cosdeg(lats) * ((1 + 2 * therm_ross_num) ** 0.5 - 1)
 
 
 def dpot_temp_rce_hh80_dlat(lats, delta_h):
     """Meridional derivative of RCE potential temperature."""
-    return -2*delta_h*sindeg(lats)*cosdeg(lats)
+    return -2 * delta_h * sindeg(lats) * cosdeg(lats)
 
 
 def u_crit_switch_lat_hh80(therm_ross_num):
     """Where RCE and AMC winds are equal in Held Hou 1980 model."""
-    return np.rad2deg(np.arccos((((1 + 2*therm_ross_num)**-0.25))))
+    return np.rad2deg(np.arccos((1 + 2 * therm_ross_num) ** -0.25))
 
 
 def u_crit_switch_lat_hh80_small_angle(therm_ross_num):
@@ -50,18 +58,24 @@ def u_crit_switch_lat_hh80_small_angle(therm_ross_num):
 
 def hc_edge_hh80_small_angle(therm_ross_num):
     """Eq. 16 of Held Hou 1980."""
-    return np.rad2deg((5*therm_ross_num/3)**0.5)
+    return np.rad2deg((5 * therm_ross_num / 3) ** 0.5)
+
+
+_DEFAULT_BOUND_GUESS_RANGE = np.arange(0.1, 90.1, 10)
 
 
 def _hc_edge_hh80_lhs(lat, therm_ross_num):
     """Left hand side of Eq. 17 of Held Hou 1980 (right hand side is zero)."""
     y = sindeg(lat)
-    return ((1/3) * (4 * therm_ross_num - 1) * y ** 3 - y ** 5 / (1 - y **2 ) -
-            y + 0.5 * np.log((1 + y) / (1 - y)))
+    return (
+        (1 / 3) * (4 * therm_ross_num - 1) * y**3
+        - y**5 / (1 - y**2)
+        - y
+        + 0.5 * np.log((1 + y) / (1 - y))
+    )
 
 
-def hc_edge_hh80(therm_ross_num, init_guess=0.1,
-                 bound_guess_range=np.arange(0.1, 90.1, 10)):
+def hc_edge_hh80(therm_ross_num, init_guess=0.1, bound_guess_range=None):
     """Hadley cell edge according to Held and Hou 1980, Eq. 17.
 
     Solved numerically using the Brent (1973) root finding algorithm, as
@@ -81,10 +95,12 @@ def hc_edge_hh80(therm_ross_num, init_guess=0.1,
         `therm_ross_num`
 
     """
-    return brentq_solver_sweep_param(_hc_edge_hh80_lhs,
-                                     therm_ross_num, init_guess,
-                                     bound_guess_range)
+    if bound_guess_range is None:
+        bound_guess_range = _DEFAULT_BOUND_GUESS_RANGE
+    return brentq_solver_sweep_param(
+        _hc_edge_hh80_lhs, therm_ross_num, init_guess, bound_guess_range
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass

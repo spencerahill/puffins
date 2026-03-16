@@ -1,14 +1,14 @@
 #! /usr/bin/env python
 """Numerical solvers."""
 
-
 import numpy as np
 import scipy
 import xarray as xr
 
 
-def brentq_solver_sweep_param(func, param_range, init_guess, bound_guess_range,
-                              funcargs=None):
+def brentq_solver_sweep_param(
+    func, param_range, init_guess, bound_guess_range, funcargs=None
+):
     """Numerical solutions to a given function over a given parameter range.
 
     Uses the Brent (1973) root finding algorithm, as implemented
@@ -58,8 +58,7 @@ def brentq_solver_sweep_param(func, param_range, init_guess, bound_guess_range,
             bound = func(guess, *args)
             # Find two values between which the function changes sign.
             if np.sign(bound) - np.sign(old_bound) != 0:
-                solution = scipy.optimize.brentq(func, old_guess,
-                                                 guess, args=args)
+                solution = scipy.optimize.brentq(func, old_guess, guess, args=args)
                 # Solution found, so move on to next value.
                 break
             else:
@@ -118,22 +117,22 @@ def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
     initial_residual = np.linalg.norm(np.matmul(A, phi) - b)
     residual = initial_residual
     if verbose:
-        print('Initial residual: {0:10.6g}'.format(residual))
+        print(f"Initial residual: {residual:10.6g}")
     while residual > conv_crit:
         for i in range(A.shape[0]):
             j_neq_i = np.ones(A.shape[0])
             j_neq_i[i] = 0
-            sigma = np.sum(A[i]*phi*j_neq_i)
+            sigma = np.sum(A[i] * phi * j_neq_i)
             phi[i] = (1 - omega) * phi[i] + (omega / A[i, i]) * (b[i] - sigma)
         residual = np.linalg.norm(np.matmul(A, phi) - b)
         if verbose:
-            print('Residual: {0:10.6g}'.format(residual))
+            print(f"Residual: {residual:10.6g}")
     return phi
 
 
 def n_from_kj(k, j, num_y):
     """Convert 2D coordinates to scalar for converting to matrix."""
-    return np.rint(k*num_y + j)
+    return np.rint(k * num_y + j)
 
 
 def kj_from_n(n, num_y):
@@ -141,13 +140,13 @@ def kj_from_n(n, num_y):
     return n // num_y, n % num_y
 
 
-def setup_bc_row(matrix, n, bc=0.):
+def setup_bc_row(matrix, n, bc=0.0):
     """Setup row of matrix corresponding to boundary condition."""
     bc_row = matrix[n]
     bc_row[:] = bc
-    bc_row[n] = 1.
+    bc_row[n] = 1.0
     return bc_row
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass
