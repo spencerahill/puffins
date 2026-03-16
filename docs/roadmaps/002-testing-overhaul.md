@@ -1,45 +1,36 @@
-# Testing Roadmap
+# Roadmap 002: Testing Overhaul
+
+| Field | Value |
+|-------|-------|
+| **Status** | Not Started |
+| **Created** | 2026-03-16 |
+| **Last updated** | 2026-03-16 |
+| **Author** | Spencer A. Hill |
+
+## Objective
+
+Take puffins from near-zero test coverage to near-comprehensive coverage
+with best-practice infrastructure, targeting at least one test per public
+function and enforced coverage thresholds in CI.
 
 ## Current State
 
-- **1 test file** (`test_budget_adj.py`), 4 test classes, ~8 test methods
-- **~0.6% of public API tested** (2 of ~328 public functions)
-- No pytest configuration, no CI/CD, no coverage tracking
-- pytest not listed as a project dependency
+- **3 test files** (`test_budget_adj.py`, `test_calculus.py`, `test_kuo_el.py`), covering 3 of ~31 modules
+- **~328 public functions**, the vast majority untested
+- CI workflow (`ci.yml`) and pytest configuration in `pyproject.toml` now exist (added in Roadmap 001)
+- pytest and pytest-cov are project dev dependencies
 
-The existing `test_budget_adj.py` is well-structured and serves as a good template: it uses xarray fixtures, descriptive test class names, and tests both correctness and type contracts.
+The existing tests are well-structured and serve as good templates: they use xarray fixtures, descriptive test class names, and test both correctness and type contracts.
 
 ---
 
 ## Phase 1: Infrastructure
 
-Set up the testing foundation before writing any new tests.
+Most infrastructure was delivered by [Roadmap 001](001-modernize-repo-standards.md). Remaining items:
 
-### 1.1 Add testing dependencies to `pyproject.toml`
+### 1.1 Create `conftest.py` with shared fixtures
 
-```toml
-[project.optional-dependencies]
-test = [
-    "pytest",
-    "pytest-cov",
-    "pytest-xdist",       # parallel test execution
-]
-```
-
-### 1.2 Add pytest configuration to `pyproject.toml`
-
-```toml
-[tool.pytest.ini_options]
-testpaths = ["puffins/tests"]
-addopts = "--strict-markers -v"
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
-```
-
-### 1.3 Create `conftest.py` with shared fixtures
-
-Extract and generalize the helper functions from `test_budget_adj.py` into `puffins/tests/conftest.py`. Provide reusable fixtures for common test data:
+Extract and generalize the helper functions from existing test files into `puffins/tests/conftest.py`. Provide reusable fixtures for common test data:
 
 - 1D latitude arrays (uniform and Gaussian)
 - 1D pressure/level arrays
@@ -49,13 +40,9 @@ Extract and generalize the helper functions from `test_budget_adj.py` into `puff
 
 Keep fixtures minimal — just enough structure to construct inputs. Individual test files build on these as needed.
 
-### 1.4 Add CI via GitHub Actions
+### 1.2 Add `slow` marker
 
-Create `.github/workflows/tests.yml`:
-- Run on push/PR to master and feature branches
-- Matrix: Python 3.9, 3.11, 3.13
-- Steps: install, `pytest --cov=puffins --cov-report=term-missing`
-- Fail if tests fail; report coverage but don't gate on it yet
+Register a `slow` pytest marker in `pyproject.toml` so expensive tests can be deselected with `-m "not slow"`.
 
 ---
 
