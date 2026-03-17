@@ -24,6 +24,7 @@ from . import (
     num_solver,
     plumb_hou_1992,
     polar_amp,
+    radiation,
     stats,
     therm_inert,
     thermodynamics,
