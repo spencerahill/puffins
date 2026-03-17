@@ -2,23 +2,21 @@
 """Blackbody radiation: Planck function and Wien's displacement law."""
 
 import numpy as np
+import xarray as xr
 
 from .constants import (
     BOLTZ_CONST,
     PLANCK_CONST,
     SPEED_OF_LIGHT,
-    WIEN_DISP_CONST,
 )
 
-# Wien displacement constant for the frequency form: nu_peak = WIEN_FREQ * T.
-# Derived from x * exp(x) / (exp(x) - 1) = 3, giving x ≈ 2.821.
-WIEN_FREQ_FACTOR = 2.821 * BOLTZ_CONST / PLANCK_CONST
+ArrayLike = xr.DataArray | np.ndarray | float
 
 
 def planck_wavelength(
-    wavelength: np.ndarray | float,
-    temp: np.ndarray | float,
-) -> np.ndarray | float:
+    wavelength: ArrayLike,
+    temp: ArrayLike,
+) -> ArrayLike:
     """Planck spectral radiance B_lambda (W m-2 sr-1 m-1).
 
     Parameters
@@ -34,9 +32,9 @@ def planck_wavelength(
 
 
 def planck_frequency(
-    freq: np.ndarray | float,
-    temp: np.ndarray | float,
-) -> np.ndarray | float:
+    freq: ArrayLike,
+    temp: ArrayLike,
+) -> ArrayLike:
     """Planck spectral radiance B_nu (W m-2 sr-1 Hz-1).
 
     Parameters
@@ -51,7 +49,7 @@ def planck_frequency(
     )
 
 
-def wien_peak_wavelength(temp: np.ndarray | float) -> np.ndarray | float:
+def wien_peak_wavelength(temp: ArrayLike) -> ArrayLike:
     """Peak wavelength from Wien's displacement law (m).
 
     Parameters
@@ -59,10 +57,11 @@ def wien_peak_wavelength(temp: np.ndarray | float) -> np.ndarray | float:
     temp : Temperature in Kelvin.
 
     """
-    return WIEN_DISP_CONST / temp
+    wien_disp_const = 2.898e-3  # Wien displacement constant (m K).
+    return wien_disp_const / temp
 
 
-def wien_peak_frequency(temp: np.ndarray | float) -> np.ndarray | float:
+def wien_peak_frequency(temp: ArrayLike) -> ArrayLike:
     """Peak frequency from Wien's displacement law (Hz).
 
     Parameters
@@ -70,4 +69,6 @@ def wien_peak_frequency(temp: np.ndarray | float) -> np.ndarray | float:
     temp : Temperature in Kelvin.
 
     """
-    return WIEN_FREQ_FACTOR * temp
+    # Frequency-form Wien factor: x * exp(x) / (exp(x) - 1) = 3, giving x ≈ 2.821.
+    wien_freq_factor = 2.821 * BOLTZ_CONST / PLANCK_CONST
+    return wien_freq_factor * temp
