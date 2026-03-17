@@ -25,9 +25,8 @@ def planck_wavelength(
     temp : Temperature in Kelvin.
 
     """
-    lam = np.asarray(wavelength, dtype=float)
-    return (2 * PLANCK_CONST * SPEED_OF_LIGHT**2 / lam**5) / (
-        np.exp(PLANCK_CONST * SPEED_OF_LIGHT / (lam * BOLTZ_CONST * temp)) - 1
+    return (2 * PLANCK_CONST * SPEED_OF_LIGHT**2 / wavelength**5) / (
+        np.exp(PLANCK_CONST * SPEED_OF_LIGHT / (wavelength * BOLTZ_CONST * temp)) - 1
     )
 
 
@@ -43,9 +42,8 @@ def planck_frequency(
     temp : Temperature in Kelvin.
 
     """
-    nu = np.asarray(freq, dtype=float)
-    return (2 * PLANCK_CONST * nu**3 / SPEED_OF_LIGHT**2) / (
-        np.exp(PLANCK_CONST * nu / (BOLTZ_CONST * temp)) - 1
+    return (2 * PLANCK_CONST * freq**3 / SPEED_OF_LIGHT**2) / (
+        np.exp(PLANCK_CONST * freq / (BOLTZ_CONST * temp)) - 1
     )
 
 

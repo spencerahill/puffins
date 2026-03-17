@@ -1,6 +1,8 @@
 """Tests for radiation module."""
 
 import numpy as np
+import pytest
+import xarray as xr
 
 from puffins.constants import SPEED_OF_LIGHT, STEF_BOLTZ_CONST
 from puffins.radiation import (
@@ -27,11 +29,6 @@ class TestPlanckWavelength:
         """Planck function should be positive for positive wavelength and T."""
         b = planck_wavelength(1e-6, 300.0)
         assert b > 0
-
-    def test_scalar_input(self) -> None:
-        """Should accept scalar inputs and return a scalar."""
-        b = planck_wavelength(0.5e-6, 5800.0)
-        assert np.isscalar(b) or b.ndim == 0
 
 
 class TestPlanckFrequency:
@@ -84,3 +81,74 @@ class TestSpectralConsistency:
         # B_lambda = B_nu * |d_nu/d_lambda| = B_nu * c / lambda^2
         b_lam_from_nu = b_nu * SPEED_OF_LIGHT / lam**2
         np.testing.assert_allclose(b_lam, b_lam_from_nu, rtol=1e-10)
+
+
+LAM_SCALAR = 1e-6  # 1 µm wavelength
+NU_SCALAR = SPEED_OF_LIGHT / LAM_SCALAR
+TEMP_SCALAR = 300.0
+
+
+@pytest.mark.parametrize(
+    "lam,temp",
+    [
+        (LAM_SCALAR, TEMP_SCALAR),
+        (np.array([LAM_SCALAR, 2e-6]), TEMP_SCALAR),
+        (
+            xr.DataArray([LAM_SCALAR, 2e-6], dims=["wavelength"]),
+            xr.DataArray([TEMP_SCALAR, 350.0], dims=["wavelength"]),
+        ),
+    ],
+    ids=["scalar", "ndarray", "DataArray"],
+)
+def test_planck_wavelength_array_like(lam: object, temp: object) -> None:
+    """planck_wavelength accepts float, np.ndarray, and xr.DataArray."""
+    result = planck_wavelength(lam, temp)
+    assert np.all(result > 0)
+
+
+@pytest.mark.parametrize(
+    "nu,temp",
+    [
+        (NU_SCALAR, TEMP_SCALAR),
+        (np.array([NU_SCALAR, 2 * NU_SCALAR]), TEMP_SCALAR),
+        (
+            xr.DataArray([NU_SCALAR, 2 * NU_SCALAR], dims=["frequency"]),
+            xr.DataArray([TEMP_SCALAR, 350.0], dims=["frequency"]),
+        ),
+    ],
+    ids=["scalar", "ndarray", "DataArray"],
+)
+def test_planck_frequency_array_like(nu: object, temp: object) -> None:
+    """planck_frequency accepts float, np.ndarray, and xr.DataArray."""
+    result = planck_frequency(nu, temp)
+    assert np.all(result > 0)
+
+
+@pytest.mark.parametrize(
+    "temp",
+    [
+        TEMP_SCALAR,
+        np.array([TEMP_SCALAR, 5800.0]),
+        xr.DataArray([TEMP_SCALAR, 5800.0], dims=["temperature"]),
+    ],
+    ids=["scalar", "ndarray", "DataArray"],
+)
+def test_wien_peak_wavelength_array_like(temp: object) -> None:
+    """wien_peak_wavelength accepts float, np.ndarray, and xr.DataArray."""
+    result = wien_peak_wavelength(temp)
+    assert np.all(result > 0)
+
+
+@pytest.mark.parametrize(
+    "temp",
+    [
+        TEMP_SCALAR,
+        np.array([TEMP_SCALAR, 5800.0]),
+        xr.DataArray([TEMP_SCALAR, 5800.0], dims=["temperature"]),
+    ],
+    ids=["scalar", "ndarray", "DataArray"],
+)
+def test_wien_peak_frequency_array_like(temp: object) -> None:
+    """wien_peak_frequency accepts float, np.ndarray, and xr.DataArray."""
+    result = wien_peak_frequency(temp)
+    assert np.all(result > 0)
