@@ -386,7 +386,7 @@ def faceted_ax(*args, width=4, aspect=0.618, **kwargs):
     return fac_ax(*args, width=width, aspect=aspect, **kwargs)
 
 
-def fig_ax(width: float = 3.75, aspect: float = 1.618) -> (Figure, Axes):
+def fig_ax(width: float = 3.75, aspect: float = 1.618) -> tuple[Figure, Axes]:
     """
     Create plt.Figure with single subplot and specified width and aspect ratio.
 
@@ -710,7 +710,7 @@ def annotate_heatmap(
         the text labels.
 
     """
-    if not isinstance(data, (list, np.ndarray)):
+    if not isinstance(data, list | np.ndarray):
         data = im.get_array()
 
     # Normalize the threshold to the images color range.

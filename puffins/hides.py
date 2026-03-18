@@ -9,7 +9,7 @@ from .names import LAT_STR
 
 
 def _flip_dim(arr: xr.DataArray, dim: str) -> xr.DataArray:
-    return arr.isel(**{dim: slice(None, None, -1)})
+    return arr.isel({dim: slice(None, None, -1)})  # type: ignore[no-any-return]
 
 
 def _flip_lats(arr: xr.DataArray, lat_str: str = LAT_STR) -> xr.DataArray:
@@ -36,7 +36,7 @@ def hides_above_eq_mom(
 
     """
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]
+    return arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]  # type: ignore[no-any-return]
 
 
 def hides_negative(
@@ -44,7 +44,7 @@ def hides_negative(
 ) -> xr.DataArray:
     """Poleward-most latitude where gradient wind has no real solution."""
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return arr.where(np.isnan(arr), drop=True)[-1][lat_str]
+    return arr.where(np.isnan(arr), drop=True)[-1][lat_str]  # type: ignore[no-any-return]
 
 
 def hides_vort_zero_cross(
@@ -52,7 +52,8 @@ def hides_vort_zero_cross(
 ) -> xr.DataArray:
     """Poleward-most latitude where absolute vorticity changes sign."""
     arr = _maybe_flip_lats(abs_vort, flip_lats)
-    return arr.where(np.sign(arr).diff(lat_str), drop=True).dropna(lat_str)[-1][lat_str]
+    sign_change = np.sign(arr).diff(lat_str)  # type: ignore[attr-defined]
+    return arr.where(sign_change, drop=True).dropna(lat_str)[-1][lat_str]  # type: ignore[no-any-return]
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-16 |
+| **Last updated** | 2026-03-18 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -23,11 +23,20 @@ signatures encode units and coordinate conventions.
 
 ---
 
+## Group 0: Infrastructure
+
+- [x] Create `puffins/_typing.py` with shared type aliases (`Scalar`, `ArrayLike`, `XarrayObj`)
+- [x] Add per-module mypy strict overrides in `pyproject.toml`
+- [x] Add mypy to CI (non-blocking, `continue-on-error: true`)
+- [ ] Promote mypy CI check to blocking (remove `continue-on-error`)
+- [ ] Promote global strict mode once all modules are annotated
+
 ## Group 1: Simple Values & Utilities
 
 - [ ] `constants.py` — module-level constants (no functions to annotate)
 - [ ] `names.py` — string constants (no functions to annotate)
 - [ ] `longitude.py` — `Longitude` class and utilities
+- [ ] `dates.py` — date utilities (**priority**: has mypy `var-annotated` error)
 
 ## Group 2: Core Numerical Utilities
 
@@ -38,7 +47,7 @@ signatures encode units and coordinate conventions.
 ## Group 3: Physical Calculations
 
 - [ ] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number
-- [ ] `thermodynamics.py` — thermodynamic calculations
+- [ ] `thermodynamics.py` — thermodynamic calculations (**priority**: has mypy `no-redef` errors)
 - [ ] `vert_coords.py` — vertical coordinate transformations
 - [ ] `tropopause.py` — tropopause diagnostics
 - [ ] `lcl.py` — lifted condensation level
@@ -49,6 +58,7 @@ signatures encode units and coordinate conventions.
 - [ ] `grad_bal.py` — gradient wind balance
 - [ ] `eq_area.py` — equal-area coordinate transformations
 - [x] `hides.py` — Hide's theorem (completed 2026-03-16)
+- [x] `radiation.py` — Planck function and Wien's law (completed 2026-03-18)
 
 ## Group 5: Theoretical Models
 
@@ -65,7 +75,7 @@ signatures encode units and coordinate conventions.
 - [ ] `stats.py` — statistical analysis tools
 - [ ] `bootstrap.py` — bootstrap methods
 - [ ] `eofs.py` — empirical orthogonal functions
-- [ ] `budget_adj.py` — column budget adjustment
+- [ ] `budget_adj.py` — column budget adjustment (**priority**: has mypy `no-any-return` error)
 
 ## Group 7: Visualization & Notebooks
 
@@ -74,8 +84,7 @@ signatures encode units and coordinate conventions.
 
 ## Group 8: CI Enforcement
 
-- [ ] Add mypy to CI (non-blocking)
-- [ ] Promote mypy to required check
+Moved to Group 0 (Infrastructure). See above.
 
 ---
 
@@ -85,5 +94,9 @@ signatures encode units and coordinate conventions.
 - Each module should be annotated and tested in the same PR where practical.
 - Use `xr.DataArray` for xarray inputs/outputs; use `float` for physical
   constants that default to Earth values.
+- For functions accepting mixed types, import from `puffins._typing`:
+  `ArrayLike` (DataArray | ndarray | scalar), `Scalar`, or `XarrayObj`.
+- When annotating a module, add it to the `[[tool.mypy.overrides]]` module
+  list in `pyproject.toml`.
 - This roadmap is a subset of Phase 4 in
   [Roadmap 001](001-modernize-repo-standards.md).

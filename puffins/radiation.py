@@ -2,15 +2,13 @@
 """Blackbody radiation: Planck function and Wien's displacement law."""
 
 import numpy as np
-import xarray as xr
 
+from ._typing import ArrayLike
 from .constants import (
     BOLTZ_CONST,
     PLANCK_CONST,
     SPEED_OF_LIGHT,
 )
-
-ArrayLike = xr.DataArray | np.ndarray | float
 
 
 def planck_wavelength(

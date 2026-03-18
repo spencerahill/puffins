@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from puffins._typing import ArrayLike
 from puffins.constants import SPEED_OF_LIGHT, STEF_BOLTZ_CONST
 from puffins.radiation import (
     planck_frequency,
@@ -100,7 +101,7 @@ TEMP_SCALAR = 300.0
     ],
     ids=["scalar", "ndarray", "DataArray"],
 )
-def test_planck_wavelength_array_like(lam: object, temp: object) -> None:
+def test_planck_wavelength_array_like(lam: ArrayLike, temp: ArrayLike) -> None:
     """planck_wavelength accepts float, np.ndarray, and xr.DataArray."""
     result = planck_wavelength(lam, temp)
     assert np.all(result > 0)
@@ -118,7 +119,7 @@ def test_planck_wavelength_array_like(lam: object, temp: object) -> None:
     ],
     ids=["scalar", "ndarray", "DataArray"],
 )
-def test_planck_frequency_array_like(nu: object, temp: object) -> None:
+def test_planck_frequency_array_like(nu: ArrayLike, temp: ArrayLike) -> None:
     """planck_frequency accepts float, np.ndarray, and xr.DataArray."""
     result = planck_frequency(nu, temp)
     assert np.all(result > 0)
@@ -133,7 +134,7 @@ def test_planck_frequency_array_like(nu: object, temp: object) -> None:
     ],
     ids=["scalar", "ndarray", "DataArray"],
 )
-def test_wien_peak_wavelength_array_like(temp: object) -> None:
+def test_wien_peak_wavelength_array_like(temp: ArrayLike) -> None:
     """wien_peak_wavelength accepts float, np.ndarray, and xr.DataArray."""
     result = wien_peak_wavelength(temp)
     assert np.all(result > 0)
@@ -148,7 +149,7 @@ def test_wien_peak_wavelength_array_like(temp: object) -> None:
     ],
     ids=["scalar", "ndarray", "DataArray"],
 )
-def test_wien_peak_frequency_array_like(temp: object) -> None:
+def test_wien_peak_frequency_array_like(temp: ArrayLike) -> None:
     """wien_peak_frequency accepts float, np.ndarray, and xr.DataArray."""
     result = wien_peak_frequency(temp)
     assert np.all(result > 0)
