@@ -38,7 +38,9 @@ def hides_above_eq_mom(
 
     """
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return cast(xr.DataArray, arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str])
+    return cast(
+        xr.DataArray, arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]
+    )
 
 
 def hides_negative(
@@ -55,7 +57,9 @@ def hides_vort_zero_cross(
     """Poleward-most latitude where absolute vorticity changes sign."""
     arr = _maybe_flip_lats(abs_vort, flip_lats)
     sign_change = cast(xr.DataArray, np.sign(arr)).diff(lat_str)
-    return cast(xr.DataArray, arr.where(sign_change, drop=True).dropna(lat_str)[-1][lat_str])
+    return cast(
+        xr.DataArray, arr.where(sign_change, drop=True).dropna(lat_str)[-1][lat_str]
+    )
 
 
 if __name__ == "__main__":
