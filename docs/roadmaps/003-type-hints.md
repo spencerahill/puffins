@@ -33,10 +33,10 @@ signatures encode units and coordinate conventions.
 
 ## Group 1: Simple Values & Utilities
 
-- [ ] `constants.py` — module-level constants (no functions to annotate)
-- [ ] `names.py` — string constants (no functions to annotate)
-- [ ] `longitude.py` — `Longitude` class and utilities
-- [ ] `dates.py` — date utilities (**priority**: has mypy `var-annotated` error)
+- [x] `constants.py` — module-level constants, no functions (completed 2026-03-18)
+- [x] `names.py` — string constants, no functions (completed 2026-03-18)
+- [x] `longitude.py` — `Longitude` class and utilities (completed 2026-03-18)
+- [x] `dates.py` — date utilities (completed 2026-03-18)
 
 ## Group 2: Core Numerical Utilities
 
