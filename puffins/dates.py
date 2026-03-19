@@ -227,7 +227,5 @@ def time_to_year_and_day(arr: xr.DataArray, dim: str = "time") -> xr.DataArray:
     """Split time index into two, one for the year, one for the day of year"""
     return cast(
         xr.DataArray,
-        arr.groupby(f"{dim}.year").apply(
-            lambda x: x.groupby(f"{dim}.dayofyear").first()
-        ),
+        arr.groupby(f"{dim}.year").map(lambda x: x.groupby(f"{dim}.dayofyear").first()),
     )

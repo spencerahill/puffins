@@ -1,7 +1,6 @@
 """Tests for dates module."""
 
 import numpy as np
-import pandas as pd
 import pytest
 import xarray as xr
 
@@ -18,7 +17,7 @@ from puffins.dates import (
 @pytest.fixture
 def monthly_ts() -> xr.DataArray:
     """3-year monthly time series."""
-    time = pd.date_range("2000-01-01", periods=36, freq="MS")
+    time = xr.date_range("2000-01-01", periods=36, freq="MS")
     return xr.DataArray(
         np.arange(36, dtype=float), dims=["time"], coords={"time": time}
     )
@@ -27,7 +26,7 @@ def monthly_ts() -> xr.DataArray:
 @pytest.fixture
 def monthly_ts_2d() -> xr.DataArray:
     """3-year monthly time series with a spatial dimension."""
-    time = pd.date_range("2000-01-01", periods=36, freq="MS")
+    time = xr.date_range("2000-01-01", periods=36, freq="MS")
     data = np.arange(72, dtype=float).reshape(36, 2)
     return xr.DataArray(data, dims=["time", "x"], coords={"time": time, "x": [0, 1]})
 
@@ -153,7 +152,7 @@ class TestTimeToYearAndDay:
     """Tests for time_to_year_and_day."""
 
     def test_produces_year_and_dayofyear(self) -> None:
-        time = pd.date_range("2000-01-01", periods=365, freq="D")
+        time = xr.date_range("2000-01-01", periods=365, freq="D")
         arr = xr.DataArray(
             np.arange(365, dtype=float), dims=["time"], coords={"time": time}
         )
