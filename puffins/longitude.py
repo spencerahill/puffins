@@ -61,6 +61,7 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
 
     """
     lon0360 = lon_to_0360(lon)
+    # NOTE: bare `if` only works on scalars; arrays raise ValueError. See #17.
     if _lon_in_west_hem(lon0360):
         return lon0360 - 360
     else:

@@ -88,6 +88,12 @@ class TestAnnSubsetTs:
         assert "year" in result.dims
         assert len(result.year) == 3
 
+    def test_max_reduction(self, monthly_ts: xr.DataArray) -> None:
+        result = ann_subset_ts(monthly_ts, "jja", reduction="max")
+        assert "year" in result.dims
+        # Max of JJA in year 1 (indices 5,6,7 -> values 5,6,7) is 7
+        assert result.isel(year=0).values == 7
+
     def test_single_month_equals_raw_values(self, monthly_ts: xr.DataArray) -> None:
         result = ann_subset_ts(monthly_ts, 1)
         # January values are 0, 12, 24
