@@ -1,5 +1,7 @@
 """Functionality relating to calendars, times, and dates."""
 
+from typing import cast, overload
+
 import numpy as np
 import xarray as xr
 
@@ -84,23 +86,41 @@ _ann_subs = (
     seasons_6mon,
     ann,
 )
-ann_subsets = {}
+ann_subsets: dict[str, int | list[int] | range] = {}
 [ann_subsets.update(d) for d in _ann_subs]
 
 
-def subset_ann(arr, months, dim_time=TIME_STR, drop=False):
+def subset_ann(
+    arr: xr.DataArray,
+    months: str | list[int] | int,
+    dim_time: str = TIME_STR,
+    drop: bool = False,
+) -> xr.DataArray:
     """Restrict array values to a subset of each calendar year."""
+    months_vals: int | list[int] | range
     if isinstance(months, str):
         if months == "ann":
             return arr
-        months = ann_subsets[months.lower()]
+        months_vals = ann_subsets[months.lower()]
+    else:
+        months_vals = months
     time = arr[dim_time]
-    return arr.where(
-        (time.dt.month >= np.min(months)) & (time.dt.month <= np.max(months)), drop=drop
+    return cast(
+        xr.DataArray,
+        arr.where(
+            (time.dt.month >= np.min(months_vals))
+            & (time.dt.month <= np.max(months_vals)),
+            drop=drop,
+        ),
     )
 
 
-def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
+def ann_subset_ts(
+    arr: xr.DataArray,
+    months: str | list[int] | int,
+    reduction: str = "mean",
+    dim_time: str = TIME_STR,
+) -> xr.DataArray:
     """Annually resolved timeseries of array reduced over the given month.
 
     Default reduction is an average.
@@ -108,10 +128,10 @@ def ann_subset_ts(arr, months, reduction="mean", dim_time=TIME_STR):
     """
     grouped = subset_ann(arr, months, dim_time).groupby(dim_time + ".year")
     func = getattr(grouped, reduction)
-    return func()
+    return cast(xr.DataArray, func())
 
 
-def ann_ts_djf(arr):
+def ann_ts_djf(arr: xr.DataArray) -> xr.DataArray:
     """Annual timeseries of DJF values, accounting for year wrapping.
 
     Simple grouping by year would put the J, F, and D values in the same
@@ -136,16 +156,42 @@ def ann_ts_djf(arr):
         weights_dec + weights_jf
     )
 
-    arr_djf = xr.concat([arr_jf.isel(year=0), arr_djf_no_yr1], dim="year")
+    arr_djf = cast(
+        xr.DataArray,
+        xr.concat([arr_jf.isel(year=0), arr_djf_no_yr1], dim="year"),
+    )
     if arr.ndim > 1:
         ind_time = arr.dims.index("time")
         dims_out = list(arr.dims)
         dims_out[ind_time] = "year"
-        return arr_djf.transpose(*dims_out)
+        return cast(xr.DataArray, arr_djf.transpose(*dims_out))
     return arr_djf
 
 
-def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
+@overload
+def ann_harm(
+    arr: xr.DataArray,
+    num_harm: int = ...,
+    normalize: bool = ...,
+    do_sum: bool = ...,
+) -> xr.DataArray: ...
+
+
+@overload
+def ann_harm(
+    arr: np.ndarray,
+    num_harm: int = ...,
+    normalize: bool = ...,
+    do_sum: bool = ...,
+) -> np.ndarray: ...
+
+
+def ann_harm(
+    arr: xr.DataArray | np.ndarray,
+    num_harm: int = 1,
+    normalize: bool = False,
+    do_sum: bool = True,
+) -> xr.DataArray | np.ndarray:
     """Compute annual harmonics.
 
     Adapted from https://stackoverflow.com/a/69424590/1706640.
@@ -168,8 +214,8 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     if normalize:
         vals /= np.abs(vals).max()
     if isinstance(arr, xr.DataArray):
-        return xr.ones_like(arr) * vals
-    return vals
+        return cast(xr.DataArray, xr.ones_like(arr) * vals)
+    return np.asarray(vals)
     # These two lines below are for if you want the approximation at
     # whatever frequency has the most power.  What I want is the
     # approximation using just the lowest `n` frequencies.
@@ -177,8 +223,11 @@ def ann_harm(arr, num_harm=1, normalize=False, do_sum=True):
     # mask[[imax]] = 1
 
 
-def time_to_year_and_day(arr, dim="time"):
+def time_to_year_and_day(arr: xr.DataArray, dim: str = "time") -> xr.DataArray:
     """Split time index into two, one for the year, one for the day of year"""
-    return arr.groupby(f"{dim}.year").apply(
-        lambda x: x.groupby(f"{dim}.dayofyear").first()
+    return cast(
+        xr.DataArray,
+        arr.groupby(f"{dim}.year").apply(
+            lambda x: x.groupby(f"{dim}.dayofyear").first()
+        ),
     )

@@ -112,6 +112,7 @@ ignore_missing_imports = true
 module = [
     "puffins._typing",
     "puffins.constants",
+    "puffins.dates",
     "puffins.hides",
     "puffins.names",
     "puffins.radiation",
