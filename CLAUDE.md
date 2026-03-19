@@ -23,6 +23,7 @@ pytest
 The package is structured into several functional groups:
 
 ### Core Utilities
+- `_typing.py`: Shared type aliases (`Scalar`, `ArrayLike`, `XarrayObj`)
 - `constants.py`: Physical constants for Earth, Mars, Saturn, Titan, and Venus
 - `names.py`: String constants for coordinate/dimension names (lat, lon, lev, time, etc.)
 - `nb_utils.py`: Jupyter notebook utilities including coordinate array creation, trigonometric helpers, and git integration
@@ -39,6 +40,7 @@ The package is structured into several functional groups:
 - `tropopause.py`: Tropopause diagnostics
 - `vert_coords.py`: Vertical coordinate transformations
 - `lcl.py`: Lifted condensation level calculations
+- `radiation.py`: Blackbody radiation (Planck function, Wien's displacement law)
 
 ### Climate Dynamics
 - `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent)
