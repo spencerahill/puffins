@@ -111,7 +111,11 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "puffins._typing",
+    "puffins.constants",
+    "puffins.dates",
     "puffins.hides",
+    "puffins.longitude",
+    "puffins.names",
     "puffins.radiation",
 ]
 disallow_untyped_defs = true
