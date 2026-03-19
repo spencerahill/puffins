@@ -2,9 +2,9 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Not Started |
+| **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-16 |
+| **Last updated** | 2026-03-19 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -15,7 +15,8 @@ function and enforced coverage thresholds in CI.
 
 ## Current State
 
-- **3 test files** (`test_budget_adj.py`, `test_calculus.py`, `test_kuo_el.py`), covering 3 of ~31 modules
+- **5 test files** (`test_budget_adj.py`, `test_calculus.py`, `test_kuo_el.py`, `test_dates.py`, `test_longitude.py`), covering 5 of ~31 modules
+- **121 tests passing** (50 pre-existing + 71 added in Roadmap 003 Group 1 PR)
 - **~328 public functions**, the vast majority untested
 - CI workflow (`ci.yml`) and pytest configuration in `pyproject.toml` now exist (added in Roadmap 001)
 - pytest and pytest-cov are project dev dependencies
@@ -52,16 +53,16 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 
 ### Priority order and rationale
 
-| Module | Public funcs | Why prioritize |
-|--------|-------------|----------------|
-| `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write |
-| `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent |
-| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules |
-| `thermodynamics.py` | 24 | Pure math; heavily used downstream |
-| `calculus.py` | 14 | Differentiation/integration — easy to validate against analytical solutions |
-| `num_solver.py` | 5 | Small module, testable against known roots |
-| `dates.py` | 5 | Small, pure utilities |
-| `longitude.py` | 3 + class | Small, self-contained |
+| Module | Public funcs | Why prioritize | Status |
+|--------|-------------|----------------|--------|
+| `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write | — (no functions) |
+| `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent | — (no functions) |
+| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | Not started |
+| `thermodynamics.py` | 24 | Pure math; heavily used downstream | Not started |
+| `calculus.py` | 14 | Differentiation/integration — easy to validate against analytical solutions | Done (pre-existing) |
+| `num_solver.py` | 5 | Small module, testable against known roots | Not started |
+| `dates.py` | 5 | Small, pure utilities | **Done** (20 tests, 2026-03-19) |
+| `longitude.py` | 3 + class | Small, self-contained | **Done** (51 tests, 2026-03-19) |
 
 ### Testing strategy for pure functions
 

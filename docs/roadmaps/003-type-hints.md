@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-18 |
+| **Last updated** | 2026-03-19 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -35,8 +35,8 @@ signatures encode units and coordinate conventions.
 
 - [x] `constants.py` — module-level constants, no functions (completed 2026-03-18)
 - [x] `names.py` — string constants, no functions (completed 2026-03-18)
-- [x] `longitude.py` — `Longitude` class and utilities (completed 2026-03-18)
-- [x] `dates.py` — date utilities (completed 2026-03-18)
+- [x] `longitude.py` — `Longitude` class and utilities; 51 tests added (completed 2026-03-19)
+- [x] `dates.py` — date utilities; 20 tests added (completed 2026-03-19)
 
 ## Group 2: Core Numerical Utilities
 
