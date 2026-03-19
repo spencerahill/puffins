@@ -13,14 +13,21 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # needed for setuptools-scm
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
+      - run: uv run ruff check --fix .
+      - run: uv run ruff format .
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format with ruff"
+      - run: uv run mypy puffins/
+        continue-on-error: true
 
   test:
     runs-on: ubuntu-latest

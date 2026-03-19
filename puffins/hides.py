@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 """Hide's theorem."""
 
+from typing import cast
+
 import numpy as np
 import xarray as xr
 
@@ -9,7 +11,7 @@ from .names import LAT_STR
 
 
 def _flip_dim(arr: xr.DataArray, dim: str) -> xr.DataArray:
-    return arr.isel(**{dim: slice(None, None, -1)})
+    return cast(xr.DataArray, arr.isel({dim: slice(None, None, -1)}))
 
 
 def _flip_lats(arr: xr.DataArray, lat_str: str = LAT_STR) -> xr.DataArray:
@@ -36,7 +38,9 @@ def hides_above_eq_mom(
 
     """
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]
+    return cast(
+        xr.DataArray, arr.where(arr > rot_rate * radius**2, drop=True)[-1][lat_str]
+    )
 
 
 def hides_negative(
@@ -44,7 +48,7 @@ def hides_negative(
 ) -> xr.DataArray:
     """Poleward-most latitude where gradient wind has no real solution."""
     arr = _maybe_flip_lats(ang_mom, flip_lats)
-    return arr.where(np.isnan(arr), drop=True)[-1][lat_str]
+    return cast(xr.DataArray, arr.where(np.isnan(arr), drop=True)[-1][lat_str])
 
 
 def hides_vort_zero_cross(
@@ -52,7 +56,10 @@ def hides_vort_zero_cross(
 ) -> xr.DataArray:
     """Poleward-most latitude where absolute vorticity changes sign."""
     arr = _maybe_flip_lats(abs_vort, flip_lats)
-    return arr.where(np.sign(arr).diff(lat_str), drop=True).dropna(lat_str)[-1][lat_str]
+    sign_change = cast(xr.DataArray, np.sign(arr)).diff(lat_str)
+    return cast(
+        xr.DataArray, arr.where(sign_change, drop=True).dropna(lat_str)[-1][lat_str]
+    )
 
 
 if __name__ == "__main__":

@@ -105,3 +105,18 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+# Strict checking for fully type-annotated modules.
+# Add modules here as they complete type annotation.
+[[tool.mypy.overrides]]
+module = [
+    "puffins._typing",
+    "puffins.hides",
+    "puffins.radiation",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true

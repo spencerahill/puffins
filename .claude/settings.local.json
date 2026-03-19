@@ -9,7 +9,10 @@
       "Bash(pytest:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(git pull:*)",
+      "Bash(uv sync:*)"
     ]
   }
 }
