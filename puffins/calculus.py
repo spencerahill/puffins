@@ -1,12 +1,16 @@
 #! /usr/bin/env python
 """Derivatives, integrals, and averages."""
 
+from __future__ import annotations
+
 import contextlib
 import logging
+from typing import cast
 
 import numpy as np
 import xarray as xr
 
+from ._typing import ArrayLike, XarrayObj
 from .constants import RAD_EARTH
 from .names import (
     BOUNDS_STR,
@@ -21,28 +25,37 @@ from .nb_utils import cosdeg, sindeg
 
 
 # Derivatives.
-def lat_deriv(arr, lat_str=LAT_STR):
+def lat_deriv(arr: xr.DataArray, lat_str: str = LAT_STR) -> xr.DataArray:
     """Meridional derivative approximated by centered differencing."""
     # Latitude is in degrees but in the denominator, so using `np.rad2deg`
     # gives the correct conversion from degrees to radians.
-    return np.rad2deg(arr.differentiate(lat_str))
+    return cast(xr.DataArray, np.rad2deg(arr.differentiate(lat_str)))
 
 
 def flux_div(
-    arr_merid_flux, arr_vert_flux, vert_str=LEV_STR, lat_str=LAT_STR, radius=RAD_EARTH
-):
+    arr_merid_flux: xr.DataArray,
+    arr_vert_flux: xr.DataArray,
+    vert_str: str = LEV_STR,
+    lat_str: str = LAT_STR,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
     """Horizontal plus vertical flux divergence of a given field."""
     merid_flux_div = lat_deriv(arr_merid_flux, lat_str) / (
         radius * cosdeg(arr_merid_flux[lat_str])
     )
     vert_flux_div = arr_vert_flux.differentiate(vert_str)
-    return merid_flux_div + vert_flux_div
+    return cast(xr.DataArray, merid_flux_div + vert_flux_div)
 
 
 # Meridional integrals and averages.
 def merid_integral_point_data(
-    arr, min_lat=-90, max_lat=90, unif_thresh=0.01, do_cumsum=False, lat_str=LAT_STR
-):
+    arr: xr.DataArray,
+    min_lat: float = -90,
+    max_lat: float = 90,
+    unif_thresh: float = 0.01,
+    do_cumsum: bool = False,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Area-weighted meridional integral for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -63,13 +76,18 @@ def merid_integral_point_data(
         dlat = dlat_arr.mean()
     integrand = arr.where(lat_mask, drop=True) * cosdeg(lat) * np.deg2rad(dlat)
     if do_cumsum:
-        return integrand.cumsum(lat_str)
-    return integrand.sum(lat_str)
+        return cast(xr.DataArray, integrand.cumsum(lat_str))
+    return cast(xr.DataArray, integrand.sum(lat_str))
 
 
 def merid_avg_point_data(
-    arr, min_lat=-90, max_lat=90, unif_thresh=0.01, do_cumsum=False, lat_str=LAT_STR
-):
+    arr: xr.DataArray,
+    min_lat: float = -90,
+    max_lat: float = 90,
+    unif_thresh: float = 0.01,
+    do_cumsum: bool = False,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Area-weighted meridional average for data defined at single lats.
 
     As opposed to e.g. gridded climate model output, wherein the quantity at
@@ -78,26 +96,35 @@ def merid_avg_point_data(
     implemented in the function ``merid_average_grid_data``.
 
     """
-    return merid_integral_point_data(
-        arr,
-        min_lat=min_lat,
-        max_lat=max_lat,
-        unif_thresh=unif_thresh,
-        do_cumsum=do_cumsum,
-        lat_str=lat_str,
-    ) / merid_integral_point_data(
-        xr.ones_like(arr),
-        min_lat=min_lat,
-        max_lat=max_lat,
-        unif_thresh=unif_thresh,
-        do_cumsum=do_cumsum,
-        lat_str=lat_str,
+    return cast(
+        xr.DataArray,
+        merid_integral_point_data(
+            arr,
+            min_lat=min_lat,
+            max_lat=max_lat,
+            unif_thresh=unif_thresh,
+            do_cumsum=do_cumsum,
+            lat_str=lat_str,
+        )
+        / merid_integral_point_data(
+            xr.ones_like(arr),
+            min_lat=min_lat,
+            max_lat=max_lat,
+            unif_thresh=unif_thresh,
+            do_cumsum=do_cumsum,
+            lat_str=lat_str,
+        ),
     )
 
 
 def merid_integral_grid_data(
-    arr, min_lat=-90, max_lat=90, lat_str=LAT_STR, dlat_var_tol=0.01, radius=RAD_EARTH
-):
+    arr: xr.DataArray,
+    min_lat: float = -90,
+    max_lat: float = 90,
+    lat_str: str = LAT_STR,
+    dlat_var_tol: float = 0.01,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
     """Area-weighted meridional integral for data on finite grid cells.
 
     As opposed to data defined at individual latitudes, wherein the quantity at
@@ -131,10 +158,15 @@ def merid_integral_grid_data(
     sinlat_diff = sindeg(lat_above.values) - sindeg(lat_below.values)
     area = xr.ones_like(lat) * 2.0 * np.pi * radius**2 * sinlat_diff
     area_masked = area.where((lat > min_lat) & (lat < max_lat), drop=True)
-    return (arr_masked * area_masked).sum(lat_str)
+    return cast(xr.DataArray, (arr_masked * area_masked).sum(lat_str))
 
 
-def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
+def merid_avg_grid_data(
+    arr: xr.DataArray,
+    min_lat: float = -90,
+    max_lat: float = 90,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Area-weighted meridional average for data on finite grid cells.
 
     As opposed to data defined at individual latitudes, wherein the quantity at
@@ -143,29 +175,43 @@ def merid_avg_grid_data(arr, min_lat=-90, max_lat=90, lat_str=LAT_STR):
     ``merid_avg_point_data`` should be used.
 
     """
-    return merid_integral_grid_data(
-        arr, min_lat, max_lat, lat_str
-    ) / merid_integral_grid_data(xr.ones_like(arr), min_lat, max_lat, lat_str)
+    return cast(
+        xr.DataArray,
+        merid_integral_grid_data(arr, min_lat, max_lat, lat_str)
+        / merid_integral_grid_data(xr.ones_like(arr), min_lat, max_lat, lat_str),
+    )
 
 
 def global_avg_grid_data(
-    arr, lat_str=LAT_STR, lon_str=LON_STR, sfc_area_str=SFC_AREA_STR
-):
+    arr: xr.DataArray,
+    lat_str: str = LAT_STR,
+    lon_str: str = LON_STR,
+    sfc_area_str: str = SFC_AREA_STR,
+) -> xr.DataArray:
     """Area-weighted global average for data on finite-area grid cells."""
     if sfc_area_str in arr:
         sfc_area = arr[sfc_area_str]
-        return (arr * sfc_area).sum([lon_str, lat_str]) / sfc_area.sum(
-            [lon_str, lat_str]
+        return cast(
+            xr.DataArray,
+            (arr * sfc_area).sum([lon_str, lat_str]) / sfc_area.sum([lon_str, lat_str]),
         )
     # TODO: this assumes uniform longitude, which isn't strictly guaranteed.
     return merid_avg_grid_data(
-        arr.mean(lon_str), min_lat=-90, max_lat=90, lat_str=lat_str
+        cast(xr.DataArray, arr.mean(lon_str)),
+        min_lat=-90,
+        max_lat=90,
+        lat_str=lat_str,
     )
 
 
 def merid_avg_sinlat_data(
-    arr, min_lat=-90, max_lat=90, sinlat=None, lat_str=LAT_STR, dsinlat_var_tol=0.001
-):
+    arr: xr.DataArray,
+    min_lat: float = -90,
+    max_lat: float = 90,
+    sinlat: xr.DataArray | None = None,
+    lat_str: str = LAT_STR,
+    dsinlat_var_tol: float = 0.001,
+) -> xr.DataArray:
     """Area-weighted meridional average for data evenly spaced in sin(lat).
 
     Data spaced uniformly by sin(lat) is already area-weighted, so just
@@ -188,7 +234,7 @@ def merid_avg_sinlat_data(
             f"Uniform sin(lat) spacing required to within {dsinlat_var_tol}.  "
             f"Actual max fractional deviation from uniform: {max_frac_var}"
         )
-    return arr_masked.mean(lat_str)
+    return cast(xr.DataArray, arr_masked.mean(lat_str))
 
 
 # Surface area of lat-lon data.
@@ -279,12 +325,12 @@ def infer_bounds(
 
 
 def add_lat_lon_bounds(
-    arr,
-    lat_str=LAT_STR,
-    lon_str=LON_STR,
-    lat_bounds_str=LAT_BOUNDS_STR,
-    lon_bounds_str=LON_BOUNDS_STR,
-):
+    arr: XarrayObj,
+    lat_str: str = LAT_STR,
+    lon_str: str = LON_STR,
+    lat_bounds_str: str = LAT_BOUNDS_STR,
+    lon_bounds_str: str = LON_BOUNDS_STR,
+) -> xr.Dataset:
     """Add bounding arrays to lat and lon arrays."""
     if isinstance(arr, xr.DataArray):
         ds = arr.to_dataset()
@@ -297,11 +343,11 @@ def add_lat_lon_bounds(
     return ds
 
 
-def to_radians(arr, is_delta=False):
+def to_radians(arr: ArrayLike, is_delta: bool = False) -> ArrayLike:
     """Force data with units either degrees or radians to be radians."""
     # Infer the units from embedded metadata, if it's there.
     try:
-        units = arr.units
+        units = arr.units  # type: ignore[union-attr]
     except AttributeError:
         pass
     else:
@@ -318,7 +364,9 @@ def to_radians(arr, is_delta=False):
     return arr
 
 
-def _bounds_from_array(arr, dim, bounds_dim=BOUNDS_STR):
+def _bounds_from_array(
+    arr: xr.DataArray, dim: str, bounds_dim: str = BOUNDS_STR
+) -> xr.DataArray:
     """Get the bounds of an array given its center values.
 
     E.g. if lat-lon grid center lat/lon values are known, but not the
@@ -333,38 +381,38 @@ def _bounds_from_array(arr, dim, bounds_dim=BOUNDS_STR):
     lower = arr - 0.5 * spacing_padded
     upper = arr + 0.5 * spacing_padded
     bounds = xr.concat([lower, upper], dim=bounds_dim)
-    return bounds.T
+    return cast(xr.DataArray, bounds.T)
 
 
-def _diff_bounds(bounds, coord):
+def _diff_bounds(bounds: xr.DataArray, coord: xr.DataArray) -> xr.DataArray:
     """Get grid spacing by subtracting upper and lower bounds."""
     try:
-        return bounds[:, 1] - bounds[:, 0]
+        return cast(xr.DataArray, bounds[:, 1] - bounds[:, 0])
     except IndexError:
         diff = np.diff(bounds, axis=0)
         return xr.DataArray(diff, dims=coord.dims, coords=coord.coords)
 
 
 def _grid_sfc_area(
-    lon,
-    lat,
-    lon_bounds=None,
-    lat_bounds=None,
-    lon_str=LON_STR,
-    lat_str=LAT_STR,
-    lon_bounds_str=LON_BOUNDS_STR,
-    lat_bounds_str=LAT_BOUNDS_STR,
-    sfc_area_str=SFC_AREA_STR,
-    radius=RAD_EARTH,
-):
+    lon: xr.DataArray,
+    lat: xr.DataArray,
+    lon_bounds: xr.DataArray | None = None,
+    lat_bounds: xr.DataArray | None = None,
+    lon_str: str = LON_STR,
+    lat_str: str = LAT_STR,
+    lon_bounds_str: str = LON_BOUNDS_STR,
+    lat_bounds_str: str = LAT_BOUNDS_STR,
+    sfc_area_str: str = SFC_AREA_STR,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
     # Compute the bounds if not given.
     if lon_bounds is None:
         lon_bounds = _bounds_from_array(lon, lon_str, lon_bounds_str)
     if lat_bounds is None:
         lat_bounds = _bounds_from_array(lat, lat_str, lat_bounds_str)
     # Compute the surface area.
-    dlon = _diff_bounds(to_radians(lon_bounds, is_delta=True), lon)
-    sinlat_bounds = np.sin(to_radians(lat_bounds, is_delta=True))
+    dlon = _diff_bounds(cast(xr.DataArray, to_radians(lon_bounds, is_delta=True)), lon)
+    sinlat_bounds = cast(xr.DataArray, np.sin(to_radians(lat_bounds, is_delta=True)))
     dsinlat = np.abs(_diff_bounds(sinlat_bounds, lat))
     sfc_area = dlon * dsinlat * (radius**2)
     # Rename the coordinates such that they match the actual lat / lon.
@@ -374,18 +422,18 @@ def _grid_sfc_area(
     sfc_area = sfc_area.rename(sfc_area_str)
     sfc_area[lat_str] = lat
     sfc_area[lon_str] = lon
-    return sfc_area.transpose()
+    return cast(xr.DataArray, sfc_area.transpose())
 
 
 def sfc_area_latlon_box(
-    ds,
-    lat_str=LAT_STR,
-    lon_str=LON_STR,
-    lat_bounds_str=LAT_BOUNDS_STR,
-    lon_bounds_str=LON_BOUNDS_STR,
-    sfc_area_str=SFC_AREA_STR,
-    radius=RAD_EARTH,
-):
+    ds: xr.Dataset,
+    lat_str: str = LAT_STR,
+    lon_str: str = LON_STR,
+    lat_bounds_str: str = LAT_BOUNDS_STR,
+    lon_bounds_str: str = LON_BOUNDS_STR,
+    sfc_area_str: str = SFC_AREA_STR,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
     """Calculate surface area of each grid cell in a lon-lat grid."""
     lon = ds[lon_str]
     lat = ds[lat_str]
@@ -405,12 +453,17 @@ def sfc_area_latlon_box(
     )
 
 
-def lat_circumf(lat, radius=RAD_EARTH):
+def lat_circumf(lat: ArrayLike, radius: float = RAD_EARTH) -> ArrayLike:
     """Circumference of a latitude circle."""
-    return 2 * np.pi * radius * cosdeg(lat)
+    return cast(ArrayLike, 2 * np.pi * radius * cosdeg(lat))
 
 
-def lat_circumf_weight(arr, lat=None, lat_str=LAT_STR, radius=RAD_EARTH):
+def lat_circumf_weight(
+    arr: xr.DataArray,
+    lat: xr.DataArray | None = None,
+    lat_str: str = LAT_STR,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
     """Multiply an array by the latitude circumference.
 
     For e.g. poleward tracer fluxes.
@@ -418,7 +471,7 @@ def lat_circumf_weight(arr, lat=None, lat_str=LAT_STR, radius=RAD_EARTH):
     """
     if lat is None:
         lat = arr[lat_str]
-    return arr * lat_circumf(lat, radius=radius)
+    return cast(xr.DataArray, arr * lat_circumf(lat, radius=radius))
 
 
 if __name__ == "__main__":
