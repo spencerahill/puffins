@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-20 |
+| **Last updated** | 2026-03-22 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -41,7 +41,7 @@ signatures encode units and coordinate conventions.
 ## Group 2: Core Numerical Utilities
 
 - [x] `calculus.py` — differentiation, integration, surface area; 57 new tests added (completed 2026-03-20)
-- [ ] `interp.py` — interpolation utilities
+- [x] `interp.py` — interpolation utilities; 35 new tests added (completed 2026-03-22)
 - [ ] `num_solver.py` — numerical solvers
 
 ## Group 3: Physical Calculations
