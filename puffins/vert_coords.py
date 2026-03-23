@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 """Functionality involving vertical coordinates."""
 
+import functools
+import operator
 import warnings
 
 import numpy as np
@@ -93,7 +95,12 @@ def dp_from_phalf(phalf, pfull_ref, phalf_str=PHALF_STR, pfull_str=PFULL_STR):
     vals_template = [
         xr.ones_like(phalf[dim]) for dim in phalf.dims if dim != phalf_str
     ] + [pfull_ref]
-    arr_template = xr.ones_like(np.prod(vals_template)).transpose(*dims_out)
+    # Use reduce(mul) instead of np.prod: numpy >=2 can't handle a list of
+    # DataArrays with different shapes, but pairwise mul triggers xarray
+    # broadcasting correctly.
+    arr_template = xr.ones_like(
+        functools.reduce(operator.mul, vals_template)
+    ).transpose(*dims_out)
     return (arr_template * dp_vals).rename("dp").astype("float")
 
 
