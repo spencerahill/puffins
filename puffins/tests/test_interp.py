@@ -352,57 +352,36 @@ class TestInterpDsSigmaToP:
 class TestInterpDsPToP:
     """Tests for interp_ds_p_to_p."""
 
-    def test_constant_field_stays_constant(self) -> None:
-        """A spatially constant field remains constant after interpolation."""
+    def _make_ds_and_plevs(self, value: float = 1.0) -> tuple[xr.Dataset, np.ndarray]:
+        """Create a Dataset with pfull coordinates and target plevs."""
         nlat, nlev = 5, 8
         lats = np.linspace(-60, 60, nlat)
-        # Varying pfull per latitude
         pfull_vals = np.linspace(200, 900, nlev)
-        pfull = xr.DataArray(
-            pfull_vals,
-            dims=[PFULL_STR],
-            coords={PFULL_STR: pfull_vals},
-        )
         temp = xr.DataArray(
-            300.0 * np.ones((nlat, nlev)),
+            value * np.ones((nlat, nlev)),
             dims=[LAT_STR, PFULL_STR],
             coords={LAT_STR: lats, PFULL_STR: pfull_vals},
             name="temp",
         )
         ds = xr.Dataset({"temp": temp})
         plevs = np.array([300, 500, 700])
+        return ds, plevs
+
+    def test_constant_field_stays_constant(self) -> None:
+        """A spatially constant field remains constant after interpolation."""
+        ds, plevs = self._make_ds_and_plevs(value=300.0)
         result = interp_ds_p_to_p(ds, plevs, method="linear")
         np.testing.assert_allclose(result["temp"].values, 300.0, atol=1e-10)
 
     def test_output_dimensions(self) -> None:
         """Output has (lev, lat) dimensions."""
-        nlat, nlev = 5, 8
-        lats = np.linspace(-60, 60, nlat)
-        pfull_vals = np.linspace(200, 900, nlev)
-        temp = xr.DataArray(
-            np.ones((nlat, nlev)),
-            dims=[LAT_STR, PFULL_STR],
-            coords={LAT_STR: lats, PFULL_STR: pfull_vals},
-            name="temp",
-        )
-        ds = xr.Dataset({"temp": temp})
-        plevs = np.array([300, 500, 700])
+        ds, plevs = self._make_ds_and_plevs()
         result = interp_ds_p_to_p(ds, plevs, method="linear")
         assert set(result["temp"].dims) == {LEV_STR, LAT_STR}
 
     def test_returns_dataset(self) -> None:
         """Result is an xarray Dataset."""
-        nlat, nlev = 5, 8
-        lats = np.linspace(-60, 60, nlat)
-        pfull_vals = np.linspace(200, 900, nlev)
-        temp = xr.DataArray(
-            np.ones((nlat, nlev)),
-            dims=[LAT_STR, PFULL_STR],
-            coords={LAT_STR: lats, PFULL_STR: pfull_vals},
-            name="temp",
-        )
-        ds = xr.Dataset({"temp": temp})
-        plevs = np.array([300, 500, 700])
+        ds, plevs = self._make_ds_and_plevs()
         result = interp_ds_p_to_p(ds, plevs, method="linear")
         assert isinstance(result, xr.Dataset)
 
@@ -523,38 +502,31 @@ class TestInterpEtaToPlevs:
 class TestInterpNestedToPlevs:
     """Tests for interp_nested_to_plevs."""
 
-    def test_output_has_both_extra_dims(self) -> None:
-        """Output Dataset has both the inner and outer loop dimensions."""
-        nlat, nlev, ntime = 3, 6, 2
-        ds_base = _make_eta_dataset(nlat=nlat, nlev=nlev)
-        # Add a time dimension by concatenating.
+    def _make_eta_with_time(self) -> tuple[xr.Dataset, np.ndarray]:
+        """Create an eta Dataset with a time dimension and target plevs."""
+        ds_base = _make_eta_dataset(nlat=3, nlev=6)
         datasets = []
-        for t in range(ntime):
+        for t in range(2):
             ds_t = ds_base.copy(deep=True)
             ds_t = ds_t.expand_dims({TIME_STR: [t]})
             datasets.append(ds_t)
         ds = xr.concat(datasets, dim=TIME_STR)
-
         plevs = np.array([200, 400, 600])
+        return ds, plevs
+
+    def test_output_has_both_extra_dims(self) -> None:
+        """Output Dataset has both the inner and outer loop dimensions."""
+        ds, plevs = self._make_eta_with_time()
         result = interp_nested_to_plevs(
             ds, plevs, dim1=LAT_STR, dim2=TIME_STR, method="linear"
         )
         assert LAT_STR in result["temp"].dims
         assert TIME_STR in result["temp"].dims
-        assert result["temp"].sizes[TIME_STR] == ntime
+        assert result["temp"].sizes[TIME_STR] == 2
 
     def test_returns_dataset(self) -> None:
         """Result is an xarray Dataset."""
-        nlat, nlev, ntime = 3, 6, 2
-        ds_base = _make_eta_dataset(nlat=nlat, nlev=nlev)
-        datasets = []
-        for t in range(ntime):
-            ds_t = ds_base.copy(deep=True)
-            ds_t = ds_t.expand_dims({TIME_STR: [t]})
-            datasets.append(ds_t)
-        ds = xr.concat(datasets, dim=TIME_STR)
-
-        plevs = np.array([200, 400, 600])
+        ds, plevs = self._make_eta_with_time()
         result = interp_nested_to_plevs(
             ds, plevs, dim1=LAT_STR, dim2=TIME_STR, method="linear"
         )
