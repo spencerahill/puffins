@@ -115,6 +115,7 @@ module = [
     "puffins.constants",
     "puffins.dates",
     "puffins.hides",
+    "puffins.interp",
     "puffins.longitude",
     "puffins.names",
     "puffins.radiation",
