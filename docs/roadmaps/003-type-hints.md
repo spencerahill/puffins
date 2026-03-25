@@ -27,7 +27,7 @@ signatures encode units and coordinate conventions.
 
 - [ ] `constants.py` — module-level constants (no functions to annotate)
 - [ ] `names.py` — string constants (no functions to annotate)
-- [ ] `longitude.py` — `Longitude` class and utilities
+- [x] `longitude.py` — `Longitude` class and utilities (completed 2026-03-25)
 
 ## Group 2: Core Numerical Utilities
 
