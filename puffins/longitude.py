@@ -35,11 +35,11 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
     return lon - quotient * 360
 
 
-def _lon_in_west_hem(lon: float) -> bool:
-    return bool(lon_to_0360(lon) >= 180)
+def _lon_in_west_hem(lon: ArrayLike) -> ArrayLike:
+    return lon_to_0360(lon) >= 180
 
 
-def lon_to_pm180(lon: float) -> float:
+def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
     """Convert longitude(s) to be within [-180, 180).
 
     The Eastern hemisphere corresponds to 0 <= lon + (n*360) < 180, and the
@@ -59,11 +59,8 @@ def lon_to_pm180(lon: float) -> float:
         type with each element a scalar in the range [-180, 180).
 
     """
-    lon0360: float = lon_to_0360(lon)  # type: ignore[assignment]
-    if _lon_in_west_hem(lon0360):
-        return lon0360 - 360
-    else:
-        return lon0360
+    lon0360 = lon_to_0360(lon)
+    return np.where(lon0360 >= 180, lon0360 - 360, lon0360)
 
 
 def _maybe_cast_to_lon(obj: Any, strict: bool = False) -> Longitude | Any:
@@ -144,7 +141,7 @@ class Longitude:
             self._longitude = lon_value
             self._hemisphere = value[-1].upper()
         else:
-            lon_pm180 = lon_to_pm180(val_as_float)
+            lon_pm180 = float(lon_to_pm180(val_as_float))
             if _lon_in_west_hem(val_as_float):
                 self._longitude = abs(lon_pm180)
                 self._hemisphere = "W"

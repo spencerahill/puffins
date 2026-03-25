@@ -66,6 +66,15 @@ class TestLonInWestHem:
     def test_negative_western(self) -> None:
         assert _lon_in_west_hem(-10.0)
 
+    def test_numpy_array(self) -> None:
+        result = _lon_in_west_hem(np.array([90.0, 200.0, 0.0]))
+        np.testing.assert_array_equal(result, [False, True, False])
+
+    def test_xarray_dataarray(self) -> None:
+        da = xr.DataArray([90.0, 200.0], dims=["x"])
+        result = _lon_in_west_hem(da)
+        np.testing.assert_array_equal(result.values, [False, True])
+
 
 class TestLonToPm180:
     """Tests for lon_to_pm180."""
@@ -84,6 +93,15 @@ class TestLonToPm180:
 
     def test_large_positive(self) -> None:
         assert lon_to_pm180(450.0) == 90.0
+
+    def test_numpy_array(self) -> None:
+        result = lon_to_pm180(np.array([90.0, 270.0, 0.0, 360.0]))
+        np.testing.assert_array_equal(result, [90.0, -90.0, 0.0, 0.0])
+
+    def test_xarray_dataarray(self) -> None:
+        da = xr.DataArray([90.0, 270.0, 0.0], dims=["x"])
+        result = lon_to_pm180(da)
+        np.testing.assert_array_equal(np.asarray(result), [90.0, -90.0, 0.0])
 
 
 class TestMaybeCastToLon:
