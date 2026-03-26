@@ -18,7 +18,8 @@
       "Bash(python:*)",
       "Bash(pip index:*)",
       "Bash(gh search:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(python3:*)"
     ]
   }
 }
