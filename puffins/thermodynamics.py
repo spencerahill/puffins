@@ -225,7 +225,9 @@ def saturation_entropy(
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     sat_mix_ratio = water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
     sat_q = specific_humidity(sat_mix_ratio)
-    return cast(ArrayLike, c_p * np.log(temp) - r_d * np.log(pressure) + l_v * sat_q / temp)
+    return cast(
+        ArrayLike, c_p * np.log(temp) - r_d * np.log(pressure) + l_v * sat_q / temp
+    )
 
 
 def dsat_entrop_dtemp_approx(
