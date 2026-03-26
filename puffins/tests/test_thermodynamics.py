@@ -3,7 +3,7 @@
 import numpy as np
 import xarray as xr
 
-from puffins.constants import C_P, GRAV_EARTH, L_V, P0, R_D
+from puffins.constants import C_P, EPSILON, GRAV_EARTH, L_V, P0, R_D
 from puffins.thermodynamics import (
     dsat_entrop_dtemp_approx,
     equiv_pot_temp,
@@ -131,8 +131,6 @@ class TestWaterVaporMixingRatio:
 
     def test_known_value(self) -> None:
         """Check against hand-calculated value."""
-        from puffins.constants import EPSILON
-
         e, p = 2000.0, 1e5
         expected = EPSILON * e / (p - e)
         np.testing.assert_allclose(water_vapor_mixing_ratio(e, p), expected)
@@ -249,8 +247,8 @@ class TestSaturationMixingRatio:
 
     def test_increases_with_temp(self) -> None:
         temps = np.array([270.0, 280.0, 290.0, 300.0])
-        results = [saturation_mixing_ratio(1e5, t) for t in temps]
-        assert all(results[i] < results[i + 1] for i in range(len(results) - 1))
+        results = saturation_mixing_ratio(1e5, temps)
+        assert np.all(np.diff(results) > 0)
 
     def test_decreases_with_pressure(self) -> None:
         """Saturation mixing ratio decreases with increasing pressure at fixed T."""

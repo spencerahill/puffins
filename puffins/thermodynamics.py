@@ -93,6 +93,12 @@ def mixing_ratio(spec_hum: ArrayLike) -> ArrayLike:
     return spec_hum / (1.0 - spec_hum)
 
 
+# Tetens equation coefficients (Kelvin / Pa form).
+_TETENS_A = 610.78
+_TETENS_B = 17.27
+_TETENS_C = 237.3 - 273.15
+
+
 def sat_vap_press_tetens_kelvin(temp: ArrayLike) -> ArrayLike:
     """Saturation vapor pressure using Tetens equation.
 
@@ -103,10 +109,7 @@ def sat_vap_press_tetens_kelvin(temp: ArrayLike) -> ArrayLike:
     version.
 
     """
-    a = 610.78
-    b = 17.27
-    c = 237.3 - 273.15
-    return a * np.exp(b * (temp - 273.15) / (temp + c))
+    return _TETENS_A * np.exp(_TETENS_B * (temp - 273.15) / (temp + _TETENS_C))
 
 
 def saturation_mixing_ratio(
@@ -341,35 +344,31 @@ def temp_from_equiv_pot_temp(
 
     solutions: list[float] = []
     for pta in pot_temp_array:
-        # Start with guess range narrowly bounding the the theta_e value, and
-        # then progressively widen if the function doesn't change sign within
-        # the bound.  Ensures that the zero crossing is as close as possible
-        # to the neighborhood of the theta_e value, so that the algorithm will
-        # converge and we don't accidentally catch another irrelevant zero
-        # crossing by mistake.
-        for factor in np.arange(0.01, 0.99, 0.01):
+        # Progressively widen guess bounds around theta_e until brentq finds
+        # a sign change, keeping the interval as narrow as possible to avoid
+        # spurious zero crossings.
+        factor = 0.01
+        found = False
+        while factor < 0.99:
             guess_lower = (1 - factor) * pta
             guess_upper = (1 + factor) * pta
             try:
                 sol = brentq(func, guess_lower, guess_upper, args=(pta,))
             except ValueError:
-                pass
+                factor += 0.01
             else:
                 # Temperature is always less than equiv. pot. temp., meaning
                 # that the procedure failed if the opposite occurs.  Mask it.
-                if sol > pta:
-                    solutions.append(np.nan)
-                else:
-                    solutions.append(sol)
+                solutions.append(sol if sol <= pta else np.nan)
+                found = True
                 break
-    # If no solution found, just mask.  Otherwise, return same type/shape as
-    # original input data.
-    if len(solutions) == 0:
-        return np.nan
-    elif pot_temp_is_scalar or pot_temp_is_len0_arr:
+        if not found:
+            solutions.append(np.nan)
+    # Return same type/shape as original input data.
+    if pot_temp_is_scalar or pot_temp_is_len0_arr:
         return solutions[0]
     else:
-        return np.ones_like(theta_e) * solutions
+        return np.array(solutions)
 
 
 def moist_entropy(
@@ -385,13 +384,12 @@ def moist_entropy(
     r_v: float = R_V,
 ) -> ArrayLike:
     """Moist entropy."""
-    twmr = 0.0 if tot_wat_mix_ratio is None else tot_wat_mix_ratio
     return c_p * np.log(
         equiv_pot_temp(
             temp,
             rel_hum,
             pressure,
-            tot_wat_mix_ratio=twmr,
+            tot_wat_mix_ratio=tot_wat_mix_ratio or 0.0,
             p0=p0,
             c_p=c_p,
             c_liq=c_liq,
