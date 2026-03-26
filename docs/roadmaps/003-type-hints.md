@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-22 |
+| **Last updated** | 2026-03-26 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -47,7 +47,7 @@ signatures encode units and coordinate conventions.
 ## Group 3: Physical Calculations
 
 - [ ] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number
-- [ ] `thermodynamics.py` — thermodynamic calculations (**priority**: has mypy `no-redef` errors)
+- [x] `thermodynamics.py` — thermodynamic calculations; 60 tests added, removed duplicate function definitions (completed 2026-03-26)
 - [ ] `vert_coords.py` — vertical coordinate transformations
 - [ ] `tropopause.py` — tropopause diagnostics
 - [ ] `lcl.py` — lifted condensation level
