@@ -119,6 +119,7 @@ module = [
     "puffins.longitude",
     "puffins.names",
     "puffins.radiation",
+    "puffins.thermodynamics",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

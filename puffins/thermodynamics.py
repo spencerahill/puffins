@@ -1,9 +1,14 @@
 #! /usr/bin/env python
 """Thermodynamic quantities."""
 
+from __future__ import annotations
+
+from typing import Any, cast
+
 import numpy as np
 from scipy.optimize import brentq
 
+from ._typing import ArrayLike
 from .constants import (
     C_P,
     C_PV,
@@ -18,22 +23,42 @@ from .constants import (
 )
 
 
-def exner_func(pressure, p0=1000.0, r_d=R_D, c_p=C_P):
+def exner_func(
+    pressure: ArrayLike,
+    p0: float = 1000.0,
+    r_d: float = R_D,
+    c_p: float = C_P,
+) -> ArrayLike:
     """Exner function."""
     return (pressure / p0) ** (r_d / c_p)
 
 
-def pot_temp(temp, pressure, p0=1000.0, r_d=R_D, c_p=C_P):
+def pot_temp(
+    temp: ArrayLike,
+    pressure: ArrayLike,
+    p0: float = 1000.0,
+    r_d: float = R_D,
+    c_p: float = C_P,
+) -> ArrayLike:
     """Potential temperature."""
     return temp / exner_func(pressure, p0=p0, r_d=r_d, c_p=c_p)
 
 
-def moist_enthalpy(temp, sphum, c_p=C_P, l_v=L_V):
+def moist_enthalpy(
+    temp: ArrayLike,
+    sphum: ArrayLike,
+    c_p: float = C_P,
+    l_v: float = L_V,
+) -> ArrayLike:
     """Moist enthalpy in units of Kelvin."""
     return temp + l_v * sphum / c_p
 
 
-def water_vapor_mixing_ratio(vapor_press, pressure, epsilon=EPSILON):
+def water_vapor_mixing_ratio(
+    vapor_press: ArrayLike,
+    pressure: ArrayLike,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Water vapor mixing ratio.
 
     Both the vapor pressure and pressure must have the same units, e.g. both
@@ -45,12 +70,16 @@ def water_vapor_mixing_ratio(vapor_press, pressure, epsilon=EPSILON):
     return epsilon * vapor_press / (pressure - vapor_press)
 
 
-def vap_press_from_mix_ratio(mix_ratio, pressure, epsilon=EPSILON):
+def vap_press_from_mix_ratio(
+    mix_ratio: ArrayLike,
+    pressure: ArrayLike,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Water vapor pressure given mixing ration and pressure."""
     return mix_ratio * pressure / (epsilon + mix_ratio)
 
 
-def specific_humidity(mixing_ratio):
+def specific_humidity(mixing_ratio: ArrayLike) -> ArrayLike:
     """Specific humidity computed from water vapor mixing ratio.
 
     E.g. https://glossary.ametsoc.org/wiki/Specific_humidity
@@ -59,12 +88,12 @@ def specific_humidity(mixing_ratio):
     return mixing_ratio / (1.0 + mixing_ratio)
 
 
-def mixing_ratio(spec_hum):
+def mixing_ratio(spec_hum: ArrayLike) -> ArrayLike:
     """Mixing ratio (of water vapor) computed from specific humidity."""
     return spec_hum / (1.0 - spec_hum)
 
 
-def sat_vap_press_tetens_kelvin(temp):
+def sat_vap_press_tetens_kelvin(temp: ArrayLike) -> ArrayLike:
     """Saturation vapor pressure using Tetens equation.
 
     E.g. https://en.wikipedia.org/wiki/Tetens_equation
@@ -80,7 +109,11 @@ def sat_vap_press_tetens_kelvin(temp):
     return a * np.exp(b * (temp - 273.15) / (temp + c))
 
 
-def saturation_mixing_ratio(pressure, temp, epsilon=EPSILON):
+def saturation_mixing_ratio(
+    pressure: ArrayLike,
+    temp: ArrayLike,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Saturation mixing ratio.
 
     Pressure must be in Pascals, not hPa.  Temperature must be in Kelvin.
@@ -89,13 +122,20 @@ def saturation_mixing_ratio(pressure, temp, epsilon=EPSILON):
     return water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
 
 
-def saturation_specific_humidity(pressure, temp, epsilon=EPSILON):
+def saturation_specific_humidity(
+    pressure: ArrayLike,
+    temp: ArrayLike,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Saturation specific humidity."""
     sat_mix_ratio = saturation_mixing_ratio(pressure, temp, epsilon=epsilon)
     return specific_humidity(sat_mix_ratio)
 
 
-def relative_humidity(vapor_pressure, sat_vap_press):
+def relative_humidity(
+    vapor_pressure: ArrayLike,
+    sat_vap_press: ArrayLike,
+) -> ArrayLike:
     """Relative humidity.
 
     C.f. https://glossary.ametsoc.org/wiki/Relative_humidity.
@@ -104,7 +144,10 @@ def relative_humidity(vapor_pressure, sat_vap_press):
     return vapor_pressure / sat_vap_press
 
 
-def rel_hum_from_temp_dewpoint(temp, temp_dew):
+def rel_hum_from_temp_dewpoint(
+    temp: ArrayLike,
+    temp_dew: ArrayLike,
+) -> ArrayLike:
     """Relative humidity, given the temperature and dewpoint.
 
     Conceptually, relative humidity is the ratio of the actual vapor pressure
@@ -121,14 +164,27 @@ def rel_hum_from_temp_dewpoint(temp, temp_dew):
     return sat_vap_press_tetens_kelvin(temp_dew) / sat_vap_press_tetens_kelvin(temp)
 
 
-def moist_static_energy(temp, height, spec_hum, c_p=C_P, grav=GRAV_EARTH, l_v=L_V):
+def moist_static_energy(
+    temp: ArrayLike,
+    height: ArrayLike,
+    spec_hum: ArrayLike,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+    l_v: float = L_V,
+) -> ArrayLike:
     """Moist static energy."""
     return c_p * temp + grav * height + l_v * spec_hum
 
 
 def saturation_mse(
-    temp, height, pressure=P0, c_p=C_P, grav=GRAV_EARTH, l_v=L_V, epsilon=EPSILON
-):
+    temp: ArrayLike,
+    height: ArrayLike,
+    pressure: float = P0,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+    l_v: float = L_V,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Saturation moist static energy.
 
     I.e. MSE if the specific humidity was at its saturation value.
@@ -139,8 +195,14 @@ def saturation_mse(
 
 
 def saturation_entropy(
-    temp, pressure=P0, sat_vap_press=None, c_p=C_P, r_d=R_D, l_v=L_V, epsilon=EPSILON
-):
+    temp: ArrayLike,
+    pressure: float = P0,
+    sat_vap_press: ArrayLike | None = None,
+    c_p: float = C_P,
+    r_d: float = R_D,
+    l_v: float = L_V,
+    epsilon: float = EPSILON,
+) -> ArrayLike:
     """Saturation entropy, from Emanuel and Rotunno 2011, JAS.
 
     Saturation vapor pressure can be provided as `sat_vap_press`, otherwise it
@@ -165,24 +227,31 @@ def saturation_entropy(
     return c_p * np.log(temp) - r_d * np.log(pressure) + l_v * sat_q / temp
 
 
-def dsat_entrop_dtemp_approx(temp, pressure=P0, c_p=C_P, r_v=R_V, l_v=L_V):
+def dsat_entrop_dtemp_approx(
+    temp: ArrayLike,
+    pressure: float = P0,
+    c_p: float = C_P,
+    r_v: float = R_V,
+    l_v: float = L_V,
+) -> ArrayLike:
+    """Approximate derivative of saturation entropy with respect to temperature."""
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     sat_spec_hum = sat_vap_press / pressure
     return (c_p + l_v * sat_spec_hum * (l_v / (r_v * temp) - 1) / temp) / temp
 
 
 def equiv_pot_temp(
-    temp,
-    rel_hum,
-    pressure,
-    tot_wat_mix_ratio=0.0,
-    p0=P0,
-    c_p=C_P,
-    c_liq=C_VL,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-):
+    temp: ArrayLike,
+    rel_hum: ArrayLike,
+    pressure: ArrayLike,
+    tot_wat_mix_ratio: float = 0.0,
+    p0: float = P0,
+    c_p: float = C_P,
+    c_liq: float = C_VL,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     """Equivalent potential temperature.
 
     Note that pressure must be in Pascals, not hPa.
@@ -202,16 +271,16 @@ def equiv_pot_temp(
 
 
 def sat_equiv_pot_temp(
-    temp,
-    pressure,
-    tot_wat_mix_ratio=0.0,
-    p0=P0,
-    c_p=C_P,
-    c_liq=4185.5,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-):
+    temp: ArrayLike,
+    pressure: ArrayLike,
+    tot_wat_mix_ratio: float = 0.0,
+    p0: float = P0,
+    c_p: float = C_P,
+    c_liq: float = 4185.5,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     """Saturation equivalent potential temperature.
 
     Note that pressure must be in Pascals, not hPa.
@@ -232,20 +301,20 @@ def sat_equiv_pot_temp(
 
 
 def temp_from_equiv_pot_temp(
-    theta_e,
-    rel_hum=0.7,
-    pressure=P0,
-    tot_wat_mix_ratio=None,
-    p0=P0,
-    c_p=C_P,
-    c_liq=4185.5,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-):
+    theta_e: ArrayLike,
+    rel_hum: float = 0.7,
+    pressure: float = P0,
+    tot_wat_mix_ratio: float | None = None,
+    p0: float = P0,
+    c_p: float = C_P,
+    c_liq: float = 4185.5,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     """Temperature, given the equivalent potential temperature."""
 
-    def func(temp, theta):
+    def func(temp: float, theta: float) -> Any:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
         vapor_pressure = rel_hum * sat_vap_press
         vap_mix_ratio = water_vapor_mixing_ratio(vapor_pressure, pressure)
@@ -257,16 +326,17 @@ def temp_from_equiv_pot_temp(
             r_v * vap_mix_ratio / denom
         ) - temp * np.exp(l_v * vap_mix_ratio / (denom * temp))
 
-    pot_temp_is_scalar = np.isscalar(theta_e)
-    pot_temp_is_len0_arr = not pot_temp_is_scalar and not theta_e.shape
+    theta_e_any = cast(Any, theta_e)
+    pot_temp_is_scalar = np.isscalar(theta_e_any)
+    pot_temp_is_len0_arr = not pot_temp_is_scalar and not theta_e_any.shape
     if pot_temp_is_scalar:
-        pot_temp_array = [theta_e]
+        pot_temp_array = [theta_e_any]
     elif pot_temp_is_len0_arr:
-        pot_temp_array = [float(theta_e)]
+        pot_temp_array = [float(theta_e_any)]
     else:
-        pot_temp_array = theta_e
+        pot_temp_array = theta_e_any
 
-    solutions = []
+    solutions: list[float] = []
     for pta in pot_temp_array:
         # Start with guess range narrowly bounding the the theta_e value, and
         # then progressively widen if the function doesn't change sign within
@@ -300,24 +370,25 @@ def temp_from_equiv_pot_temp(
 
 
 def moist_entropy(
-    temp,
-    rel_hum,
-    pressure,
-    tot_wat_mix_ratio=None,
-    p0=P0,
-    c_p=C_P,
-    c_liq=4185.5,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-):
+    temp: ArrayLike,
+    rel_hum: ArrayLike,
+    pressure: ArrayLike,
+    tot_wat_mix_ratio: float | None = None,
+    p0: float = P0,
+    c_p: float = C_P,
+    c_liq: float = 4185.5,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     """Moist entropy."""
+    twmr = 0.0 if tot_wat_mix_ratio is None else tot_wat_mix_ratio
     return c_p * np.log(
         equiv_pot_temp(
             temp,
             rel_hum,
             pressure,
-            tot_wat_mix_ratio=tot_wat_mix_ratio,
+            tot_wat_mix_ratio=twmr,
             p0=p0,
             c_p=c_p,
             c_liq=c_liq,
@@ -329,16 +400,16 @@ def moist_entropy(
 
 
 def pseudoadiabatic_lapse_rate(
-    temp,
-    pressure,
-    rel_hum=REL_HUM,
-    grav=GRAV_EARTH,
-    c_p=C_P,
-    r_d=R_D,
-    l_v=L_V,
-    r_v=R_V,
-    c_pv=C_PV,
-):
+    temp: ArrayLike,
+    pressure: ArrayLike,
+    rel_hum: float = REL_HUM,
+    grav: float = GRAV_EARTH,
+    c_p: float = C_P,
+    r_d: float = R_D,
+    l_v: float = L_V,
+    r_v: float = R_V,
+    c_pv: float = C_PV,
+) -> ArrayLike:
     """Pseudoadiabatic lapse rate."""
     sat_vap_press = sat_vap_press_tetens_kelvin(temp)
     vapor_pressure = rel_hum * sat_vap_press
@@ -351,21 +422,6 @@ def pseudoadiabatic_lapse_rate(
         + (l_v**2 * vap_mix_ratio * (epsilon + vap_mix_ratio) / (r_d * temp**2))
     )
     return numer / denom
-
-
-def exner_func(pressure, p0=1000.0, r_d=R_D, c_p=C_P):
-    """Exner function."""
-    return (pressure / p0) ** (r_d / c_p)
-
-
-def pot_temp(temp, pressure, p0=1000.0, r_d=R_D, c_p=C_P):
-    """Potential temperature."""
-    return temp / exner_func(pressure, p0=p0, r_d=r_d, c_p=c_p)
-
-
-def moist_enthalpy(temp, sphum, c_p=C_P, l_v=L_V):
-    """Moist enthalpy in units of Kelvin."""
-    return temp + l_v * sphum / c_p
 
 
 if __name__ == "__main__":
