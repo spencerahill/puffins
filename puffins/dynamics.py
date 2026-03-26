@@ -22,9 +22,7 @@ from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg, tandeg
 
 
-def coriolis_param(
-    lat: ArrayLike, rot_rate: float = ROT_RATE_EARTH
-) -> ArrayLike:
+def coriolis_param(lat: ArrayLike, rot_rate: float = ROT_RATE_EARTH) -> ArrayLike:
     """Coriolis parameter, i.e. 'f'."""
     return cast(ArrayLike, 2.0 * rot_rate * sindeg(lat))
 

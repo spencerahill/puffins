@@ -603,9 +603,7 @@ class TestBulkStatStab:
         levs = np.array([200.0, 500.0, 700.0, 850.0, 1000.0])
         # Potential temperature increasing with height (decreasing pressure)
         theta_vals = np.array([350.0, 320.0, 305.0, 295.0, 290.0])
-        pot_temp = xr.DataArray(
-            theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR]
-        )
+        pot_temp = xr.DataArray(theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR])
         result = bulk_stat_stab(pot_temp)
         assert result.item() > 0
 
@@ -613,9 +611,7 @@ class TestBulkStatStab:
         """Works with custom upper/lower levels."""
         levs = np.array([200.0, 500.0, 700.0, 850.0, 1000.0])
         theta_vals = np.array([350.0, 320.0, 305.0, 295.0, 290.0])
-        pot_temp = xr.DataArray(
-            theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR]
-        )
+        pot_temp = xr.DataArray(theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR])
         result = bulk_stat_stab(pot_temp, lev_upper=200, lev_lower=1000)
         expected = (350.0 - 290.0) / 300.0
         np.testing.assert_allclose(result.item(), expected)
@@ -624,9 +620,7 @@ class TestBulkStatStab:
         """Works with custom reference potential temperature."""
         levs = np.array([500.0, 850.0])
         theta_vals = np.array([320.0, 295.0])
-        pot_temp = xr.DataArray(
-            theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR]
-        )
+        pot_temp = xr.DataArray(theta_vals, coords={LEV_STR: levs}, dims=[LEV_STR])
         result = bulk_stat_stab(pot_temp, pot_temp_ref=250.0)
         expected = (320.0 - 295.0) / 250.0
         np.testing.assert_allclose(result.item(), expected)
