@@ -238,6 +238,18 @@ class TestAbsVortVertComp:
         result = abs_vort_vert_comp(m)
         assert result.shape == m.shape
 
+    def test_solid_body_matches_coriolis(self) -> None:
+        """For u=0 (solid-body rotation), abs vorticity equals Coriolis parameter."""
+        lats = np.linspace(-80, 80, 41)
+        u = _uwind_dataarray(np.zeros_like(lats), lats)
+        m = abs_ang_mom(u)
+        result = abs_vort_vert_comp(m)
+        expected = coriolis_param(_lat_dataarray(lats))
+        # Finite-difference derivative introduces error at endpoints; compare interior
+        np.testing.assert_allclose(
+            result.values[2:-2], expected.values[2:-2], rtol=1e-2
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestAbsVortFromU
@@ -397,30 +409,29 @@ class TestBruntVaisalaFreq:
 
     def test_positive_for_stable(self) -> None:
         """Brunt-Vaisala frequency is real and positive for stable stratification."""
-        result = brunt_vaisala_freq(45.0, dtheta_dz=3e-3)
+        result = brunt_vaisala_freq(3e-3)
         assert result > 0
 
     def test_zero_for_neutral(self) -> None:
         """Brunt-Vaisala frequency is zero for neutral stratification."""
-        result = brunt_vaisala_freq(45.0, dtheta_dz=0.0)
+        result = brunt_vaisala_freq(0.0)
         np.testing.assert_allclose(result, 0.0)
 
     def test_custom_params(self) -> None:
         """Works with custom theta_ref and grav."""
-        result = brunt_vaisala_freq(45.0, dtheta_dz=1.0, theta_ref=1.0, grav=1.0)
+        result = brunt_vaisala_freq(1.0, theta_ref=1.0, grav=1.0)
         np.testing.assert_allclose(result, 1.0)
 
     def test_array_input(self) -> None:
         """Works with array inputs."""
-        lats = np.array([30.0, 45.0, 60.0])
         dtheta_dz = np.array([3e-3, 4e-3, 5e-3])
-        result = brunt_vaisala_freq(lats, dtheta_dz)
+        result = brunt_vaisala_freq(dtheta_dz)
         assert result.shape == (3,)
 
     def test_scales_with_sqrt(self) -> None:
         """Frequency scales with sqrt of dtheta_dz."""
-        n1 = brunt_vaisala_freq(45.0, dtheta_dz=1e-3)
-        n4 = brunt_vaisala_freq(45.0, dtheta_dz=4e-3)
+        n1 = brunt_vaisala_freq(1e-3)
+        n4 = brunt_vaisala_freq(4e-3)
         np.testing.assert_allclose(n4 / n1, 2.0)
 
 
@@ -514,7 +525,7 @@ class TestZFromHypso:
         assert isinstance(result, xr.DataArray)
 
     def test_height_increases_with_lower_pressure(self) -> None:
-        """Height increases as pressure decreases."""
+        """Height increases as pressure decreases (levs ordered high-to-low)."""
         lats = np.array([0.0])
         levs = np.array([100000.0, 85000.0, 50000.0, 20000.0])
         temp = xr.DataArray(
@@ -524,13 +535,10 @@ class TestZFromHypso:
         )
         result = z_from_hypso(temp)
         heights = result.isel(lat=0).values
-        # Heights should be monotonically increasing from surface to TOA
-        # (levs are decreasing in pressure)
-        valid = ~np.isnan(heights)
-        if valid.sum() > 1:
-            assert np.all(np.diff(heights[valid]) >= 0) or np.all(
-                np.diff(heights[valid]) <= 0
-            )
+        valid = heights[~np.isnan(heights)]
+        # Heights should monotonically increase toward lower pressure (index 0→3)
+        assert valid.size > 1
+        assert np.all(np.diff(valid) >= 0)
 
     def test_warmer_atmosphere_gives_larger_heights(self) -> None:
         """A warmer atmosphere yields larger heights at the same pressure."""
@@ -549,9 +557,8 @@ class TestZFromHypso:
         z_cold = z_from_hypso(temp_cold)
         z_warm = z_from_hypso(temp_warm)
         # Compare at lowest-pressure level (highest altitude)
-        assert z_warm.isel(lat=0, **{LEV_STR: -1}).item() > z_cold.isel(  # type: ignore[arg-type]
-            lat=0, **{LEV_STR: -1}  # type: ignore[arg-type]
-        ).item()
+        idx = {LAT_STR: 0, LEV_STR: -1}
+        assert z_warm.isel(idx).item() > z_cold.isel(idx).item()
 
 
 # ---------------------------------------------------------------------------
