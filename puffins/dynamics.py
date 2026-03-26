@@ -251,10 +251,6 @@ def z_from_hypso(
         axis=p_axis_num,
     )
 
-    # Convert from hPa to Pa if necessary.
-    # if p_half.max() < 2000:
-    #     log_p_half = np.log(p_half*1e2)
-    # else:
     log_p_half = np.log(p_half)
 
     dlog_p_half_values = np.diff(log_p_half, axis=p_axis_num)

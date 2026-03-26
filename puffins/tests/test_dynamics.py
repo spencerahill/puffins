@@ -469,28 +469,6 @@ class TestRossbyRadius:
 class TestZonalFricInferredSteady:
     """Tests for zonal_fric_inferred_steady."""
 
-    def test_returns_dataarray(self) -> None:
-        """Returns an xarray DataArray."""
-        lats = np.linspace(-80, 80, 41)
-        levs = np.array([500.0, 700.0, 850.0])
-        u_merid_flux = xr.DataArray(
-            np.zeros((41, 3)),
-            coords={LAT_STR: lats, LEV_STR: levs},
-            dims=[LAT_STR, LEV_STR],
-        )
-        u_vert_flux = xr.DataArray(
-            np.zeros((41, 3)),
-            coords={LAT_STR: lats, LEV_STR: levs},
-            dims=[LAT_STR, LEV_STR],
-        )
-        vwind = xr.DataArray(
-            np.zeros((41, 3)),
-            coords={LAT_STR: lats, LEV_STR: levs},
-            dims=[LAT_STR, LEV_STR],
-        )
-        result = zonal_fric_inferred_steady(u_merid_flux, u_vert_flux, vwind)
-        assert isinstance(result, xr.DataArray)
-
     def test_zero_inputs(self) -> None:
         """Zero fluxes and wind give zero friction."""
         lats = np.linspace(-80, 80, 41)
@@ -501,6 +479,7 @@ class TestZonalFricInferredSteady:
             dims=[LAT_STR, LEV_STR],
         )
         result = zonal_fric_inferred_steady(zeros, zeros, zeros)
+        assert isinstance(result, xr.DataArray)
         np.testing.assert_allclose(result.values, 0.0, atol=1e-15)
 
 
@@ -534,7 +513,7 @@ class TestZFromHypso:
             dims=[LAT_STR, LEV_STR],
         )
         result = z_from_hypso(temp)
-        heights = result.isel(lat=0).values
+        heights = result.isel({LAT_STR: 0}).values
         valid = heights[~np.isnan(heights)]
         # Heights should monotonically increase toward lower pressure (index 0→3)
         assert valid.size > 1
