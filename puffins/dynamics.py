@@ -4,6 +4,7 @@
 import numpy as np
 import xarray as xr
 
+from ._typing import ArrayLike
 from .calculus import lat_deriv
 from .constants import (
     DELTA_V,
@@ -19,26 +20,31 @@ from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg, tandeg
 
 
-def coriolis_param(lat, rot_rate=ROT_RATE_EARTH):
+def coriolis_param(
+    lat: ArrayLike, rot_rate: float = ROT_RATE_EARTH
+) -> ArrayLike:
     """Coriolis parameter, i.e. 'f'."""
     return 2.0 * rot_rate * sindeg(lat)
 
 
 def plan_burg_num(
-    height=HEIGHT_TROPO, grav=GRAV_EARTH, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
-):
+    height: float = HEIGHT_TROPO,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> float:
     """Planetary Burger number"""
     return height * grav / (rot_rate * radius) ** 2
 
 
 def therm_ross_num(
-    delta_h,
-    height=HEIGHT_TROPO,
-    lat_max=90,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    delta_h: ArrayLike,
+    height: float = HEIGHT_TROPO,
+    lat_max: float = 90,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Thermal Rossby number."""
     return (
         delta_h
@@ -48,8 +54,12 @@ def therm_ross_num(
 
 
 def abs_ang_mom(
-    u, lat=None, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR
-):
+    u: xr.DataArray,
+    lat: ArrayLike | None = None,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Absolute angular momentum."""
     if lat is None:
         lat = u[lat_str]
@@ -57,7 +67,11 @@ def abs_ang_mom(
     return radius * coslat * (rot_rate * radius * coslat + u)
 
 
-def abs_vort_vert_comp(abs_ang_mom, radius=RAD_EARTH, lat_str=LAT_STR):
+def abs_vort_vert_comp(
+    abs_ang_mom: xr.DataArray,
+    radius: float = RAD_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Vertical component of absolute vorticity (in axisymmetric case)."""
     return (
         -1
@@ -66,7 +80,12 @@ def abs_vort_vert_comp(abs_ang_mom, radius=RAD_EARTH, lat_str=LAT_STR):
     )
 
 
-def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH, lat_str=LAT_STR):
+def abs_vort_from_u(
+    u: xr.DataArray,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Vertical component of absolute vorticity computed from zonal wind."""
     lats = u[lat_str]
     sinlat = sindeg(lats)
@@ -78,7 +97,11 @@ def abs_vort_from_u(u, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH, lat_str=LAT_ST
     )
 
 
-def rel_vort_from_u(uwind, radius=RAD_EARTH, lat_str=LAT_STR):
+def rel_vort_from_u(
+    uwind: xr.DataArray,
+    radius: float = RAD_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Vertical component of relative vorticity computed from zonal wind."""
     lat = uwind[lat_str]
     coslat = cosdeg(lat)
@@ -86,8 +109,12 @@ def rel_vort_from_u(uwind, radius=RAD_EARTH, lat_str=LAT_STR):
 
 
 def ross_num_from_uwind(
-    uwind, lat=None, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, lat_str=LAT_STR
-):
+    uwind: xr.DataArray,
+    lat: ArrayLike | None = None,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Rossby number computed from zonal wind.
 
     Traditional Rossby number definition in terms of only relative vorticity
@@ -103,16 +130,16 @@ def ross_num_from_uwind(
 
 
 def ross_num_gen(
-    uwind,
-    vwind,
-    omega,
-    lat=None,
-    hpa_to_pa=False,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    uwind: xr.DataArray,
+    vwind: xr.DataArray,
+    omega: xr.DataArray,
+    lat: ArrayLike | None = None,
+    hpa_to_pa: bool = False,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray:
     """Generalized Rossby number from Singh 2019, JAS.
 
     Unnumbered equation from pg. 1997.  One minus the ratio of advection of
@@ -133,19 +160,24 @@ def ross_num_gen(
     ) / coriolis
 
 
-def brunt_vaisala_freq(lat, dtheta_dz, theta_ref=THETA_REF, grav=GRAV_EARTH):
+def brunt_vaisala_freq(
+    lat: ArrayLike,
+    dtheta_dz: ArrayLike,
+    theta_ref: float = THETA_REF,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
     """Brunt Vaisala frequency."""
     return (grav * dtheta_dz / theta_ref) ** 0.5
 
 
 def rossby_radius(
-    lat,
-    dtheta_dz,
-    height=HEIGHT_TROPO,
-    theta_ref=THETA_REF,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-):
+    lat: ArrayLike,
+    dtheta_dz: ArrayLike,
+    height: float = HEIGHT_TROPO,
+    theta_ref: float = THETA_REF,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+) -> ArrayLike:
     """Rossby radius of deformation"""
     return (
         brunt_vaisala_freq(lat, dtheta_dz, theta_ref=theta_ref, grav=grav)
@@ -155,14 +187,14 @@ def rossby_radius(
 
 
 def zonal_fric_inferred_steady(
-    u_merid_flux,
-    u_vert_flux,
-    vwind,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    vert_str=LEV_STR,
-    lat_str=LAT_STR,
-):
+    u_merid_flux: xr.DataArray,
+    u_vert_flux: xr.DataArray,
+    vwind: xr.DataArray,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    vert_str: str = LEV_STR,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Steady-state zonal friction inferred from flux div + Coriolis."""
     lats = u_merid_flux[lat_str]
     coslat = cosdeg(lats)
@@ -175,8 +207,13 @@ def zonal_fric_inferred_steady(
 
 
 def z_from_hypso(
-    temp, p_sfc=MEAN_SLP_EARTH, p_top=1, r_d=R_D, grav=GRAV_EARTH, p_str=LEV_STR
-):
+    temp: xr.DataArray,
+    p_sfc: float = MEAN_SLP_EARTH,
+    p_top: float = 1,
+    r_d: float = R_D,
+    grav: float = GRAV_EARTH,
+    p_str: str = LEV_STR,
+) -> xr.DataArray:
     """Height computed from hypsometric equation.
 
     Pressure is assumed in Pa, not hPa.
@@ -185,12 +222,12 @@ def z_from_hypso(
     # Ensure all pressures have same horizontal dimensions as temperature.
     non_vert_coords = xr.ones_like(temp.isel(**{p_str: 0})).drop(p_str)
     if np.isscalar(p_sfc):
-        p_sfc_val = p_sfc
-        p_sfc = p_sfc_val * non_vert_coords
-        p_sfc[p_str] = p_sfc_val
-    p_top_val = p_top
-    p_top = xr.zeros_like(p_sfc)
-    p_top[p_str] = p_top_val
+        p_sfc_da: xr.DataArray = p_sfc * non_vert_coords
+        p_sfc_da[p_str] = p_sfc
+    else:
+        p_sfc_da = p_sfc
+    p_top_da: xr.DataArray = xr.zeros_like(p_sfc_da)
+    p_top_da[p_str] = p_top
     pressure = (non_vert_coords * temp[p_str]).transpose(*temp.dims)
 
     # Compute half-level pressure values as averages of full levels.
@@ -201,9 +238,9 @@ def z_from_hypso(
     p_axis_num = temp.get_axis_num(p_str)
     p_half = np.concatenate(
         [
-            np.expand_dims(p_top, p_axis_num),
+            np.expand_dims(p_top_da, p_axis_num),
             p_half_inner,
-            np.expand_dims(p_sfc, p_axis_num),
+            np.expand_dims(p_sfc_da, p_axis_num),
         ],
         axis=p_axis_num,
     )
@@ -228,13 +265,13 @@ def z_from_hypso(
 
 
 def u_bci_2layer_qg(
-    lat,
-    height=HEIGHT_TROPO,
-    delta_v=DELTA_V,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    lat: ArrayLike,
+    height: float = HEIGHT_TROPO,
+    delta_v: float = DELTA_V,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Critical zonal wind shear in 2-layer QG model for baroclinic instability."""
     return (
         grav
@@ -246,8 +283,12 @@ def u_bci_2layer_qg(
 
 
 def bulk_stat_stab(
-    pot_temp, lev_upper=500, lev_lower=850, p_str=LEV_STR, pot_temp_ref=300.0
-):
+    pot_temp: xr.DataArray,
+    lev_upper: float = 500,
+    lev_lower: float = 850,
+    p_str: str = LEV_STR,
+    pot_temp_ref: float = 300.0,
+) -> xr.DataArray:
     """Bulk (dry) static stability."""
     return (
         pot_temp.sel(**{p_str: lev_upper, "method": "nearest"})
