@@ -46,7 +46,7 @@ signatures encode units and coordinate conventions.
 
 ## Group 3: Physical Calculations
 
-- [ ] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number
+- [x] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number; 58 tests added (completed 2026-03-26)
 - [x] `thermodynamics.py` — thermodynamic calculations; 60 tests added, removed duplicate function definitions (completed 2026-03-26)
 - [ ] `vert_coords.py` — vertical coordinate transformations
 - [ ] `tropopause.py` — tropopause diagnostics

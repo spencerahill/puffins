@@ -114,6 +114,7 @@ module = [
     "puffins.calculus",
     "puffins.constants",
     "puffins.dates",
+    "puffins.dynamics",
     "puffins.hides",
     "puffins.interp",
     "puffins.longitude",
