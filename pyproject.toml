@@ -118,6 +118,7 @@ module = [
     "puffins.interp",
     "puffins.longitude",
     "puffins.names",
+    "puffins.num_solver",
     "puffins.radiation",
     "puffins.thermodynamics",
 ]

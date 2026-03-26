@@ -1,14 +1,23 @@
 #! /usr/bin/env python
 """Numerical solvers."""
 
+from collections.abc import Callable, Sequence
+from typing import Any, cast
+
 import numpy as np
 import scipy
 import xarray as xr
 
+from puffins._typing import Scalar
+
 
 def brentq_solver_sweep_param(
-    func, param_range, init_guess, bound_guess_range, funcargs=None
-):
+    func: Callable[..., float],
+    param_range: Scalar | Sequence[float] | np.ndarray | xr.DataArray,
+    init_guess: float,
+    bound_guess_range: Sequence[float] | np.ndarray,
+    funcargs: tuple[Any, ...] | None = None,
+) -> xr.DataArray:
     """Numerical solutions to a given function over a given parameter range.
 
     Uses the Brent (1973) root finding algorithm, as implemented
@@ -47,11 +56,14 @@ def brentq_solver_sweep_param(
     if funcargs is None:
         funcargs = tuple()
     old_guess = init_guess
-    solutions = []
+    solutions: list[float] = []
 
-    if isinstance(param_range, (int, float)):
-        param_range = [param_range]
-    for val in param_range:
+    # isinstance types match the Scalar type alias.
+    if isinstance(param_range, int | float | np.floating | np.integer):
+        param_values: Sequence[float] | np.ndarray | xr.DataArray = [float(param_range)]
+    else:
+        param_values = param_range
+    for val in param_values:
         args = (val,) + funcargs
         old_bound = func(old_guess, *args)
         for guess in bound_guess_range:
@@ -69,16 +81,23 @@ def brentq_solver_sweep_param(
             solution = np.nan
 
         solutions.append(solution)
-    try:
+    if isinstance(param_range, xr.DataArray):
         dims = param_range.dims
         coords = param_range.coords
-    except AttributeError:
+    else:
         dims = None
         coords = None
     return xr.DataArray(solutions, dims=dims, coords=coords)
 
 
-def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
+def sor_solver(
+    A: np.ndarray,
+    b: np.ndarray,
+    initial_guess: np.ndarray,
+    omega: float = 1.2,
+    conv_crit: float = 1e-6,
+    verbose: bool = True,
+) -> np.ndarray:
     """
     Successive over-relaxation numerical solver.
 
@@ -88,8 +107,8 @@ def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
     A : nxn matrix
         Matrix in the equation A*phi=b to be solved
     b : length-n vector
-        Range of values of the given parameter over which to sweep
-    inititial_guess : length-n vector
+        Right-hand side vector in the equation A*phi=b
+    initial_guess : length-n vector
         Initial guess for the solution
     omega : scalar
         Value of `omega` parameter in the SOR solver.  If value is one,
@@ -113,9 +132,8 @@ def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
     https://en.wikipedia.org/wiki/Successive_over-relaxation#Example
 
     """
-    phi = initial_guess.copy()[:]
-    initial_residual = np.linalg.norm(np.matmul(A, phi) - b)
-    residual = initial_residual
+    phi: np.ndarray = initial_guess.copy()
+    residual = np.linalg.norm(np.matmul(A, phi) - b)
     if verbose:
         print(f"Initial residual: {residual:10.6g}")
     while residual > conv_crit:
@@ -130,19 +148,19 @@ def sor_solver(A, b, initial_guess, omega=1.2, conv_crit=1e-6, verbose=True):
     return phi
 
 
-def n_from_kj(k, j, num_y):
+def n_from_kj(k: int, j: int, num_y: int) -> np.floating[Any]:
     """Convert 2D coordinates to scalar for converting to matrix."""
-    return np.rint(k * num_y + j)
+    return cast(np.floating[Any], np.rint(k * num_y + j))
 
 
-def kj_from_n(n, num_y):
+def kj_from_n(n: int, num_y: int) -> tuple[int, int]:
     """Given scalar form of 2D coordinates, get the 2D pair."""
     return n // num_y, n % num_y
 
 
-def setup_bc_row(matrix, n, bc=0.0):
+def setup_bc_row(matrix: np.ndarray, n: int, bc: float = 0.0) -> np.ndarray:
     """Setup row of matrix corresponding to boundary condition."""
-    bc_row = matrix[n]
+    bc_row: np.ndarray = matrix[n]
     bc_row[:] = bc
     bc_row[n] = 1.0
     return bc_row

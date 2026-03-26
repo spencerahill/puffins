@@ -42,7 +42,7 @@ signatures encode units and coordinate conventions.
 
 - [x] `calculus.py` — differentiation, integration, surface area; 57 new tests added (completed 2026-03-20)
 - [x] `interp.py` — interpolation utilities; 35 new tests added (completed 2026-03-22)
-- [ ] `num_solver.py` — numerical solvers
+- [x] `num_solver.py` — numerical solvers; 25 new tests added (completed 2026-03-25)
 
 ## Group 3: Physical Calculations
 
