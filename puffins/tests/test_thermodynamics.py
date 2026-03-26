@@ -1,7 +1,7 @@
 """Tests for thermodynamics module."""
 
 import numpy as np
-import pytest
+import xarray as xr
 
 from puffins.constants import C_P, GRAV_EARTH, L_V, P0, R_D
 from puffins.thermodynamics import (
@@ -379,12 +379,20 @@ class TestSaturationEntropy:
         s2 = saturation_entropy(300.0)
         assert s2 > s1
 
-    def test_with_provided_sat_vap_press(self) -> None:
-        """Providing sat_vap_press explicitly gives same result as default."""
+    def test_with_provided_sat_vap_press_matches_default(self) -> None:
+        """Providing the Tetens sat_vap_press gives the same result as default."""
         svp = sat_vap_press_tetens_kelvin(300.0)
         result_auto = saturation_entropy(300.0)
         result_manual = saturation_entropy(300.0, sat_vap_press=svp)
         np.testing.assert_allclose(result_auto, result_manual)
+
+    def test_sat_vap_press_parameter_affects_result(self) -> None:
+        """Providing a different sat_vap_press changes the result."""
+        correct_svp = sat_vap_press_tetens_kelvin(300.0)
+        wrong_svp = correct_svp * 0.5
+        r1 = saturation_entropy(300.0, sat_vap_press=correct_svp)
+        r2 = saturation_entropy(300.0, sat_vap_press=wrong_svp)
+        assert not np.allclose(r1, r2)
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +499,13 @@ class TestTempFromEquivPotTemp:
         # Should return array-like with same length
         assert len(np.atleast_1d(temps)) == 3
 
+    def test_zero_dim_array(self) -> None:
+        """Works with 0-dimensional numpy array."""
+        theta_e = np.float64(330.0)
+        temp = temp_from_equiv_pot_temp(theta_e)
+        assert not np.isnan(temp)
+        assert temp < theta_e
+
 
 # ---------------------------------------------------------------------------
 # TestMoistEntropy
@@ -508,6 +523,12 @@ class TestMoistEntropy:
         s1 = moist_entropy(280.0, 0.7, 1e5)
         s2 = moist_entropy(300.0, 0.7, 1e5)
         assert s2 > s1
+
+    def test_with_tot_wat_mix_ratio(self) -> None:
+        """Non-None tot_wat_mix_ratio changes the result."""
+        s_default = moist_entropy(300.0, 0.7, 1e5)
+        s_with_water = moist_entropy(300.0, 0.7, 1e5, tot_wat_mix_ratio=0.02)
+        assert not np.allclose(s_default, s_with_water)
 
 
 # ---------------------------------------------------------------------------
@@ -540,3 +561,44 @@ class TestPseudoadiabaticLapseRate:
         pressures = np.array([8e4, 9e4, 1e5])
         result = pseudoadiabatic_lapse_rate(temps, pressures)
         assert result.shape == (3,)
+
+
+# ---------------------------------------------------------------------------
+# DataArray input tests
+# ---------------------------------------------------------------------------
+
+
+class TestDataArrayInputs:
+    """Tests that key functions work with xarray DataArray inputs."""
+
+    def test_sat_vap_press_dataarray(self) -> None:
+        temps = xr.DataArray([270.0, 280.0, 290.0, 300.0], dims="temp")
+        result = sat_vap_press_tetens_kelvin(temps)
+        assert isinstance(result, xr.DataArray)
+        assert result.dims == ("temp",)
+        assert np.all(np.diff(result.values) > 0)
+
+    def test_pot_temp_dataarray(self) -> None:
+        temp = xr.DataArray([250.0, 275.0, 300.0], dims="lev")
+        pressure = xr.DataArray([500.0, 750.0, 1000.0], dims="lev")
+        result = pot_temp(temp, pressure)
+        assert isinstance(result, xr.DataArray)
+        assert result.shape == (3,)
+        # At reference pressure, pot temp = temp
+        np.testing.assert_allclose(result.values[-1], 300.0)
+
+    def test_moist_static_energy_dataarray(self) -> None:
+        temp = xr.DataArray([280.0, 300.0], dims="x")
+        height = xr.DataArray([0.0, 5000.0], dims="x")
+        spec_hum = xr.DataArray([0.005, 0.015], dims="x")
+        result = moist_static_energy(temp, height, spec_hum)
+        assert isinstance(result, xr.DataArray)
+        assert result.shape == (2,)
+
+    def test_equiv_pot_temp_dataarray(self) -> None:
+        temp = xr.DataArray([280.0, 290.0, 300.0], dims="lat")
+        result = equiv_pot_temp(temp, 0.7, 1e5)
+        assert isinstance(result, xr.DataArray)
+        assert result.shape == (3,)
+        # theta_e >= T everywhere
+        assert np.all(result.values >= temp.values)

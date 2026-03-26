@@ -75,7 +75,7 @@ def vap_press_from_mix_ratio(
     pressure: ArrayLike,
     epsilon: float = EPSILON,
 ) -> ArrayLike:
-    """Water vapor pressure given mixing ration and pressure."""
+    """Water vapor pressure given mixing ratio and pressure."""
     return mix_ratio * pressure / (epsilon + mix_ratio)
 
 
@@ -223,8 +223,9 @@ def saturation_entropy(
     """
     if sat_vap_press is None:
         sat_vap_press = sat_vap_press_tetens_kelvin(temp)
-    sat_q = saturation_specific_humidity(pressure, temp, epsilon=epsilon)
-    return c_p * np.log(temp) - r_d * np.log(pressure) + l_v * sat_q / temp
+    sat_mix_ratio = water_vapor_mixing_ratio(sat_vap_press, pressure, epsilon=epsilon)
+    sat_q = specific_humidity(sat_mix_ratio)
+    return cast(ArrayLike, c_p * np.log(temp) - r_d * np.log(pressure) + l_v * sat_q / temp)
 
 
 def dsat_entrop_dtemp_approx(
@@ -276,7 +277,7 @@ def sat_equiv_pot_temp(
     tot_wat_mix_ratio: float = 0.0,
     p0: float = P0,
     c_p: float = C_P,
-    c_liq: float = 4185.5,
+    c_liq: float = C_VL,
     l_v: float = L_V,
     r_d: float = R_D,
     r_v: float = R_V,
@@ -307,7 +308,7 @@ def temp_from_equiv_pot_temp(
     tot_wat_mix_ratio: float | None = None,
     p0: float = P0,
     c_p: float = C_P,
-    c_liq: float = 4185.5,
+    c_liq: float = C_VL,
     l_v: float = L_V,
     r_d: float = R_D,
     r_v: float = R_V,
@@ -376,7 +377,7 @@ def moist_entropy(
     tot_wat_mix_ratio: float | None = None,
     p0: float = P0,
     c_p: float = C_P,
-    c_liq: float = 4185.5,
+    c_liq: float = C_VL,
     l_v: float = L_V,
     r_d: float = R_D,
     r_v: float = R_V,
