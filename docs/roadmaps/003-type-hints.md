@@ -48,7 +48,7 @@ signatures encode units and coordinate conventions.
 
 - [x] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number; 58 tests added (completed 2026-03-26)
 - [x] `thermodynamics.py` — thermodynamic calculations; 60 tests added, removed duplicate function definitions (completed 2026-03-26)
-- [x] `vert_coords.py` — vertical coordinate transformations; 62 tests added, found pre-existing xr.concat bug in pfull_simm_burr (completed 2026-03-29)
+- [x] `vert_coords.py` — vertical coordinate transformations; 62 tests (59 pass, 3 xfail for pre-existing xr.concat bug #26 in pfull_simm_burr) (completed 2026-03-29)
 - [ ] `tropopause.py` — tropopause diagnostics
 - [ ] `lcl.py` — lifted condensation level
 

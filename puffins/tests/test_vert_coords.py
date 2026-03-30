@@ -1,5 +1,7 @@
 """Tests for vert_coords module."""
 
+import warnings
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -113,22 +115,18 @@ class TestToPascal:
 
     def test_warn_flag(self) -> None:
         """Warning is issued when warn=True and conversion happens."""
-        import warnings as w
-
         arr = np.array([500.0])
-        with w.catch_warnings(record=True) as caught:
-            w.simplefilter("always")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             to_pascal(arr, warn=True)
         assert len(caught) == 1
         assert "hPa -> Pa" in str(caught[0].message)
 
     def test_no_warn_when_no_conversion(self) -> None:
         """No warning when values are already in Pa."""
-        import warnings as w
-
         arr = np.array([50000.0])
-        with w.catch_warnings(record=True) as caught:
-            w.simplefilter("always")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             to_pascal(arr, warn=True)
         assert len(caught) == 0
 
@@ -594,8 +592,8 @@ class TestPfullSimBurr:
         return phalf_2d, phalf_ref, pfull_ref
 
     @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug: pfull_top has 'pfull' as scalar "
-        "coordinate not dimension; modern xarray raises ValueError.",
+        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
+        "scalar coordinate not dimension; modern xarray raises ValueError.",
         strict=True,
     )
     def test_returns_dataarray(self) -> None:
@@ -605,8 +603,8 @@ class TestPfullSimBurr:
         assert isinstance(result, xr.DataArray)
 
     @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug: pfull_top has 'pfull' as scalar "
-        "coordinate not dimension; modern xarray raises ValueError.",
+        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
+        "scalar coordinate not dimension; modern xarray raises ValueError.",
         strict=True,
     )
     def test_increasing_pressure(self) -> None:
@@ -617,8 +615,8 @@ class TestPfullSimBurr:
         assert (result.values > 0).all()
 
     @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug: pfull_top has 'pfull' as scalar "
-        "coordinate not dimension; modern xarray raises ValueError.",
+        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
+        "scalar coordinate not dimension; modern xarray raises ValueError.",
         strict=True,
     )
     def test_decreasing_pressure(self) -> None:
@@ -698,15 +696,19 @@ class TestAvgPWeighted:
 class TestAvgLogpWeighted:
     """Tests for avg_logp_weighted."""
 
-    def test_returns_dataarray(self) -> None:
-        """Return type is DataArray."""
-        # Use non-zero phalf to avoid log(0)
+    def _make_inputs(self) -> tuple[xr.DataArray, xr.DataArray]:
+        """Non-zero phalf and pfull for log-pressure weighting."""
         phalf_vals = np.array([1000.0, 2e4, 4e4, 6e4, 8e4, 1e5])
         pfull_vals = 0.5 * (phalf_vals[:-1] + phalf_vals[1:])
         phalf = xr.DataArray(phalf_vals, dims=[PHALF_STR])
         pfull = xr.DataArray(pfull_vals, dims=[PFULL_STR])
+        return phalf, pfull
+
+    def test_returns_dataarray(self) -> None:
+        """Return type is DataArray."""
+        phalf, pfull = self._make_inputs()
         arr = xr.DataArray(
-            np.ones(len(pfull_vals)),
+            np.ones(pfull.sizes[PFULL_STR]),
             dims=[PFULL_STR],
             coords={PFULL_STR: pfull},
             name="ones",
@@ -716,12 +718,9 @@ class TestAvgLogpWeighted:
 
     def test_uniform_field(self) -> None:
         """Average of a uniform field is that constant."""
-        phalf_vals = np.array([1000.0, 2e4, 4e4, 6e4, 8e4, 1e5])
-        pfull_vals = 0.5 * (phalf_vals[:-1] + phalf_vals[1:])
-        phalf = xr.DataArray(phalf_vals, dims=[PHALF_STR])
-        pfull = xr.DataArray(pfull_vals, dims=[PFULL_STR])
+        phalf, pfull = self._make_inputs()
         arr = xr.DataArray(
-            3.0 * np.ones(len(pfull_vals)),
+            3.0 * np.ones(pfull.sizes[PFULL_STR]),
             dims=[PFULL_STR],
             coords={PFULL_STR: pfull},
             name="const",

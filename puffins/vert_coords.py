@@ -22,7 +22,12 @@ from .nb_utils import coord_arr_1d
 
 
 def to_pascal(arr: ArrayLike, is_dp: bool = False, warn: bool = False) -> ArrayLike:
-    """Force data with units either hPa or Pa to be in Pa."""
+    """Force data with units either hPa or Pa to be in Pa.
+
+    Note: unit detection is heuristic (max |value| < threshold). Values that
+    are genuinely small Pa (e.g. 600 Pa in the upper atmosphere) will be
+    incorrectly treated as hPa and multiplied by 100.
+    """
     threshold = 400 if is_dp else 1200
     if np.max(np.abs(arr)) < threshold:
         if warn:
@@ -118,7 +123,7 @@ def dp_from_phalf(
         if dim == "phalf":
             dims_out.append(pfull_str)
         else:
-            dims_out.append(str(dim))
+            dims_out.append(str(dim))  # str() narrows Hashable for mypy
 
     vals_template = [
         xr.ones_like(phalf[dim]) for dim in phalf.dims if dim != phalf_str
