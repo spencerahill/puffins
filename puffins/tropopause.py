@@ -1,5 +1,12 @@
 #! /usr/bin/env python
-"""Calculations of the tropopause."""
+"""Tropopause diagnostics.
+
+Functions for computing the tropopause using various definitions: WMO
+lapse-rate criterion, cold-point temperature minimum, maximum vertical
+curvature of temperature, fixed temperature, and fixed height. Each
+diagnostic has an internal implementation and a public wrapper that
+handles groupby operations over additional dimensions.
+"""
 
 import numpy as np
 
@@ -17,7 +24,38 @@ def tropo_wmo(
     do_interp=True,
     interp_vals=None,
 ):
-    """WMO definition of tropopause: lapse rate < 2 K / km."""
+    """Tropopause height using the WMO lapse-rate definition.
+
+    The tropopause is identified as the lowest level above ``max_pressure``
+    where the lapse rate (dT/dz) exceeds the threshold (i.e. is less
+    negative than -2 K/km by default). Optionally interpolates to finer
+    vertical resolution before computing.
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    height : xarray.DataArray
+        Geopotential height field on pressure levels.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    threshold : float, optional
+        Lapse-rate threshold (K/m). Default: -2e-3 (i.e. -2 K/km).
+    max_pressure : float, optional
+        Maximum pressure level (hPa) to consider; levels with higher
+        pressure are excluded. Default: 600.
+    do_interp : bool, optional
+        Whether to interpolate to finer vertical resolution before
+        computing. Default: True.
+    interp_vals : array-like, optional
+        Custom pressure values to interpolate to. If None and
+        ``do_interp`` is True, uses ``np.arange(max_pressure, 20, -0.1)``.
+
+    Returns
+    -------
+    xarray.DataArray
+        Tropopause height, named 'tropopause_wmo'.
+    """
     # Fill nans with zeros so that cubic interpolation works.
     temp_arr = temp.fillna(0.0)
     z_arr = height.fillna(0.0)
@@ -75,7 +113,33 @@ def tropopause_wmo(
     max_pressure=600,
     interpolate=True,
 ):
-    """WMO definition of tropopause: lapse rate < 2 K / km."""
+    """Tropopause temperature using the WMO lapse-rate definition.
+
+    Wrapper around the internal ``_tropo_wmo`` that handles groupby
+    operations over extra dimensions (e.g. time).
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    z : xarray.DataArray
+        Geopotential height field on pressure levels.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    lat_str : str, optional
+        Name of the latitude dimension. Default: 'lat'.
+    threshold : float, optional
+        Lapse-rate threshold (K/m). Default: -2e-3.
+    max_pressure : float, optional
+        Maximum pressure level (hPa) to consider. Default: 600.
+    interpolate : bool, optional
+        Whether to interpolate to finer vertical resolution. Default: True.
+
+    Returns
+    -------
+    xarray.DataArray
+        Tropopause temperature at each latitude, named 'tropopause_wmo'.
+    """
     kwargs = dict(
         p_str=p_str,
         lat_str=lat_str,
@@ -96,7 +160,27 @@ def _tropo_cold_point(temp, interpolate=True, p_str=LEV_STR, lat_str=LAT_STR):
 
 
 def tropopause_cold_point(temp, interpolate=True, p_str=LEV_STR, lat_str=LAT_STR):
-    """Tropopause defined as the coldest point in the column."""
+    """Tropopause defined as the coldest point in the column.
+
+    Identifies the pressure level with the minimum temperature in each
+    column. Wrapper that handles groupby over extra dimensions.
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    interpolate : bool, optional
+        Whether to interpolate to finer vertical resolution. Default: True.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    lat_str : str, optional
+        Name of the latitude dimension. Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Cold-point tropopause temperature at each latitude.
+    """
     kwargs = dict(interpolate=interpolate, p_str=p_str, lat_str=lat_str)
     return apply_maybe_groupby(
         _tropo_cold_point, [p_str, lat_str], [temp], kwargs=kwargs
@@ -120,7 +204,32 @@ def _tropo_max_vert_curv(
 def tropopause_max_vert_curv(
     temp, z, interpolate=True, max_pressure=500, p_str=LEV_STR, lat_str=LAT_STR
 ):
-    """Tropopause defined as where d^2T/dz^2 maximizes."""
+    """Tropopause defined as the level of maximum vertical curvature of temperature.
+
+    Identifies the pressure level where :math:`d^2T/dz^2` is maximized,
+    above ``max_pressure``. Wrapper that handles groupby over extra
+    dimensions.
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    z : xarray.DataArray
+        Geopotential height field on pressure levels.
+    interpolate : bool, optional
+        Whether to interpolate to finer vertical resolution. Default: True.
+    max_pressure : float, optional
+        Maximum pressure level (hPa) to consider. Default: 500.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    lat_str : str, optional
+        Name of the latitude dimension. Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Tropopause temperature at each latitude.
+    """
     kwargs = dict(
         interpolate=interpolate, p_str=p_str, lat_str=lat_str, max_pressure=max_pressure
     )
@@ -147,7 +256,30 @@ def _tropo_fixed_temp(
 def tropopause_fixed_temp(
     temp, temp_tropo=200.0, interpolate=True, p_str=LEV_STR, lat_str=LAT_STR
 ):
-    """Tropopause defined as a fixed temperature."""
+    """Tropopause defined as the level closest to a fixed temperature.
+
+    Finds the pressure level where the temperature is closest to the
+    specified tropopause temperature. Wrapper that handles groupby over
+    extra dimensions.
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    temp_tropo : float, optional
+        Target tropopause temperature (K). Default: 200.0.
+    interpolate : bool, optional
+        Whether to interpolate to finer vertical resolution. Default: True.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    lat_str : str, optional
+        Name of the latitude dimension. Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Temperature at the identified tropopause level.
+    """
     kwargs = dict(
         interpolate=interpolate, p_str=p_str, lat_str=lat_str, temp_tropo=temp_tropo
     )
@@ -170,7 +302,32 @@ def _tropo_fixed_height(
 def tropopause_fixed_height(
     temp, z, height_tropo=1e4, interpolate=True, p_str=LEV_STR, lat_str=LAT_STR
 ):
-    """Tropopause defined as a fixed height."""
+    """Tropopause defined as the level closest to a fixed height.
+
+    Finds the pressure level where the geopotential height is closest to
+    the specified tropopause height. Wrapper that handles groupby over
+    extra dimensions.
+
+    Parameters
+    ----------
+    temp : xarray.DataArray
+        Temperature field on pressure levels.
+    z : xarray.DataArray
+        Geopotential height field on pressure levels.
+    height_tropo : float, optional
+        Target tropopause height (m). Default: 1e4 (10 km).
+    interpolate : bool, optional
+        Whether to interpolate to finer vertical resolution. Default: True.
+    p_str : str, optional
+        Name of the pressure/level dimension. Default: 'level'.
+    lat_str : str, optional
+        Name of the latitude dimension. Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Temperature at the identified tropopause level.
+    """
     kwargs = dict(
         interpolate=interpolate, p_str=p_str, lat_str=lat_str, height_tropo=height_tropo
     )
