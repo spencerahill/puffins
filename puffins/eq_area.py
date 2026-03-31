@@ -1,5 +1,22 @@
 #! /usr/bin/env python
-"""Equal area model analytical solutions and numerical solvers."""
+"""Equal-area model analytical solutions and numerical solvers.
+
+Implements the equal-area constraint for Hadley cell models following
+Held & Hou (1980), Lindzen & Hou (1988), and extensions. Includes
+analytical solutions for the small-angle, uniform-Rossby-number case,
+linear-Rossby-number profiles, and numerical solvers for Boussinesq,
+convective quasi-equilibrium (CQE), and fixed-tropopause-temperature
+variants.
+
+References
+----------
+.. [1] Held, I. M. & Hou, A. Y. (1980). "Nonlinear Axially Symmetric
+   Circulations in a Nearly Inviscid Atmosphere." J. Atmos. Sci., 37,
+   515-533.
+.. [2] Lindzen, R. S. & Hou, A. Y. (1988). "Hadley Circulations for
+   Zonally Averaged Heating Centered off the Equator." J. Atmos. Sci.,
+   45, 2416-2427.
+"""
 
 import numpy as np
 import scipy.integrate
@@ -38,7 +55,24 @@ def eq_pot_temp_mean_ro(
     delta_h,
     theta_ref=THETA_REF,
 ):
-    """Fixed-Ro equal-area small-angle solution for equatorial temp."""
+    """Equatorial potential temperature for the fixed-Ro, small-angle, equal-area solution.
+
+    Parameters
+    ----------
+    ross_num : float
+        Rossby number.
+    therm_ross_num : float
+        Thermal Rossby number.
+    delta_h : float
+        Fractional horizontal temperature difference.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+
+    Returns
+    -------
+    float
+        Equatorial potential temperature (K).
+    """
     return theta_ref * (
         1 + delta_h / 3 - 5 * therm_ross_num * delta_h / (18 * ross_num)
     )
@@ -51,7 +85,26 @@ def pot_temp_mean_ro(
     delta_h,
     theta_ref=THETA_REF,
 ):
-    """Fixed-Ro equal-area small-angle potential temperature solution."""
+    """Potential temperature profile for the fixed-Ro, small-angle, equal-area solution.
+
+    Parameters
+    ----------
+    lat : array-like
+        Latitude (degrees).
+    ross_num : float
+        Rossby number.
+    therm_ross_num : float
+        Thermal Rossby number.
+    delta_h : float
+        Fractional horizontal temperature difference.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+
+    Returns
+    -------
+    array-like
+        Potential temperature at each latitude (K).
+    """
     pot_temp_eq = eq_pot_temp_mean_ro(
         ross_num,
         therm_ross_num,
@@ -71,7 +124,20 @@ def cell_edge_mean_ro(
     ross_num,
     therm_ross_num,
 ):
-    """Cell edge sol. for fixed-Ro, small-angle, eq. ascent."""
+    """Hadley cell edge for the fixed-Ro, small-angle, equatorial-ascent case.
+
+    Parameters
+    ----------
+    ross_num : float
+        Rossby number.
+    therm_ross_num : float
+        Thermal Rossby number.
+
+    Returns
+    -------
+    float
+        Cell edge latitude (degrees).
+    """
     return np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5)
 
 
@@ -85,7 +151,32 @@ def heat_flux_mean_ro(
     delta_h=DELTA_H,
     tau=20 * 86400,
 ):
-    """Meridional heat flux for fixed-Ro, small-angle, eq. ascent."""
+    """Meridional heat flux for the fixed-Ro, small-angle, equatorial-ascent case.
+
+    Parameters
+    ----------
+    lat : array-like
+        Latitude (degrees).
+    therm_ross_num : float
+        Thermal Rossby number.
+    ross_num : float
+        Rossby number.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    height : float, optional
+        Tropopause height (m). Default: HEIGHT_TROPO.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    tau : float, optional
+        Radiative relaxation timescale (s). Default: 20 days.
+
+    Returns
+    -------
+    array-like
+        Meridional heat flux (K m^2/s).
+    """
     prefac = (
         (5 / 18)
         * (5 / 3) ** 0.5
@@ -114,7 +205,34 @@ def mom_flux_mean_ro(
     delta_v=DELTA_V,
     tau=20 * 86400,
 ):
-    """Meridional momentum flux for fixed-Ro, small-angle, eq. ascent."""
+    """Meridional momentum flux for the fixed-Ro, small-angle, equatorial-ascent case.
+
+    Parameters
+    ----------
+    lat : array-like
+        Latitude (degrees).
+    therm_ross_num : float
+        Thermal Rossby number.
+    ross_num : float
+        Rossby number.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    height : float, optional
+        Tropopause height (m). Default: HEIGHT_TROPO.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    delta_v : float, optional
+        Fractional vertical temperature difference. Default: DELTA_V.
+    tau : float, optional
+        Radiative relaxation timescale (s). Default: 20 days.
+
+    Returns
+    -------
+    array-like
+        Meridional momentum flux (m^2/s^2).
+    """
     prefac = rot_rate * radius**2 * height * delta_h / (6 * tau * delta_v)
     latrad = np.deg2rad(lat)
     latrad2 = latrad**2
@@ -140,7 +258,36 @@ def u_sfc_mean_ro(
     tau=20 * 86400,
     drag_coeff=0.005,
 ):
-    """Meridional heat flux for fixed-Ro, small-angle, eq. ascent."""
+    """Surface zonal wind for the fixed-Ro, small-angle, equatorial-ascent case.
+
+    Parameters
+    ----------
+    lat : array-like
+        Latitude (degrees).
+    therm_ross_num : float
+        Thermal Rossby number.
+    ross_num : float
+        Rossby number.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    height : float, optional
+        Tropopause height (m). Default: HEIGHT_TROPO.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    delta_v : float, optional
+        Fractional vertical temperature difference. Default: DELTA_V.
+    tau : float, optional
+        Radiative relaxation timescale (s). Default: 20 days.
+    drag_coeff : float, optional
+        Surface drag coefficient (dimensionless). Default: 0.005.
+
+    Returns
+    -------
+    array-like
+        Surface zonal wind (m/s).
+    """
     prefac = (
         -25 * rot_rate * radius * height * delta_h / (18 * drag_coeff * tau * delta_v)
     )
@@ -158,7 +305,25 @@ def u_sfc_mean_ro(
 
 # Solutions for small-angle, linear meridional profile in Ro
 def cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent):
-    """Full solution for linear-Ro, lata=0, small-angle cell edge."""
+    """Cell edge for the linear-Ro, equatorial-ascent, small-angle case (full solution).
+
+    Solves the quadratic polynomial in latitude-squared for the cell
+    edge when the Rossby number varies linearly from ascent to descent.
+
+    Parameters
+    ----------
+    therm_ross : float
+        Thermal Rossby number.
+    ross_ascent : float
+        Rossby number at the ascent latitude.
+    ross_descent : float
+        Rossby number at the descent (cell edge) latitude.
+
+    Returns
+    -------
+    float
+        Cell edge latitude (degrees).
+    """
     delro = ross_ascent - ross_descent
 
     def _term_latd4(ross_ascent, delro):
@@ -181,7 +346,26 @@ def cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent):
 
 
 def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
-    """Leading-order approx. for cell edge for linear Ro profile."""
+    """Leading-order approximation for cell edge with a linear Rossby number profile.
+
+    Parameters
+    ----------
+    therm_ross : float
+        Thermal Rossby number.
+    ross_ascent : float
+        Rossby number at the ascent latitude.
+    ross_descent : float
+        Rossby number at the descent (cell edge) latitude.
+
+    Returns
+    -------
+    float
+        Approximate cell edge latitude (degrees).
+
+    See Also
+    --------
+    cell_edge_lin_ro_lata0_full : Full (non-approximate) solution.
+    """
     delta_ross = ross_ascent - ross_descent
     return np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5)
 
@@ -193,7 +377,26 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
     delta_h=DELTA_H,
     theta_ref=THETA_REF,
 ):
-    """Equatorial pot. temp, small-angle, linear-Ro, equal-area."""
+    """Equatorial potential temperature for the small-angle, linear-Ro, equal-area case.
+
+    Parameters
+    ----------
+    therm_ross : float
+        Thermal Rossby number.
+    ross_ascent : float
+        Rossby number at the ascent latitude.
+    ross_descent : float
+        Rossby number at the descent (cell edge) latitude.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+
+    Returns
+    -------
+    float
+        Equatorial potential temperature (K).
+    """
     delro = ross_ascent - ross_descent
     burg_num = therm_ross / delta_h
     latd2 = (
@@ -234,7 +437,39 @@ def pot_temp_lin_ro_eq_area(
     grav=GRAV_EARTH,
     height=HEIGHT_TROPO,
 ):
-    """Fixed-Ro equal-area small-angle potential temperature solution."""
+    """Potential temperature profile for the linear-Ro, small-angle, equal-area case.
+
+    Combines the equatorial temperature and cell edge solutions to compute
+    the full meridional potential temperature profile.
+
+    Parameters
+    ----------
+    lat : array-like
+        Latitude (degrees).
+    therm_ross : float
+        Thermal Rossby number.
+    ross_ascent : float
+        Rossby number at the ascent latitude.
+    ross_descent : float
+        Rossby number at the descent (cell edge) latitude.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    grav : float, optional
+        Gravitational acceleration (m/s^2). Default: Earth.
+    height : float, optional
+        Tropopause height (m). Default: HEIGHT_TROPO.
+
+    Returns
+    -------
+    array-like
+        Potential temperature at each latitude (K).
+    """
     pot_temp_eq = eq_pot_temp_lin_ro_lata0_small_ang(
         therm_ross=therm_ross,
         ross_ascent=ross_ascent,
@@ -329,6 +564,37 @@ def _lh88_model(x, sinlat_0, theta_ref, delta_h, thermal_ro):
 def equal_area_lh88(
     init_guess, sinlat_0, theta_ref=THETA_REF, delta_h=DELTA_H, thermal_ro=0.15
 ):
+    """Solve the Lindzen-Hou 1988 equal-area model numerically.
+
+    Finds the winter cell edge, shared inner edge, summer cell edge,
+    and inner-edge potential temperature by solving the system of four
+    equal-area constraints.
+
+    Parameters
+    ----------
+    init_guess : array-like of length 4
+        Initial guess for [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_hat_1].
+    sinlat_0 : float
+        Sine of the latitude of maximum heating.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    thermal_ro : float, optional
+        Thermal Rossby number. Default: 0.15.
+
+    Returns
+    -------
+    numpy.ndarray of length 4
+        Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_hat_1].
+
+    References
+    ----------
+    .. [1] Lindzen, R. S. & Hou, A. Y. (1988). J. Atmos. Sci., 45,
+       2416-2427.
+    """
     sol = scipy.optimize.root(
         _lh88_model, init_guess, args=(sinlat_0, theta_ref, delta_h, thermal_ro)
     )
@@ -479,6 +745,42 @@ def equal_area_lh88_fixed_temp_tropo(
     radius=RAD_EARTH,
     c_p=C_P,
 ):
+    """Solve the LH88 equal-area model with fixed tropopause temperature.
+
+    Variant of the Lindzen-Hou 1988 model that assumes a fixed lapse rate
+    and tropopause temperature rather than the standard Boussinesq
+    assumption of fixed tropopause height.
+
+    Parameters
+    ----------
+    init_guess : array-like of length 4
+        Initial guess for [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        T_sfc_1].
+    sinlat_0 : float
+        Sine of the latitude of maximum heating.
+    theta_ref : float, optional
+        Reference potential temperature (K). Default: THETA_REF.
+    delta_h : float, optional
+        Fractional horizontal temperature difference. Default: DELTA_H.
+    gamma : float, optional
+        Ratio of actual lapse rate to dry adiabatic. Default: 1.0.
+    dtheta_dts : float, optional
+        Approximation to d(theta_hat)/d(T_sfc). Default: 1.0.
+    temp_tropo : float, optional
+        Tropopause temperature (K). Default: TEMP_TROPO.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    c_p : float, optional
+        Specific heat at constant pressure (J/kg/K). Default: C_P.
+
+    Returns
+    -------
+    numpy.ndarray of length 4
+        Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        T_sfc_1].
+    """
     sol = scipy.optimize.root(
         _lh88_model_fixed_tt,
         init_guess,
@@ -550,7 +852,31 @@ def _equal_area_model_bouss(x, theta_ref, del_h_over_ro, _theta_rce_func):
 
 
 def equal_area_bouss(init_guess, theta_ref, del_h_over_ro, _theta_rce_func):
-    """Boussinesq equal area model for arbitrary RCE potential temperatures."""
+    """Boussinesq equal-area model for arbitrary RCE potential temperatures.
+
+    Solves the equal-area constraint system for the Boussinesq case with
+    a user-supplied RCE potential temperature function.
+
+    Parameters
+    ----------
+    init_guess : array-like of length 4
+        Initial guess for [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    theta_ref : float
+        Reference potential temperature (K).
+    del_h_over_ro : float
+        Ratio of delta_h to the thermal Rossby number, equal to
+        Omega^2 a^2 / (gH).
+    _theta_rce_func : callable
+        Function of sin(latitude) returning the RCE depth-averaged
+        potential temperature.
+
+    Returns
+    -------
+    numpy.ndarray of length 4
+        Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    """
     sol = scipy.optimize.root(
         _equal_area_model_bouss,
         init_guess,
@@ -621,7 +947,35 @@ def _equal_area_model_cqe(x, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_fu
 
 
 def equal_area_cqe(init_guess, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func):
-    """cqeinesq equal area model for arbitrary RCE potential temperatures."""
+    """CQE equal-area model for arbitrary RCE potential temperatures.
+
+    Solves the equal-area constraint system under the convective
+    quasi-equilibrium (CQE) assumption with a user-supplied RCE
+    potential temperature function.
+
+    Parameters
+    ----------
+    init_guess : array-like of length 4
+        Initial guess for [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    sfc_trop_diff : float
+        Surface-to-tropopause temperature difference (K).
+    c_p : float
+        Specific heat at constant pressure (J/kg/K).
+    radius : float
+        Planetary radius (m).
+    rot_rate : float
+        Planetary rotation rate (rad/s).
+    _theta_rce_func : callable
+        Function of sin(latitude) returning the RCE depth-averaged
+        potential temperature.
+
+    Returns
+    -------
+    numpy.ndarray of length 4
+        Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    """
     sol = scipy.optimize.root(
         _equal_area_model_cqe,
         init_guess,
@@ -750,7 +1104,41 @@ def equal_area_cqe_fixed_tt(
     radius=RAD_EARTH,
     rot_rate=ROT_RATE_EARTH,
 ):
-    """CQE equal area model with fixed tropopause temperature."""
+    """CQE equal-area model with fixed tropopause temperature.
+
+    Solves the equal-area constraint system under the convective
+    quasi-equilibrium (CQE) assumption with a fixed tropopause
+    temperature.
+
+    Parameters
+    ----------
+    init_guess : array-like of length 4
+        Initial guess for [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    theta_rce_func : callable
+        Function of sin(latitude) returning the RCE depth-averaged
+        potential temperature.
+    theta_guesses : array-like
+        Initial guesses for potential temperature in the CQE solver.
+    temp_tropo : float, optional
+        Tropopause temperature (K). Default: TEMP_TROPO.
+    rel_hum : float, optional
+        Relative humidity. Default: REL_HUM.
+    pressure : float, optional
+        Reference pressure (Pa). Default: P0.
+    c_p : float, optional
+        Specific heat at constant pressure (J/kg/K). Default: C_P.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+
+    Returns
+    -------
+    numpy.ndarray of length 4
+        Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
+        theta_1].
+    """
     sol = scipy.optimize.root(
         _eq_area_cqe_fixed_tt,
         init_guess,
