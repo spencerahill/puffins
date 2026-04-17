@@ -223,7 +223,7 @@ def interp_eta_to_plevs(
     errant results if there are other dimensions.
 
     """
-    phalf = cast(xr.DataArray, phalf_from_psfc(ds[bk_str], ds[pk_str], ds["ps"]))
+    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds["ps"])
     pfull = pfull_from_phalf_avg(phalf, ds[pfull_str])
     pfull *= 1e-2  # Pa to hPa
 

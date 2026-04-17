@@ -6,12 +6,13 @@ from __future__ import annotations
 import functools
 import operator
 import warnings
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
+import numpy.typing as npt
 import xarray as xr
 
-from ._typing import ArrayLike
+from ._typing import ArrayLike, Scalar
 from .constants import GRAV_EARTH, MEAN_SLP_EARTH
 from .names import (
     LEV_STR,
@@ -21,6 +22,14 @@ from .names import (
 from .nb_utils import coord_arr_1d
 
 
+@overload
+def to_pascal(
+    arr: xr.DataArray, is_dp: bool = ..., warn: bool = ...
+) -> xr.DataArray: ...
+@overload
+def to_pascal(arr: np.ndarray, is_dp: bool = ..., warn: bool = ...) -> np.ndarray: ...
+@overload
+def to_pascal(arr: Scalar, is_dp: bool = ..., warn: bool = ...) -> Scalar: ...
 def to_pascal(arr: ArrayLike, is_dp: bool = False, warn: bool = False) -> ArrayLike:
     """Force data with units either hPa or Pa to be in Pa.
 
@@ -120,7 +129,7 @@ def dp_from_phalf(
     )
     dims_out: list[str] = []
     for dim in phalf.dims:
-        if dim == "phalf":
+        if dim == phalf_str:
             dims_out.append(pfull_str)
         else:
             dims_out.append(str(dim))  # str() narrows Hashable for mypy
@@ -160,6 +169,12 @@ def dlogp_from_pfull(
     return dlogp_from_phalf(phalf, pfull)
 
 
+@overload
+def phalf_from_psfc(
+    bk: xr.DataArray, pk: xr.DataArray, p_sfc: xr.DataArray
+) -> xr.DataArray: ...
+@overload
+def phalf_from_psfc(bk: ArrayLike, pk: ArrayLike, p_sfc: ArrayLike) -> ArrayLike: ...
 def phalf_from_psfc(bk: ArrayLike, pk: ArrayLike, p_sfc: ArrayLike) -> ArrayLike:
     """Compute pressure of half levels of hybrid sigma-pressure coordinates."""
     return cast(ArrayLike, p_sfc * bk + pk)
@@ -184,7 +199,7 @@ def pfull_vals_simm_burr(
     phalf_ref: xr.DataArray,
     pfull_ref: xr.DataArray,
     phalf_str: str = PHALF_STR,
-) -> np.ndarray:
+) -> npt.NDArray[np.float64]:
     """Compute pressure at full levels using Simmons-Burridge spacing.
 
     See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
@@ -194,8 +209,8 @@ def pfull_vals_simm_burr(
     """
     dp_vals = phalf.diff(phalf_str).values
     # Above means vertically above (i.e. lower pressure).
-    phalf_above = phalf.isel(phalf=slice(None, -1))
-    phalf_below = phalf.isel(phalf=slice(1, None))
+    phalf_above = phalf.isel({phalf_str: slice(None, -1)})
+    phalf_below = phalf.isel({phalf_str: slice(1, None)})
 
     dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
     phalf_over_dp_vals = phalf_above.values / dp_vals
@@ -203,9 +218,9 @@ def pfull_vals_simm_burr(
     alpha_vals = 1.0 - phalf_over_dp_vals * dlog_phalf_vals
 
     ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
-    pfull_vals: np.ndarray = np.exp(ln_pfull_vals)
+    pfull_vals: npt.NDArray[np.float64] = np.exp(ln_pfull_vals)
     top_lev_factor = float(pfull_ref[0] / phalf_ref[1])
-    pfull_vals[0] = phalf.isel(phalf=1) * top_lev_factor
+    pfull_vals[0] = phalf.isel({phalf_str: 1}) * top_lev_factor
     return pfull_vals
 
 
@@ -226,13 +241,13 @@ def pfull_simm_burr(
     # Above means vertically above (i.e. lower pressure).
     if phalf_ref[0] < phalf_ref[1]:
         p_is_increasing = True
-        phalf_above = phalf.isel(phalf=slice(None, -1))
-        phalf_below = phalf.isel(phalf=slice(1, None))
+        phalf_above = phalf.isel({phalf_str: slice(None, -1)})
+        phalf_below = phalf.isel({phalf_str: slice(1, None)})
         ind_phalf_next_to_top = 1
     else:
         p_is_increasing = False
-        phalf_above = phalf.isel(phalf=slice(1, None))
-        phalf_below = phalf.isel(phalf=slice(None, -1))
+        phalf_above = phalf.isel({phalf_str: slice(1, None)})
+        phalf_below = phalf.isel({phalf_str: slice(None, -1)})
         ind_phalf_next_to_top = -2
 
     dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
@@ -258,8 +273,9 @@ def pfull_simm_burr(
         xr.DataArray,
         top_lev_factor * phalf.isel({phalf_str: ind_phalf_next_to_top}),
     )
-    pfull_top.coords["pfull"] = pfull_ref.isel({pfull_str: ind_top})
+    pfull_top.coords[pfull_str] = pfull_ref.isel({pfull_str: ind_top})
 
+    # Known xr.concat bug with modern xarray: see issue #26.
     if p_is_increasing:
         return cast(xr.DataArray, xr.concat([pfull_top, pfull_not_top], pfull_str))
     return cast(xr.DataArray, xr.concat([pfull_not_top, pfull_top], pfull_str))

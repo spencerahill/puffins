@@ -85,15 +85,11 @@ class TestToPascal:
         result = to_pascal(arr)
         np.testing.assert_allclose(result, arr * 100.0)
 
-    def test_is_dp_threshold(self) -> None:
-        """The is_dp flag lowers the threshold to 400."""
+    def test_below_both_thresholds(self) -> None:
+        """A value below both thresholds is converted regardless of is_dp."""
         arr = np.array([350.0])
-        # Without is_dp: 350 < 1200 → convert
-        result_no_dp = to_pascal(arr, is_dp=False)
-        np.testing.assert_allclose(result_no_dp, 35000.0)
-        # With is_dp: 350 < 400 → convert
-        result_dp = to_pascal(arr, is_dp=True)
-        np.testing.assert_allclose(result_dp, 35000.0)
+        np.testing.assert_allclose(to_pascal(arr, is_dp=False), 35000.0)
+        np.testing.assert_allclose(to_pascal(arr, is_dp=True), 35000.0)
 
     def test_is_dp_above_threshold(self) -> None:
         """Value above the dp threshold but below the default threshold."""
@@ -101,6 +97,27 @@ class TestToPascal:
         # is_dp=True: 500 >= 400 → no conversion
         result = to_pascal(arr, is_dp=True)
         np.testing.assert_allclose(result, 500.0)
+
+    def test_default_threshold_boundary(self) -> None:
+        """Strictly-less-than check at 1200: 1199.9 converts, 1200.0 does not."""
+        np.testing.assert_allclose(to_pascal(np.array([1199.9])), 119990.0)
+        np.testing.assert_allclose(to_pascal(np.array([1200.0])), 1200.0)
+        np.testing.assert_allclose(to_pascal(np.array([1200.1])), 1200.1)
+
+    def test_is_dp_threshold_boundary(self) -> None:
+        """Strictly-less-than check at 400: 399.9 converts, 400.0 does not."""
+        np.testing.assert_allclose(to_pascal(np.array([399.9]), is_dp=True), 39990.0)
+        np.testing.assert_allclose(to_pascal(np.array([400.0]), is_dp=True), 400.0)
+        np.testing.assert_allclose(to_pascal(np.array([400.1]), is_dp=True), 400.1)
+
+    def test_small_pa_false_positive(self) -> None:
+        """Genuinely-small Pa values (e.g. upper-atmosphere ~600 Pa) are
+        incorrectly treated as hPa — documents the known heuristic limitation
+        called out in the docstring.
+        """
+        arr = np.array([600.0])  # 600 Pa at e.g. ~6 hPa stratosphere
+        result = to_pascal(arr)
+        np.testing.assert_allclose(result, 60000.0)
 
     def test_scalar_input(self) -> None:
         """Works with scalar input."""
@@ -687,6 +704,21 @@ class TestAvgPWeighted:
         result = avg_p_weighted(arr, phalf, pfull, p_str=PFULL_STR)
         np.testing.assert_allclose(result.values, 7.0)
 
+    def test_decreasing_pressure_uniform_field(self) -> None:
+        """Same constant average when phalf is ordered top-down (decreasing)."""
+        phalf_vals = np.array([1e5, 8e4, 6e4, 4e4, 2e4, 1000.0])
+        pfull_vals = 0.5 * (phalf_vals[:-1] + phalf_vals[1:])
+        phalf = xr.DataArray(phalf_vals, dims=[PHALF_STR])
+        pfull = xr.DataArray(pfull_vals, dims=[PFULL_STR])
+        arr = xr.DataArray(
+            7.0 * np.ones(pfull.sizes[PFULL_STR]),
+            dims=[PFULL_STR],
+            coords={PFULL_STR: pfull},
+            name="const",
+        )
+        result = avg_p_weighted(arr, phalf, pfull, p_str=PFULL_STR)
+        np.testing.assert_allclose(result.values, 7.0)
+
 
 # ---------------------------------------------------------------------------
 # TestAvgLogpWeighted
@@ -719,6 +751,21 @@ class TestAvgLogpWeighted:
     def test_uniform_field(self) -> None:
         """Average of a uniform field is that constant."""
         phalf, pfull = self._make_inputs()
+        arr = xr.DataArray(
+            3.0 * np.ones(pfull.sizes[PFULL_STR]),
+            dims=[PFULL_STR],
+            coords={PFULL_STR: pfull},
+            name="const",
+        )
+        result = avg_logp_weighted(arr, phalf, pfull, p_str=PFULL_STR)
+        np.testing.assert_allclose(result.values, 3.0)
+
+    def test_decreasing_pressure_uniform_field(self) -> None:
+        """Constant average is preserved under top-down (decreasing) ordering."""
+        phalf_vals = np.array([1e5, 8e4, 6e4, 4e4, 2e4, 1000.0])
+        pfull_vals = 0.5 * (phalf_vals[:-1] + phalf_vals[1:])
+        phalf = xr.DataArray(phalf_vals, dims=[PHALF_STR])
+        pfull = xr.DataArray(pfull_vals, dims=[PFULL_STR])
         arr = xr.DataArray(
             3.0 * np.ones(pfull.sizes[PFULL_STR]),
             dims=[PFULL_STR],
@@ -769,4 +816,16 @@ class TestColExtrema:
         )
         result = col_extrema(arr)
         # Non-NaN values should exist near the peak
+        assert not np.all(np.isnan(result.values))
+
+    def test_decreasing_pressure_detects_maximum(self) -> None:
+        """Detection works when the pressure coord is decreasing (top-down)."""
+        pfull = _pfull_decreasing()
+        arr = xr.DataArray(
+            [1.0, 3.0, 5.0, 3.0, 1.0],
+            dims=[LEV_STR],
+            coords={LEV_STR: pfull},
+            name="peaked",
+        )
+        result = col_extrema(arr)
         assert not np.all(np.isnan(result.values))
