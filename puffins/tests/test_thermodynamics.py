@@ -1,6 +1,7 @@
 """Tests for thermodynamics module."""
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from puffins.constants import C_P, EPSILON, GRAV_EARTH, L_V, P0, R_D
@@ -471,8 +472,15 @@ class TestSatEquivPotTemp:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore:overflow encountered:RuntimeWarning")
 class TestTempFromEquivPotTemp:
-    """Tests for temp_from_equiv_pot_temp."""
+    """Tests for temp_from_equiv_pot_temp.
+
+    brentq probes temperatures near the top of its bracket where the Tetens
+    saturation pressure exceeds ambient, producing transient float overflows
+    in np.exp / scalar power. The solver still converges, so the warnings
+    are filtered at the class level.
+    """
 
     def test_scalar_roundtrip(self) -> None:
         """Roundtrip: T -> theta_e -> T."""
