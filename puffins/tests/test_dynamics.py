@@ -1,6 +1,7 @@
 """Tests for dynamics module."""
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from puffins.constants import (
@@ -488,8 +489,14 @@ class TestZonalFricInferredSteady:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore:divide by zero encountered in log:RuntimeWarning")
 class TestZFromHypso:
-    """Tests for z_from_hypso."""
+    """Tests for z_from_hypso.
+
+    The top-of-atmosphere half-level pressure is 0 (dynamics.py:233), so
+    np.log(p_half) produces a benign -inf at the top. z_from_hypso masks
+    the resulting inf to NaN before returning, so the warning is noise.
+    """
 
     def test_returns_dataarray(self) -> None:
         """Returns an xarray DataArray."""
