@@ -40,4 +40,4 @@ jobs:
           fetch-depth: 0  # needed for setuptools-scm
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --extra dev --python ${{ matrix.python-version }}
-      - run: uv run pytest --cov=puffins --cov-report=xml || test $? -eq 5
+      - run: uv run pytest -W error::RuntimeWarning --cov=puffins --cov-report=xml || test $? -eq 5
