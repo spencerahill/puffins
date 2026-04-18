@@ -122,6 +122,7 @@ module = [
     "puffins.num_solver",
     "puffins.radiation",
     "puffins.thermodynamics",
+    "puffins.tropopause",
     "puffins.vert_coords",
 ]
 disallow_untyped_defs = true
