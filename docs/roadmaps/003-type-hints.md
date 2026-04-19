@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-26 |
+| **Last updated** | 2026-04-18 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -49,7 +49,7 @@ signatures encode units and coordinate conventions.
 - [x] `dynamics.py` — Coriolis parameter, angular momentum, vorticity, Rossby number; 58 tests added (completed 2026-03-26)
 - [x] `thermodynamics.py` — thermodynamic calculations; 60 tests added, removed duplicate function definitions (completed 2026-03-26)
 - [x] `vert_coords.py` — vertical coordinate transformations; 62 tests (59 pass, 3 xfail for pre-existing xr.concat bug #26 in pfull_simm_burr) (completed 2026-03-29)
-- [ ] `tropopause.py` — tropopause diagnostics
+- [x] `tropopause.py` — tropopause diagnostics; 18 tests (8 pass for `tropo_wmo`, 10 xfail for six legacy implementations broken since ~2020 per SAH source note); fixed hardcoded `level` dim string in `tropo_wmo` to use the `p_str` argument (completed 2026-04-18)
 - [ ] `lcl.py` — lifted condensation level
 
 ## Group 4: Climate Dynamics
