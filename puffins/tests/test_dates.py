@@ -9,6 +9,7 @@ from puffins.dates import (
     ann_subset_ts,
     ann_subsets,
     ann_ts_djf,
+    monthly_anom,
     subset_ann,
     time_to_year_and_day,
 )
@@ -116,6 +117,28 @@ class TestAnnTsDjf:
         result = ann_ts_djf(monthly_ts_2d)
         assert "x" in result.dims
         assert "year" in result.dims
+
+
+class TestMonthlyAnom:
+    """Tests for monthly_anom."""
+
+    def test_removes_calendar_month_climatology(self, monthly_ts: xr.DataArray) -> None:
+        result = monthly_anom(monthly_ts)
+        # January values are 0, 12, 24 (mean 12), so anomalies are -12, 0, 12.
+        np.testing.assert_allclose(
+            result.isel(time=[0, 12, 24]).values, [-12.0, 0.0, 12.0]
+        )
+
+    def test_anomalies_sum_to_zero_per_month(self, monthly_ts: xr.DataArray) -> None:
+        result = monthly_anom(monthly_ts)
+        clim = result.groupby("time.month").mean("time")
+        np.testing.assert_allclose(clim.values, 0.0, atol=1e-12)
+
+    def test_2d_preserves_spatial_dim(self, monthly_ts_2d: xr.DataArray) -> None:
+        result = monthly_anom(monthly_ts_2d)
+        assert result.dims == monthly_ts_2d.dims
+        clim = result.groupby("time.month").mean("time")
+        np.testing.assert_allclose(clim.values, 0.0, atol=1e-12)
 
 
 class TestAnnHarm:
