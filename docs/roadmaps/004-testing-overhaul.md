@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-19 |
+| **Last updated** | 2026-06-29 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -15,9 +15,9 @@ function and enforced coverage thresholds in CI.
 
 ## Current State
 
-- **5 test files** (`test_budget_adj.py`, `test_calculus.py`, `test_kuo_el.py`, `test_dates.py`, `test_longitude.py`), covering 5 of ~31 modules
-- **121 tests passing** (50 pre-existing + 71 added in Roadmap 003 Group 1 PR)
-- **~328 public functions**, the vast majority untested
+- **13 test files**, covering 13 of ~31 modules
+- **448 tests passing** (1 skipped, 13 xfailed)
+- **~328 public functions**, many still untested
 - CI workflow (`ci.yml`) and pytest configuration in `pyproject.toml` now exist (added in Roadmap 001)
 - pytest and pytest-cov are project dev dependencies
 
