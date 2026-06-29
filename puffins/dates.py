@@ -168,6 +168,21 @@ def ann_ts_djf(arr: xr.DataArray) -> xr.DataArray:
     return arr_djf
 
 
+def monthly_anom(arr: xr.DataArray, dim_time: str = TIME_STR) -> xr.DataArray:
+    """Anomaly of each month from its calendar-month climatology.
+
+    For each calendar month, the climatological mean across all years of that
+    month is subtracted from every occurrence of that month, removing the mean
+    seasonal cycle.  Any non-time dimensions are retained, with the
+    climatology computed separately at each of their points.  The output
+    gains a ``month`` coordinate along ``dim_time``.
+
+    """
+    grouped = arr.groupby(dim_time + ".month")
+    clim = grouped.mean(dim_time)
+    return cast(xr.DataArray, grouped - clim)
+
+
 @overload
 def ann_harm(
     arr: xr.DataArray,
