@@ -231,7 +231,7 @@ def mom_flux_mean_ro(
     Returns
     -------
     array-like
-        Meridional momentum flux (m^2/s^2).
+        Meridional momentum flux (m^3/s^2).
     """
     prefac = rot_rate * radius**2 * height * delta_h / (6 * tau * delta_v)
     latrad = np.deg2rad(lat)
@@ -281,7 +281,7 @@ def u_sfc_mean_ro(
     tau : float, optional
         Radiative relaxation timescale (s). Default: 20 days.
     drag_coeff : float, optional
-        Surface drag coefficient (dimensionless). Default: 0.005.
+        Surface drag coefficient (m/s). Default: 0.005.
 
     Returns
     -------
