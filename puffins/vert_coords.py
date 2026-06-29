@@ -1,5 +1,11 @@
 #! /usr/bin/env python
-"""Functionality involving vertical coordinates."""
+"""Vertical coordinate transformations and pressure-level utilities.
+
+Functions for converting between vertical coordinate systems, computing
+pressure thicknesses, mass-weighted integrals and averages, and
+Simmons-Burridge vertical level spacing. Supports both full-level and
+half-level pressure grids, as well as log-pressure weighting.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +42,22 @@ def to_pascal(arr: ArrayLike, is_dp: bool = False, warn: bool = False) -> ArrayL
     Note: unit detection is heuristic (max |value| < threshold). Values that
     are genuinely small Pa (e.g. 600 Pa in the upper atmosphere) will be
     incorrectly treated as hPa and multiplied by 100.
+
+    Parameters
+    ----------
+    arr : array-like
+        Pressure data in either hPa or Pa.
+    is_dp : bool, optional
+        If True, use a lower threshold (400) for detection, appropriate
+        for pressure differences. Default: False.
+    warn : bool, optional
+        If True, emit a warning when conversion is applied.
+        Default: False.
+
+    Returns
+    -------
+    array-like
+        Pressure values in Pa.
     """
     threshold = 400 if is_dp else 1200
     if np.max(np.abs(arr)) < threshold:
@@ -52,7 +74,24 @@ def int_dp_g(
     dim: str = LEV_STR,
     grav: float = GRAV_EARTH,
 ) -> xr.DataArray:
-    """Mass weighted integral.  Assumes `dp` is in Pa (not hPa)."""
+    """Mass-weighted vertical integral: sum(arr * dp) / g.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to integrate.
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa).
+    dim : str, optional
+        Name of the vertical dimension. Default: 'level'.
+    grav : float, optional
+        Gravitational acceleration (m/s^2). Default: Earth.
+
+    Returns
+    -------
+    xarray.DataArray
+        Vertically integrated field.
+    """
     weighted = cast(xr.DataArray, arr * dp)
     return cast(xr.DataArray, weighted.sum(dim=dim) / grav)
 
@@ -64,7 +103,26 @@ def int_dlogp(
     pfull_str: str = LEV_STR,
     phalf_str: str = PHALF_STR,
 ) -> xr.DataArray:
-    """Integral of array on pressure levels but weighted by log(pressure)."""
+    """Log-pressure-weighted vertical integral.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to integrate, with a pressure coordinate.
+    p_top : float, optional
+        Top pressure boundary (Pa). Default: 0.0.
+    p_bot : float, optional
+        Bottom pressure boundary (Pa). Default: MEAN_SLP_EARTH.
+    pfull_str : str, optional
+        Name of the full-level pressure dimension. Default: 'level'.
+    phalf_str : str, optional
+        Name of the half-level pressure dimension. Default: 'phalf'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Log-pressure-weighted integral.
+    """
     dlogp = dlogp_from_pfull(
         arr[pfull_str], p_top=p_top, p_bot=p_bot, phalf_str=phalf_str
     )
@@ -72,20 +130,48 @@ def int_dlogp(
 
 
 def col_avg(arr: xr.DataArray, dp: xr.DataArray, dim: str = LEV_STR) -> xr.DataArray:
-    """Pressure-weighted column average."""
+    """Pressure-weighted column average.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to average.
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa).
+    dim : str, optional
+        Name of the vertical dimension. Default: 'level'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure-weighted column-mean value.
+    """
     return cast(xr.DataArray, int_dp_g(arr, dp, dim) / int_dp_g(1.0, dp, dim))
 
 
 def subtract_col_avg(
     arr: xr.DataArray, dp: xr.DataArray, dim: str = LEV_STR
 ) -> xr.DataArray:
-    """Impoze zero column integral by subtracting column average at each level.
+    """Impose zero column integral by subtracting column average at each level.
 
-    Used e.g. for computing the zonally integrated mass flux.  In the time-mean
+    Used e.g. for computing the zonally integrated mass flux. In the time-mean
     and neglecting tendencies in column mass, the column integrated meridional
     mass transport should be zero at each latitude; otherwise there would be a
     build up of mass on one side.
 
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to adjust.
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa).
+    dim : str, optional
+        Name of the vertical dimension. Default: 'level'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Field with column average subtracted at each level.
     """
     return cast(xr.DataArray, arr - col_avg(arr, dp, dim=dim))
 
@@ -96,7 +182,28 @@ def phalf_from_pfull(
     p_bot: float = MEAN_SLP_EARTH,
     phalf_str: str = PHALF_STR,
 ) -> xr.DataArray:
-    """Pressure at half levels given pressures at level centers."""
+    """Pressure at half levels given pressures at level centers.
+
+    Computes interface pressures by averaging adjacent full-level
+    pressures, with top and bottom boundaries set to ``p_top`` and
+    ``p_bot``.
+
+    Parameters
+    ----------
+    pfull : xarray.DataArray
+        Pressure at level centers.
+    p_top : float, optional
+        Pressure at the model top (Pa). Default: 0.0.
+    p_bot : float, optional
+        Pressure at the surface (Pa). Default: MEAN_SLP_EARTH.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure at half levels (Pa).
+    """
     if pfull[0] < pfull[1]:
         p_first = p_top
         p_last = p_bot
@@ -111,7 +218,22 @@ def phalf_from_pfull(
 def dp_from_pfull(
     pfull: xr.DataArray, p_top: float = 0.0, p_bot: float = MEAN_SLP_EARTH
 ) -> xr.DataArray:
-    """Pressure thickness of levels given pressures at level centers."""
+    """Pressure thickness of levels given pressures at level centers.
+
+    Parameters
+    ----------
+    pfull : xarray.DataArray
+        Pressure at level centers.
+    p_top : float, optional
+        Pressure at the model top (Pa). Default: 0.0.
+    p_bot : float, optional
+        Pressure at the surface (Pa). Default: MEAN_SLP_EARTH.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure thickness dp for each level (Pa).
+    """
     phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot)
     return cast(xr.DataArray, np.abs(xr.ones_like(pfull) * np.diff(phalf.values)))
 
@@ -122,7 +244,24 @@ def dp_from_phalf(
     phalf_str: str = PHALF_STR,
     pfull_str: str = PFULL_STR,
 ) -> xr.DataArray:
-    """Pressure thickness of vertical levels given interface pressures."""
+    """Pressure thickness of vertical levels given interface (half-level) pressures.
+
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pfull_ref : xarray.DataArray
+        Reference pressure at full levels, used for output coordinates.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+    pfull_str : str, optional
+        Name of the full-level dimension. Default: 'pfull'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure thickness dp for each full level (Pa), named 'dp'.
+    """
     dp_vals = np.abs(
         phalf.isel({phalf_str: slice(None, -1)}).values
         - phalf.isel({phalf_str: slice(1, None)}).values
@@ -147,7 +286,24 @@ def dp_from_phalf(
 
 
 def dlogp_from_phalf(phalf: xr.DataArray, pressure: xr.DataArray) -> xr.DataArray:
-    """Pressure thickness of vertical levels given interface pressures."""
+    """Log-pressure thickness from half-level pressures.
+
+    Computes d(ln p) = ln(p_{k+1/2} / p_{k-1/2}) for each full level.
+    If the top or bottom interface pressure is zero, it is replaced with
+    half the adjacent interface value to avoid division by zero.
+
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pressure : xarray.DataArray
+        Pressure at full levels, used as template for output shape.
+
+    Returns
+    -------
+    xarray.DataArray
+        Log-pressure thickness for each full level.
+    """
     # Avoid divide-by-zero error by overwriting if top pressure is zero.
     phalf_vals = phalf.copy().values
     if phalf_vals[0] == 0:
@@ -164,7 +320,27 @@ def dlogp_from_pfull(
     p_bot: float = MEAN_SLP_EARTH,
     phalf_str: str = PHALF_STR,
 ) -> xr.DataArray:
-    """Thickness in log(p) of vertical levels given level-center pressures."""
+    """Log-pressure thickness from full-level pressures.
+
+    Convenience wrapper: computes half-level pressures from full-level
+    pressures, then calls :func:`dlogp_from_phalf`.
+
+    Parameters
+    ----------
+    pfull : xarray.DataArray
+        Pressure at level centers.
+    p_top : float, optional
+        Pressure at the model top (Pa). Default: 0.0.
+    p_bot : float, optional
+        Pressure at the surface (Pa). Default: MEAN_SLP_EARTH.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Log-pressure thickness for each full level.
+    """
     phalf = phalf_from_pfull(pfull, p_top=p_top, p_bot=p_bot, phalf_str=phalf_str)
     return dlogp_from_phalf(phalf, pfull)
 
@@ -176,7 +352,22 @@ def phalf_from_psfc(
 @overload
 def phalf_from_psfc(bk: ArrayLike, pk: ArrayLike, p_sfc: ArrayLike) -> ArrayLike: ...
 def phalf_from_psfc(bk: ArrayLike, pk: ArrayLike, p_sfc: ArrayLike) -> ArrayLike:
-    """Compute pressure of half levels of hybrid sigma-pressure coordinates."""
+    """Compute pressure at half levels for hybrid sigma-pressure coordinates.
+
+    Parameters
+    ----------
+    bk : array-like
+        Sigma coefficients at half levels.
+    pk : array-like
+        Pressure coefficients at half levels (Pa).
+    p_sfc : xarray.DataArray or float
+        Surface pressure (Pa).
+
+    Returns
+    -------
+    xarray.DataArray or array-like
+        Pressure at half levels (Pa).
+    """
     return cast(ArrayLike, p_sfc * bk + pk)
 
 
@@ -186,7 +377,24 @@ def pfull_from_phalf_avg(
     phalf_str: str = PHALF_STR,
     pfull_str: str = PFULL_STR,
 ) -> xr.DataArray:
-    """Compute pressure at full levels as average of bounding half levels."""
+    """Full-level pressures as simple averages of bounding half levels.
+
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pfull_ref : xarray.DataArray
+        Reference full-level pressures for output coordinates.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+    pfull_str : str, optional
+        Name of the full-level dimension. Default: 'pfull'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure at full levels (Pa).
+    """
     dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
     return cast(
         xr.DataArray,
@@ -200,12 +408,36 @@ def pfull_vals_simm_burr(
     pfull_ref: xr.DataArray,
     phalf_str: str = PHALF_STR,
 ) -> npt.NDArray[np.float64]:
-    """Compute pressure at full levels using Simmons-Burridge spacing.
+    """Compute full-level pressure values using Simmons-Burridge spacing.
 
-    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
-    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
-    Monthly Weather Review, 109(4), 758-766.
+    Returns raw numpy values (not an xarray DataArray). Use
+    :func:`pfull_simm_burr` for the full xarray-aware version.
 
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    phalf_ref : xarray.DataArray
+        Reference half-level pressures (for top-level factor).
+    pfull_ref : xarray.DataArray
+        Reference full-level pressures (for top-level factor).
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+
+    Returns
+    -------
+    numpy.ndarray
+        Full-level pressure values (Pa).
+
+    References
+    ----------
+    .. [1] Simmons, A. J. & Burridge, D. M. (1981). "An Energy and
+       Angular-Momentum Conserving Vertical Finite-Difference Scheme and
+       Hybrid Vertical Coordinates." Mon. Wea. Rev., 109, 758-766.
+
+    See Also
+    --------
+    pfull_simm_burr : xarray-aware wrapper.
     """
     dp_vals = phalf.diff(phalf_str).values
     # Above means vertically above (i.e. lower pressure).
@@ -231,12 +463,37 @@ def pfull_simm_burr(
     phalf_str: str = PHALF_STR,
     pfull_str: str = PFULL_STR,
 ) -> xr.DataArray:
-    """Compute pressure at full levels using Simmons-Burridge spacing.
+    """Compute full-level pressures using Simmons-Burridge spacing.
 
-    See Simmons and Burridge, 1981, "An Energy and Angular-Momentum Conserving
-    Vertical Finite-Difference Scheme and Hybrid Vertical Coordinates."
-    Monthly Weather Review, 109(4), 758-766.
+    Handles both increasing and decreasing pressure ordering.
 
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    phalf_ref : xarray.DataArray
+        Reference half-level pressures.
+    pfull_ref : xarray.DataArray
+        Reference full-level pressures.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+    pfull_str : str, optional
+        Name of the full-level dimension. Default: 'pfull'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure at full levels (Pa).
+
+    References
+    ----------
+    .. [1] Simmons, A. J. & Burridge, D. M. (1981). "An Energy and
+       Angular-Momentum Conserving Vertical Finite-Difference Scheme and
+       Hybrid Vertical Coordinates." Mon. Wea. Rev., 109, 758-766.
+
+    See Also
+    --------
+    pfull_vals_simm_burr : Returns raw numpy values.
     """
     # Above means vertically above (i.e. lower pressure).
     if phalf_ref[0] < phalf_ref[1]:
@@ -291,7 +548,27 @@ def avg_p_weighted(
     pressure: xr.DataArray,
     p_str: str = LEV_STR,
 ) -> xr.DataArray:
-    """Pressure-weighted vertical average."""
+    """Cumulative pressure-weighted vertical average.
+
+    Computes the running pressure-weighted mean from the top of the
+    atmosphere downward (or upward, depending on pressure ordering).
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to average.
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pressure : xarray.DataArray
+        Pressure at full levels.
+    p_str : str, optional
+        Name of the vertical dimension. Default: 'level'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Cumulative pressure-weighted average.
+    """
     dp = cast(xr.DataArray, np.abs(dp_from_phalf(phalf, pressure)))
     if phalf[0] > phalf[1]:
         arr_out = _flip_dim(arr, p_str)
@@ -308,13 +585,45 @@ def avg_logp_weighted(
     pressure: xr.DataArray,
     p_str: str = LEV_STR,
 ) -> xr.DataArray:
-    """Log-pressure-weighted vertical average."""
+    """Cumulative log-pressure-weighted vertical average.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to average.
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pressure : xarray.DataArray
+        Pressure at full levels.
+    p_str : str, optional
+        Name of the vertical dimension. Default: 'level'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Cumulative log-pressure-weighted average.
+    """
     dlogp = dlogp_from_phalf(phalf, pressure)
     return cast(xr.DataArray, (arr * dlogp).cumsum(p_str) / dlogp.cumsum(p_str))
 
 
 def col_extrema(arr: xr.DataArray, p_str: str = LEV_STR) -> xr.DataArray:
-    """Locations and values of local extrema within each column."""
+    """Locations and values of local extrema within each column.
+
+    Identifies levels where the vertical derivative changes sign.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to search for extrema.
+    p_str : str, optional
+        Name of the vertical dimension. Default: 'level'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Values of ``arr`` at extrema locations; NaN elsewhere.
+    """
     darr_dp = arr.differentiate(p_str)
     sign_change = np.sign(darr_dp).diff(p_str)
     return cast(xr.DataArray, arr.where(sign_change))
