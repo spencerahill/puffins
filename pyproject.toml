@@ -61,6 +61,21 @@ set-proj-puff-branch = "puffins.scripts.set_proj_puff_branch:main"
 
 # --- Tool Configuration ---
 
+[tool.uv]
+# windspharm/pyspharm use legacy build tooling (numpy.distutils, removed in
+# numpy 2.0) that can't be built under modern numpy/Python. Declaring their
+# metadata lets uv resolve the optional [fortran] extra without building them,
+# so `uv lock` works here; installing the extra still requires conda.
+[[tool.uv.dependency-metadata]]
+name = "pyspharm"
+version = "1.0.9"
+requires-dist = ["numpy"]
+
+[[tool.uv.dependency-metadata]]
+name = "windspharm"
+version = "2.0.0"
+requires-dist = ["numpy", "pyspharm"]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 88
