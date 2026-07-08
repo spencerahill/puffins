@@ -136,6 +136,7 @@ module = [
     "puffins.names",
     "puffins.num_solver",
     "puffins.radiation",
+    "puffins.therm_inert",
     "puffins.thermodynamics",
     "puffins.tropopause",
     "puffins.vert_coords",
