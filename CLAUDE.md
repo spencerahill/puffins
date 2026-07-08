@@ -102,6 +102,8 @@ All new code must include type hints for function parameters and return values.
 ### Testing
 All new code must have tests. Run all tests and ensure they pass before considering work complete.
 
+For functions with a nontrivial coefficient chain or closed-form expression, include at least one known-value test that reconstructs the full expected output from raw numpy, not from the module's own helper functions. Then confirm the test has teeth by mutation: perturb one coefficient in the source, verify only that test fails, then revert. Limiting-case, symmetry, and monotonicity tests alone leave coefficient magnitudes and phases unconstrained.
+
 ## Important Notes
 
 - This is a personal research tool with no official support
