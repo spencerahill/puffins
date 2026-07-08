@@ -162,6 +162,35 @@ class TestTempRadEqEff:
         for s in sums:
             np.testing.assert_allclose(s, even_part)
 
+    def test_annual_cycle_term_known_value(self) -> None:
+        """Pin the annual-cycle term's coefficient chain and phase.
+
+        The symmetry and equator tests only constrain the annual-cycle term
+        through its odd-in-lat symmetry and its vanishing at the equator; they
+        leave its magnitude and phase unchecked. This reconstructs the full
+        expected temperature at an off-equator latitude and non-trivial time
+        from raw numpy, so a bug in the ``2 * delta_h * damping *
+        sin(maxlat_ann) * sin(orb_freq * (time - lag))`` chain is caught.
+        """
+        lat, time, alpha, delta_h, maxlat_ann = 30.0, 5.0e6, 2.0, 1 / 6.0, 44.0
+        sinlat = np.sin(np.deg2rad(lat))
+        damping = alpha / np.sqrt(1 + alpha**2)
+        lag = np.arctan(1.0 / alpha) / ORB_FREQ_EARTH
+        ann_mean = 1 + delta_h / 3 * (1 - 3 * sinlat**2)
+        ann_cyc = (
+            2.0
+            * delta_h
+            * damping
+            * np.sin(np.deg2rad(maxlat_ann))
+            * sinlat
+            * np.sin(ORB_FREQ_EARTH * (time - lag))
+        )
+        expected = THETA_REF * (ann_mean + ann_cyc)
+        result = temp_rad_eq_eff(
+            lat, time, alpha=alpha, maxlat_ann=maxlat_ann, delta_h=delta_h
+        )
+        np.testing.assert_allclose(result, expected)
+
 
 @pytest.mark.parametrize(
     "alpha",
