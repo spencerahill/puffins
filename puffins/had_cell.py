@@ -430,7 +430,7 @@ def had_cell_edge(
     edge_lat = interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0, lat_str)[lat_str]
     # Drop scalar coords inherited from intermediates (the 'cell' selection
     # label and the level of the cell max); the edge is just a latitude.
-    return edge_lat.drop_vars([str(c) for c in edge_lat.coords if c != lat_str])
+    return edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
 
 
 def had_cells_south_edge(

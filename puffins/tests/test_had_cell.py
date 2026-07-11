@@ -33,7 +33,7 @@ def _make_streamfunc(edge_lat: float = 30.0) -> xr.DataArray:
     plev = xr.DataArray(plevs, dims=[LEV_STR], coords={LEV_STR: plevs})
     merid = xr.where(np.abs(lat) <= edge_lat, np.sin(np.pi * lat / edge_lat), 0.0)
     vert = np.sin(np.pi * (plev - 100.0) / 900.0)
-    return 1e11 * vert * merid
+    return (1e11 * vert * merid).rename("streamfunc")
 
 
 class TestHadCellEdgeCoords:
@@ -68,6 +68,6 @@ class TestHadCellEdgeValues:
         north = had_cells_north_edge(sf, **EDGE_KWARGS)
         south = had_cells_south_edge(sf, **EDGE_KWARGS)
         shared = had_cell_edge(sf, cell="south", edge="north", **EDGE_KWARGS)
-        assert 25.0 < float(north) < 30.0, float(north)
-        assert -30.0 < float(south) < -25.0, float(south)
-        assert abs(float(shared)) < 1.0, float(shared)
+        assert 29.0 < north.item() < 30.0, north.item()
+        assert -30.0 < south.item() < -29.0, south.item()
+        assert abs(shared.item()) < 1.0, shared.item()
