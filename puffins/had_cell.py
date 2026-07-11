@@ -320,7 +320,10 @@ def had_cells_shared_edge(
     else:
         sf_at_max = strmfunc.sel(**{lev_str: fixed_plev, "method": "nearest"})
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max), drop=True)
-    return zero_cross_interp(sf_max2max, lat_str)[lat_str]
+    edge_lat = zero_cross_interp(sf_max2max, lat_str)[lat_str]
+    # Drop scalar coords inherited from intermediates (e.g. the level of the
+    # cell max); the edge is just a latitude.
+    return edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
 
 
 def had_cell_edge(

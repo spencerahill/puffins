@@ -58,7 +58,8 @@ class TestHadCellEdgeCoords:
         result = had_cells_shared_edge(
             sf, min_lat=-50, max_lat=50, min_plev=500, max_plev=800, do_avg_vert=True
         )
-        assert "cell" not in result.coords, result.coords
+        # The inner edge must also shed the level-of-max 'plev' scalar coord.
+        assert list(result.coords) == [LAT_STR], result.coords
 
 
 class TestHadCellEdgeValues:
@@ -80,12 +81,14 @@ class TestHadCellsEdges:
     def test_returns_three_matching_edges(self) -> None:
         sf = _make_streamfunc(edge_lat=30.0)
         south, shared, north = had_cells_edges(sf, **EDGE_KWARGS)
-        # Matches the individually computed edges (same idealized profile).
+        # South/north match had_cells_south_edge/had_cells_north_edge; the
+        # shared inner edge sits at ~0 for the symmetric profile.
         assert -30.0 < south.item() < -29.0, south.item()
         assert abs(shared.item()) < 1.0, shared.item()
         assert 29.0 < north.item() < 30.0, north.item()
+        # All three edges are bare latitudes: no leaked 'cell'/'plev' coords.
         for edge in (south, shared, north):
-            assert "cell" not in edge.coords, edge.coords
+            assert list(edge.coords) == [LAT_STR], edge.coords
 
     def test_cos_factor_not_forwarded_to_shared_edge(self) -> None:
         # `cos_factor` is a parameter of had_cell_edge but not
