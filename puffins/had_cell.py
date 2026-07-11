@@ -427,7 +427,10 @@ def had_cell_edge(
             return 90.0
         return -90.0
     # Interpolate between the bounding points to the crossing.
-    return interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0, lat_str)[lat_str]
+    edge_lat = interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0, lat_str)[lat_str]
+    # Drop scalar coords inherited from intermediates (the 'cell' selection
+    # label and the level of the cell max); the edge is just a latitude.
+    return edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
 
 
 def had_cells_south_edge(
