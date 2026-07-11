@@ -5,6 +5,7 @@ import xarray as xr
 
 from puffins.had_cell import (
     had_cell_edge,
+    had_cells_edges,
     had_cells_north_edge,
     had_cells_shared_edge,
     had_cells_south_edge,
@@ -71,3 +72,26 @@ class TestHadCellEdgeValues:
         assert 29.0 < north.item() < 30.0, north.item()
         assert -30.0 < south.item() < -29.0, south.item()
         assert abs(shared.item()) < 1.0, shared.item()
+
+
+class TestHadCellsEdges:
+    """had_cells_edges must route kwargs correctly to all three edge funcs."""
+
+    def test_returns_three_matching_edges(self) -> None:
+        sf = _make_streamfunc(edge_lat=30.0)
+        south, shared, north = had_cells_edges(sf, **EDGE_KWARGS)
+        # Matches the individually computed edges (same idealized profile).
+        assert -30.0 < south.item() < -29.0, south.item()
+        assert abs(shared.item()) < 1.0, shared.item()
+        assert 29.0 < north.item() < 30.0, north.item()
+        for edge in (south, shared, north):
+            assert "cell" not in edge.coords, edge.coords
+
+    def test_cos_factor_not_forwarded_to_shared_edge(self) -> None:
+        # `cos_factor` is a parameter of had_cell_edge but not
+        # had_cells_shared_edge; had_cells_edges must not forward it there.
+        sf = _make_streamfunc(edge_lat=30.0)
+        south, shared, north = had_cells_edges(sf, cos_factor=True, **EDGE_KWARGS)
+        assert -30.0 < south.item() < -29.0, south.item()
+        assert abs(shared.item()) < 1.0, shared.item()
+        assert 29.0 < north.item() < 30.0, north.item()

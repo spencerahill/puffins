@@ -498,8 +498,8 @@ def had_cells_north_edge(
 def had_cells_edges(
     strmfunc,
     frac_thresh=0.1,
-    min_lev=None,
-    max_lev=None,
+    min_plev=None,
+    max_plev=None,
     do_avg_vert=False,
     min_lat=None,
     max_lat=None,
@@ -508,32 +508,25 @@ def had_cells_edges(
     lev_str=LEV_STR,
 ):
     """Southern, shared inner, and northern edge of the Hadley cells."""
+    # Kwargs common to all three edge functions. `cos_factor` is intentionally
+    # excluded: it applies to the outer-edge threshold detection in
+    # `had_cell_edge` and is not a parameter of `had_cells_shared_edge`.
     shared_kwargs = dict(
         frac_thresh=frac_thresh,
-        min_lev=min_lev,
-        max_lev=max_lev,
+        min_plev=min_plev,
+        max_plev=max_plev,
         do_avg_vert=do_avg_vert,
         min_lat=min_lat,
         max_lat=max_lat,
-        cos_factor=cos_factor,
         lat_str=lat_str,
         lev_str=lev_str,
     )
     func_and_kwargs = [
-        (had_cell_edge, dict(cell="south", edge="south")),
+        (had_cell_edge, dict(cell="south", edge="south", cos_factor=cos_factor)),
         (had_cells_shared_edge, {}),
-        (had_cell_edge, dict(cell="north", edge="north")),
+        (had_cell_edge, dict(cell="north", edge="north", cos_factor=cos_factor)),
     ]
-    return [
-        f_kw[0](
-            strmfunc,
-            lat_str=lat_str,
-            lev_str=lev_str,
-            **f_kw[1],
-            **shared_kwargs,
-        )
-        for f_kw in func_and_kwargs
-    ]
+    return [f_kw[0](strmfunc, **f_kw[1], **shared_kwargs) for f_kw in func_and_kwargs]
 
 
 def cell_edges_sigma(
