@@ -81,16 +81,20 @@ class TestEofSolverLat:
             coords={YEAR_STR: np.arange(20.0), LAT_STR: lats, LON_STR: lons},
             name="field",
         )
+        eofs = eof_solver_lat(arr).eofs(neofs=3).values
         ref_weights = np.sqrt(np.cos(np.deg2rad(lats)))[:, np.newaxis]
         ref = Eof(arr.rename({YEAR_STR: "time"}), weights=ref_weights)
-        np.testing.assert_allclose(
-            eof_solver_lat(arr).eofs(neofs=3).values, ref.eofs(neofs=3).values
-        )
+        np.testing.assert_allclose(eofs, ref.eofs(neofs=3).values)
+        # And weighting genuinely changes the decomposition: the weighted EOFs
+        # differ from those of an unweighted solver on the same field.
+        unweighted = Eof(arr.rename({YEAR_STR: "time"}), weights=None)
+        assert not np.allclose(eofs, unweighted.eofs(neofs=3).values)
 
     def test_custom_time_str(self) -> None:
         """A non-default sampling-dimension name is handled via time_str."""
         lats, lons = _lat_lon_coords()
-        data = np.random.default_rng(1).standard_normal((10, lats.size, lons.size))
+        rng = np.random.default_rng(1)
+        data = rng.standard_normal((10, lats.size, lons.size))
         arr = xr.DataArray(
             data,
             dims=["month", LAT_STR, LON_STR],
@@ -100,3 +104,25 @@ class TestEofSolverLat:
         solver = eof_solver_lat(arr, time_str="month")
         assert isinstance(solver, Eof)
         assert solver.pcs(npcs=1).sizes["time"] == 10
+
+    def test_custom_lat_str(self) -> None:
+        """A non-default latitude-dimension name is handled via lat_str.
+
+        Renaming only the latitude dimension and passing the matching lat_str
+        must give the same EOFs as the default-named field, confirming lat_str
+        locates the coordinate that sets the sqrt(cos(lat)) weights.
+        """
+        lats, lons = _lat_lon_coords(nlat=8, nlon=6)
+        rng = np.random.default_rng(2)
+        data = rng.standard_normal((20, lats.size, lons.size))
+        default = xr.DataArray(
+            data,
+            dims=[YEAR_STR, LAT_STR, LON_STR],
+            coords={YEAR_STR: np.arange(20.0), LAT_STR: lats, LON_STR: lons},
+            name="field",
+        )
+        renamed = default.rename({LAT_STR: "latitude"})
+        np.testing.assert_allclose(
+            eof_solver_lat(renamed, lat_str="latitude").eofs(neofs=3).values,
+            eof_solver_lat(default).eofs(neofs=3).values,
+        )
