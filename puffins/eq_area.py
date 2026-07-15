@@ -342,7 +342,17 @@ def cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent):
             _term_latd4(ross_ascent, delro),
         ]
     )
-    return np.rad2deg(poly_obj.roots()[1] ** 0.5)
+    roots = poly_obj.roots()
+    real_roots = roots[np.isclose(roots.imag, 0.0)].real
+    # The polynomial is quadratic in latitude-squared with a positive
+    # leading and non-positive constant coefficient, so the physical
+    # (non-negative) root is the larger of the two real roots.
+    if real_roots.size == 0 or real_roots.max() < -1e-12:
+        raise ValueError(
+            "no non-negative real root for the cell-edge polynomial in "
+            f"latitude-squared; got roots {roots}"
+        )
+    return np.rad2deg(max(real_roots.max(), 0.0) ** 0.5)
 
 
 def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
@@ -469,6 +479,17 @@ def pot_temp_lin_ro_eq_area(
     -------
     array-like
         Potential temperature at each latitude (K).
+
+    Notes
+    -----
+    The profile shape is computed with the Burger number implied by the
+    given thermal Rossby number, ``therm_ross / delta_h``, so that it is
+    consistent with the cell edge and equatorial temperature (which are
+    parameterized by ``therm_ross``).  The planetary parameters
+    ``rot_rate``, ``radius``, ``grav``, and ``height`` are therefore
+    unused and retained only for backward compatibility; they previously
+    set an independent (and generally inconsistent) Burger number for the
+    profile shape.
     """
     pot_temp_eq = eq_pot_temp_lin_ro_lata0_small_ang(
         therm_ross=therm_ross,
@@ -493,7 +514,20 @@ def pot_temp_lin_ro_eq_area(
         theta_ref=theta_ref,
         grav=grav,
         height=height,
+        burg_num=therm_ross / delta_h,
     )
+
+
+def _checked_root_solve(func, init_guess, args):
+    """Solve func(x, *args) = 0, raising if scipy reports non-convergence.
+
+    Without this check a failed solve silently returns the (possibly
+    unmodified) iterate, which is indistinguishable from a solution.
+    """
+    sol = scipy.optimize.root(func, init_guess, args=args)
+    if not sol.success:
+        raise RuntimeError(f"equal-area solver did not converge: {sol.message}")
+    return sol.x
 
 
 # Original Lindzen and Hou 1988.
@@ -595,10 +629,9 @@ def equal_area_lh88(
     .. [1] Lindzen, R. S. & Hou, A. Y. (1988). J. Atmos. Sci., 45,
        2416-2427.
     """
-    sol = scipy.optimize.root(
-        _lh88_model, init_guess, args=(sinlat_0, theta_ref, delta_h, thermal_ro)
+    return _checked_root_solve(
+        _lh88_model, init_guess, (sinlat_0, theta_ref, delta_h, thermal_ro)
     )
-    return sol.x
 
 
 # Modified LH88: fixed lapse rate and tropopause temperature.
@@ -781,10 +814,10 @@ def equal_area_lh88_fixed_temp_tropo(
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         T_sfc_1].
     """
-    sol = scipy.optimize.root(
+    return _checked_root_solve(
         _lh88_model_fixed_tt,
         init_guess,
-        args=(
+        (
             sinlat_0,
             theta_ref,
             delta_h,
@@ -796,7 +829,6 @@ def equal_area_lh88_fixed_temp_tropo(
             c_p,
         ),
     )
-    return sol.x
 
 
 # Boussinesq, generic RCE field (rather than that from Lindzen and Hou 1988)
@@ -837,7 +869,6 @@ def _equal_area_model_bouss(x, theta_ref, del_h_over_ro, _theta_rce_func):
         - $\\sin\varphi_s$: sine of the poleward edge of the summer cell
         - $\theta_1$: potential temperature at the cells' shared inner edge
 
-    sinlat_0 : sine of latitude of the prescribed heating maximum
     theta_ref : the reference potential temperature ($\theta_0$ in LH88)
     del_h_over_ro : equal to Omega^2 a^2 / (gH)
 
@@ -855,7 +886,13 @@ def equal_area_bouss(init_guess, theta_ref, del_h_over_ro, _theta_rce_func):
     """Boussinesq equal-area model for arbitrary RCE potential temperatures.
 
     Solves the equal-area constraint system for the Boussinesq case with
-    a user-supplied RCE potential temperature function.
+    a user-supplied RCE potential temperature function.  The circulation
+    temperature field is the angular-momentum-conserving (Ro = 1) one.
+    To solve the fixed-Ro generalization in the small-angle limit,
+    multiply ``del_h_over_ro`` by Ro (the small-angle fixed-Ro field is
+    the AMC field scaled by Ro); note this scaling is NOT exact at full
+    angle, where the fixed-Ro gradient-balanced field has a different
+    functional form.
 
     Parameters
     ----------
@@ -877,12 +914,11 @@ def equal_area_bouss(init_guess, theta_ref, del_h_over_ro, _theta_rce_func):
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
     """
-    sol = scipy.optimize.root(
+    return _checked_root_solve(
         _equal_area_model_bouss,
         init_guess,
-        args=(theta_ref, del_h_over_ro, _theta_rce_func),
+        (theta_ref, del_h_over_ro, _theta_rce_func),
     )
-    return sol.x
 
 
 # Convective quasi-equilibrium atmosphere, general RCE profile
@@ -976,12 +1012,11 @@ def equal_area_cqe(init_guess, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
     """
-    sol = scipy.optimize.root(
+    return _checked_root_solve(
         _equal_area_model_cqe,
         init_guess,
-        args=(sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func),
+        (sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func),
     )
-    return sol.x
 
 
 # CQE, fixed tropopause temperature.
@@ -1003,7 +1038,7 @@ def _theta_hat_amc_rce_diff_cqe_fixed_tt(
     At the cell edges, this difference is zero by construction.
 
     """
-    return pot_temp_amc_cqe_fixed_tt(
+    theta_amc = pot_temp_amc_cqe_fixed_tt(
         sin2deg(sinlat),
         theta_guesses,
         theta_1,
@@ -1014,7 +1049,11 @@ def _theta_hat_amc_rce_diff_cqe_fixed_tt(
         c_p=c_p,
         radius=radius,
         rot_rate=rot_rate,
-    ) - theta_rce_func(sinlat)
+    )
+    # pot_temp_amc_cqe_fixed_tt returns a 1-element DataArray for scalar
+    # input, but scipy.integrate.quad needs a plain float from its
+    # integrand (numpy >= 2.0 forbids float() on size-1 arrays of ndim >= 1).
+    return float(np.asarray(theta_amc).squeeze()) - float(theta_rce_func(sinlat))
 
 
 def _cons_energy_integral_cqe_fixed_tt(
@@ -1139,10 +1178,10 @@ def equal_area_cqe_fixed_tt(
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
     """
-    sol = scipy.optimize.root(
+    return _checked_root_solve(
         _eq_area_cqe_fixed_tt,
         init_guess,
-        args=(
+        (
             theta_rce_func,
             theta_guesses,
             temp_tropo,
@@ -1153,7 +1192,6 @@ def equal_area_cqe_fixed_tt(
             rot_rate,
         ),
     )
-    return sol.x
 
 
 if __name__ == "__main__":

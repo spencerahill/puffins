@@ -193,9 +193,20 @@ def pot_temp_lin_ro_lata0_small_ang(
     theta_ref=THETA_REF,
     grav=GRAV_EARTH,
     height=HEIGHT_TROPO,
+    burg_num=None,
 ):
-    """Column pot. temp. for Rossby number linear in latitude, small-angle."""
-    burg_num = plan_burg_num(grav=grav, height=height, rot_rate=rot_rate, radius=radius)
+    """Column pot. temp. for Rossby number linear in latitude, small-angle.
+
+    If ``burg_num`` is given it overrides the planetary Burger number
+    computed from ``grav``, ``height``, ``rot_rate``, and ``radius``; pass
+    ``burg_num = therm_ross_num / delta_h`` for consistency with a
+    thermal-Rossby-number parameterized equal-area solution.
+
+    """
+    if burg_num is None:
+        burg_num = plan_burg_num(
+            grav=grav, height=height, rot_rate=rot_rate, radius=radius
+        )
     delro = ross_ascent - ross_descent
     latrad = np.deg2rad(lat)
     latd_rad = np.deg2rad(lat_descent)
