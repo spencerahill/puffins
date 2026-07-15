@@ -130,6 +130,7 @@ module = [
     "puffins.constants",
     "puffins.dates",
     "puffins.dynamics",
+    "puffins.eofs",
     "puffins.hides",
     "puffins.interp",
     "puffins.longitude",
