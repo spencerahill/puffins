@@ -2,7 +2,7 @@
 
 **A Python toolkit for large-scale atmospheric and climate dynamics research.**
 
-![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Status: Pre-Alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 
@@ -81,20 +81,51 @@ pip install -e .
 
 ### Dependencies
 
-puffins requires Python 3.9+ and the following packages (installed
+puffins requires Python 3.10+ and the following packages (installed
 automatically):
 
 - [xarray](https://xarray.dev)
 - [numpy](https://numpy.org)
 - [scipy](https://scipy.org)
 - [matplotlib](https://matplotlib.org)
-- [windspharm](https://ajdawson.github.io/windspharm/)
 - [eofs](https://ajdawson.github.io/eofs/)
 - [faceted](https://github.com/spencerahill/faceted)
 - [statsmodels](https://www.statsmodels.org)
 - [scikit-learn](https://scikit-learn.org)
 - [pymannkendall](https://github.com/mmhs013/pyMannKendall)
-- [gitpython](https://gitpython.readthedocs.io)
+
+The spherical-harmonics wind inversion in `budget_adj` additionally
+requires [windspharm](https://ajdawson.github.io/windspharm/), which is
+optional (the `fortran` extra) and on modern setups must be installed
+via conda: `conda install -c conda-forge windspharm`.
+
+## Using puffins in individual science projects
+
+puffins is developed continuously, so a development clone may be checked
+out to any branch at any moment. Science projects should not import from
+a clone that is also used for development. The intended arrangement:
+
+- **Maintain a second, consumer-only clone** (e.g. `puffins-main`) that
+  stays permanently on `master` and is only ever updated via `git pull`.
+  Install it into each project's environment in editable mode
+  (`pip install -e /path/to/puffins-main`, adding `--no-deps` when the
+  environment already provides puffins' dependencies, e.g. from conda).
+  Every project then imports
+  pushed, CI-tested `master`, and a single `pull` updates all of them at
+  once.
+- **If a project needs an unmerged branch**, give that project its own
+  temporary clone or git worktree pinned to that branch, install that
+  copy into the project's environment only, and delete it once the
+  branch merges.
+- **To freeze an analysis** (e.g., when a paper is submitted), replace
+  the editable install with one pinned to a commit or tag:
+  `pip install git+https://github.com/spencerahill/puffins@<sha-or-tag>`.
+  The setuptools-scm version string records the exact commit.
+
+Earlier versions of puffins instead switched a single shared clone
+between branches from the top of each notebook
+(`nb_utils.setup_puffins()` and the `set-proj-puff-branch` script);
+those utilities have been removed.
 
 ## License
 
