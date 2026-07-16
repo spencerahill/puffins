@@ -108,7 +108,9 @@ a clone that is also used for development. The intended arrangement:
 - **Maintain a second, consumer-only clone** (e.g. `puffins-main`) that
   stays permanently on `master` and is only ever updated via `git pull`.
   Install it into each project's environment in editable mode
-  (`pip install -e /path/to/puffins-main`). Every project then imports
+  (`pip install -e /path/to/puffins-main`, adding `--no-deps` when the
+  environment already provides puffins' dependencies, e.g. from conda).
+  Every project then imports
   pushed, CI-tested `master`, and a single `pull` updates all of them at
   once.
 - **If a project needs an unmerged branch**, give that project its own
