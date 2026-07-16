@@ -126,6 +126,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "puffins._typing",
+    "puffins.bootstrap",
     "puffins.calculus",
     "puffins.constants",
     "puffins.dates",
