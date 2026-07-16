@@ -11,6 +11,7 @@ from puffins.bootstrap import (
     corr_sig_nonzero_bootstrap,
     corr_sig_nonzero_from_full_and_boot,
 )
+from puffins.stats import risk_ratio
 
 
 def _timeseries(values: np.ndarray, name: str = "ts") -> xr.DataArray:
@@ -115,12 +116,19 @@ class TestCorrBootstrap:
         boot = corr_bootstrap(arr1, arr2, "time", num_bootstraps=100)
         np.testing.assert_allclose(boot.values, -1.0, atol=1e-9)
 
-    def test_correlations_stay_in_valid_range(self) -> None:
-        """Bootstrap correlation coefficients are bounded to [-1, 1]."""
+    def test_correlations_have_no_nans(self) -> None:
+        """No resample degenerates to a NaN correlation (range is definitional).
+
+        Since a Pearson correlation is bounded to [-1, 1] by construction, the
+        substantive guard here is against NaN contamination, which a resample
+        collapsing to zero variance would produce; the range bound is a cheap
+        secondary sanity check.
+        """
         rng = np.random.default_rng(4)
         arr1 = _timeseries(rng.standard_normal(40), name="a")
         arr2 = _timeseries(rng.standard_normal(40), name="b")
         boot = corr_bootstrap(arr1, arr2, "time", num_bootstraps=100)
+        assert not np.isnan(boot.values).any()
         assert float(boot.min()) >= -1.0 - 1e-9
         assert float(boot.max()) <= 1.0 + 1e-9
 
@@ -230,6 +238,60 @@ class TestBootRiskRatio:
             arr, 5, 5, "time", cdf_points=np.array([-0.5, 0.0, 0.5]), num_bootstraps=15
         )
         assert boot.sizes["nboot"] == 15
+
+    def test_seeded_output_reconstructs_manual_split(self) -> None:
+        """With a seed, the output matches a manual permute-split-risk_ratio rebuild.
+
+        Reproducing the seeded generator externally pins the whole permutation
+        pipeline: the per-bootstrap permutation, the disjoint numerator and
+        denominator split with its slice offsets, the risk_ratio call, and the
+        concatenation. (risk_ratio itself is the dependency being orchestrated,
+        so it is exercised, not re-derived, here.)
+        """
+        arr = _timeseries(np.arange(12.0) * 0.5)
+        cdf_points = np.array([1.0, 2.0, 3.0])
+        num_numer, num_denom, num_boot, seed = 4, 5, 6, 0
+        result = boot_risk_ratio(
+            arr,
+            num_numer,
+            num_denom,
+            "time",
+            cdf_points=cdf_points,
+            num_bootstraps=num_boot,
+            seed=seed,
+        )
+        rng = np.random.default_rng(seed)
+        expected = []
+        for _ in range(num_boot):
+            perm = rng.permutation(arr["time"])
+            numer = perm[:num_numer]
+            denom = perm[num_numer : num_numer + num_denom]
+            expected.append(
+                risk_ratio(
+                    arr.sel({"time": numer}),
+                    arr.sel({"time": denom}),
+                    cdf_points=cdf_points,
+                    side="left",
+                )
+            )
+        expected_boot = xr.concat(expected, dim="nboot")
+        np.testing.assert_allclose(result.values, expected_boot.values, equal_nan=True)
+
+    def test_seed_makes_output_reproducible(self) -> None:
+        """The same seed reproduces the bootstrap draw; a different seed differs."""
+        arr = _timeseries(np.arange(15.0) * 0.3)
+        cdf_points = np.array([1.0, 2.0])
+        first = boot_risk_ratio(
+            arr, 4, 5, "time", cdf_points=cdf_points, num_bootstraps=8, seed=0
+        )
+        again = boot_risk_ratio(
+            arr, 4, 5, "time", cdf_points=cdf_points, num_bootstraps=8, seed=0
+        )
+        other = boot_risk_ratio(
+            arr, 4, 5, "time", cdf_points=cdf_points, num_bootstraps=8, seed=1
+        )
+        np.testing.assert_array_equal(first.values, again.values)
+        assert not np.array_equal(first.values, other.values)
 
     def test_constant_array_gives_unit_risk_ratio(self) -> None:
         """A constant field has identical exceedance in both groups: ratio 1.

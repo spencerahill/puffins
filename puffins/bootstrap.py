@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import numpy as np
@@ -16,7 +17,7 @@ def bootstrap_samples(
     arr: xr.DataArray,
     dim: str,
     num_bootstraps: int = 1000,
-    rand_states: np.ndarray | None = None,
+    rand_states: np.ndarray | Sequence[int] | None = None,
 ) -> list[xr.DataArray]:
     """Return specified number of bootstrap-resampled arrays from the given array."""
     if rand_states is None:
@@ -98,6 +99,7 @@ def boot_risk_ratio(
     cdf_points: ArrayLike,
     num_bootstraps: int = 1000,
     side: str = "left",
+    seed: int | None = None,
 ) -> xr.DataArray:
     """Bootstrap risk ratio.
 
@@ -105,11 +107,14 @@ def boot_risk_ratio(
     there are a lot of points sampled along the CDF, and then you're repeating it
     a large number of times.
 
+    Pass ``seed`` to make the permutation resampling reproducible.
+
     """
     assert num_numer + num_denom <= len(arr[dim])
+    rng = np.random.default_rng(seed)
 
     def _rr_one_sample() -> xr.DataArray:
-        dim_randomized = np.random.default_rng().permutation(arr[dim])
+        dim_randomized = rng.permutation(arr[dim])
         rand_numer = dim_randomized[:num_numer]
         rand_denom = dim_randomized[num_numer : num_numer + num_denom]
         return cast(
