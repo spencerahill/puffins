@@ -3,6 +3,7 @@
 
 import numpy as np
 
+from ._typing import ArrayLike
 from .calculus import lat_deriv
 from .constants import (
     C_P,
@@ -183,18 +184,18 @@ def u_lin_ro_small_ang(
 
 
 def pot_temp_lin_ro_lata0_small_ang(
-    lat,
-    lat_descent,
-    ross_ascent,
-    ross_descent,
-    pot_temp_lat0,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    theta_ref=THETA_REF,
-    grav=GRAV_EARTH,
-    height=HEIGHT_TROPO,
-    burg_num=None,
-):
+    lat: ArrayLike,
+    lat_descent: float,
+    ross_ascent: float,
+    ross_descent: float,
+    pot_temp_lat0: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    theta_ref: float = THETA_REF,
+    grav: float = GRAV_EARTH,
+    height: float = HEIGHT_TROPO,
+    burg_num: float | None = None,
+) -> ArrayLike:
     """Column pot. temp. for Rossby number linear in latitude, small-angle.
 
     If ``burg_num`` is given it overrides the planetary Burger number

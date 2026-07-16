@@ -18,15 +18,17 @@ References
    45, 2416-2427.
 """
 
+from collections.abc import Callable, Sequence
+
 import numpy as np
 import scipy.integrate
 import scipy.optimize
 
+from ._typing import ArrayLike
 from .constants import (
     C_P,
     DELTA_H,
     DELTA_V,
-    GRAV_EARTH,
     HEIGHT_TROPO,
     P0,
     RAD_EARTH,
@@ -304,7 +306,9 @@ def u_sfc_mean_ro(
 
 
 # Solutions for small-angle, linear meridional profile in Ro
-def cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent):
+def cell_edge_lin_ro_lata0_full(
+    therm_ross: float, ross_ascent: float, ross_descent: float
+) -> float:
     """Cell edge for the linear-Ro, equatorial-ascent, small-angle case (full solution).
 
     Solves the quadratic polynomial in latitude-squared for the cell
@@ -436,17 +440,13 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
 
 
 def pot_temp_lin_ro_eq_area(
-    lat,
-    therm_ross,
-    ross_ascent,
-    ross_descent,
-    delta_h=DELTA_H,
-    theta_ref=THETA_REF,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    grav=GRAV_EARTH,
-    height=HEIGHT_TROPO,
-):
+    lat: ArrayLike,
+    therm_ross: float,
+    ross_ascent: float,
+    ross_descent: float,
+    delta_h: float = DELTA_H,
+    theta_ref: float = THETA_REF,
+) -> ArrayLike:
     """Potential temperature profile for the linear-Ro, small-angle, equal-area case.
 
     Combines the equatorial temperature and cell edge solutions to compute
@@ -466,14 +466,6 @@ def pot_temp_lin_ro_eq_area(
         Fractional horizontal temperature difference. Default: DELTA_H.
     theta_ref : float, optional
         Reference potential temperature (K). Default: THETA_REF.
-    rot_rate : float, optional
-        Planetary rotation rate (rad/s). Default: Earth.
-    radius : float, optional
-        Planetary radius (m). Default: Earth.
-    grav : float, optional
-        Gravitational acceleration (m/s^2). Default: Earth.
-    height : float, optional
-        Tropopause height (m). Default: HEIGHT_TROPO.
 
     Returns
     -------
@@ -485,11 +477,9 @@ def pot_temp_lin_ro_eq_area(
     The profile shape is computed with the Burger number implied by the
     given thermal Rossby number, ``therm_ross / delta_h``, so that it is
     consistent with the cell edge and equatorial temperature (which are
-    parameterized by ``therm_ross``).  The planetary parameters
-    ``rot_rate``, ``radius``, ``grav``, and ``height`` are therefore
-    unused and retained only for backward compatibility; they previously
-    set an independent (and generally inconsistent) Burger number for the
-    profile shape.
+    parameterized by ``therm_ross``).  This function formerly accepted
+    planetary parameters that set an independent (and generally
+    inconsistent) Burger number for the profile shape.
     """
     pot_temp_eq = eq_pot_temp_lin_ro_lata0_small_ang(
         therm_ross=therm_ross,
@@ -509,16 +499,16 @@ def pot_temp_lin_ro_eq_area(
         ross_ascent=ross_ascent,
         ross_descent=ross_descent,
         pot_temp_lat0=pot_temp_eq,
-        rot_rate=rot_rate,
-        radius=radius,
         theta_ref=theta_ref,
-        grav=grav,
-        height=height,
         burg_num=therm_ross / delta_h,
     )
 
 
-def _checked_root_solve(func, init_guess, args):
+def _checked_root_solve(
+    func: Callable[..., np.ndarray],
+    init_guess: Sequence[float] | np.ndarray,
+    args: tuple,
+) -> np.ndarray:
     """Solve func(x, *args) = 0, raising if scipy reports non-convergence.
 
     Without this check a failed solve silently returns the (possibly

@@ -52,7 +52,6 @@ from puffins.eq_area import (
 THETA_REF = 330.0
 DELTA_H = 1.0 / 3.0
 DELTA_V = 1.0 / 8.0
-GRAV = 9.81
 RADIUS = 6.371e6
 ROT_RATE = 7.292e-5
 HEIGHT = 12.0e3
@@ -520,6 +519,12 @@ class TestCellEdgeLinRo:
             cell_edge_lin_ro_lata0_full(0.0, 0.7, 0.3), 0.0, atol=1e-13
         )
 
+    def test_full_raises_when_no_root(self) -> None:
+        """Ro_a = Ro_d = 0 with nonzero forcing leaves the cell-edge
+        polynomial with no non-negative real root."""
+        with pytest.raises(ValueError, match="non-negative real root"):
+            cell_edge_lin_ro_lata0_full(0.1, 0.0, 0.0)
+
 
 class TestEqPotTempLinRo:
     """Tests for eq_pot_temp_lin_ro_lata0_small_ang."""
@@ -572,10 +577,6 @@ class TestLinRoEqualArea:
             ro_d,
             delta_h=DELTA_H,
             theta_ref=THETA_REF,
-            rot_rate=ROT_RATE,
-            radius=RADIUS,
-            grav=GRAV,
-            height=HEIGHT,
         )
         cont, integ_rel = _equal_area_residuals(lat_rad, theta, DELTA_H, THETA_REF)
         np.testing.assert_allclose(cont, 0.0, atol=1e-9)
