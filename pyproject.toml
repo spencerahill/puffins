@@ -26,7 +26,6 @@ classifiers = [
 dependencies = [
   "eofs",
   "faceted",
-  "gitpython",
   "matplotlib",
   "numpy",
   "pymannkendall",
