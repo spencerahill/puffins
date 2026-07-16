@@ -2,7 +2,7 @@
 
 **A Python toolkit for large-scale atmospheric and climate dynamics research.**
 
-![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Status: Pre-Alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 
@@ -81,19 +81,23 @@ pip install -e .
 
 ### Dependencies
 
-puffins requires Python 3.9+ and the following packages (installed
+puffins requires Python 3.10+ and the following packages (installed
 automatically):
 
 - [xarray](https://xarray.dev)
 - [numpy](https://numpy.org)
 - [scipy](https://scipy.org)
 - [matplotlib](https://matplotlib.org)
-- [windspharm](https://ajdawson.github.io/windspharm/)
 - [eofs](https://ajdawson.github.io/eofs/)
 - [faceted](https://github.com/spencerahill/faceted)
 - [statsmodels](https://www.statsmodels.org)
 - [scikit-learn](https://scikit-learn.org)
 - [pymannkendall](https://github.com/mmhs013/pyMannKendall)
+
+The spherical-harmonics wind inversion in `budget_adj` additionally
+requires [windspharm](https://ajdawson.github.io/windspharm/), which is
+optional (the `fortran` extra) and on modern setups must be installed
+via conda: `conda install -c conda-forge windspharm`.
 
 ## Using puffins in individual science projects
 
