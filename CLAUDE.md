@@ -104,6 +104,8 @@ All new code must have tests. Run all tests and ensure they pass before consider
 
 For functions with a nontrivial coefficient chain or closed-form expression, include at least one known-value test that reconstructs the full expected output from raw numpy, not from the module's own helper functions. Then confirm the test has teeth by mutation: perturb one coefficient in the source, verify only that test fails, then revert. Limiting-case, symmetry, and monotonicity tests alone leave coefficient magnitudes and phases unconstrained.
 
+The mutation-check applies beyond closed-form formulas. Any function with nontrivial internal logic (a partition or split, an index or slice offset, a branch, a disjointness condition) needs at least one test that fails when that logic is perturbed, confirmed by mutation. A limiting-case anchor can be blind to the very logic it appears to cover: `boot_risk_ratio`'s constant-array test passed even with its numerator/denominator split mutated to overlap, because a constant array yields risk ratio 1 for any split, and the gap survived until an independent review. Where the function seeds its RNG internally, add a `seed` parameter so a reconstruction test can reproduce the draw and pin the logic exactly.
+
 ## Important Notes
 
 - This is a personal research tool with no official support
