@@ -56,9 +56,6 @@ include = ["puffins*"]
 
 [tool.setuptools_scm]
 
-[project.scripts]
-set-proj-puff-branch = "puffins.scripts.set_proj_puff_branch:main"
-
 # --- Tool Configuration ---
 
 [tool.uv]

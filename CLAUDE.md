@@ -76,8 +76,15 @@ Use constants from `constants.py` as default parameters. Functions typically acc
 - Pressure levels: typically Pascal, but functions often have `hpa_to_pa` flags
 - Streamfunctions: signed such that counter-clockwise circulation in meridional plane is positive
 
-### Branch Management
-The `set_proj_puff_branch.py` script and `nb_utils.setup_puffins()` function enable switching between git branches for project-specific work.
+### Working-Tree Roles and Consumption by Other Projects
+Two local copies of this repo exist, with strictly separated roles:
+
+- `~/Dropbox/py/puffins` (this repo): the development tree. It may sit on any branch at any time; nothing else should import from it.
+- `~/Dropbox/py/puffins-main`: a consumer clone permanently on `master`, updated only via `git pull`, never developed or committed on. Other projects' environments install puffins from this path (`pip install -e ~/Dropbox/py/puffins-main --no-deps`), so they always import pushed, CI-green master regardless of what branch the development tree is on.
+
+A project that needs an unmerged branch gets its own temporary clone or worktree pinned to that branch, removed once the branch merges. To freeze an analysis (e.g., at paper submission), replace the editable install with a non-editable one pinned to a commit; the setuptools-scm version string records the SHA.
+
+The former `set_proj_puff_branch.py` script and `nb_utils.setup_puffins()` function, which switched the single shared working tree between branches per notebook, were removed in favor of this arrangement.
 
 ## Code Standards
 
