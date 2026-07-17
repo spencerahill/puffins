@@ -46,12 +46,18 @@ REL_HUM = 0.7
 # --- Independent reference implementation (raw numpy/scipy) ---------------
 
 
-def _ref_sat_vap_press(temp: float) -> float:
-    """Saturation vapor pressure over liquid water, Romps 2017 Eq. (4)."""
+def _ref_sat_vap_press(
+    temp: float, p_trip: float = P_TRIP, e_0v: float = E_0V
+) -> float:
+    """Saturation vapor pressure over liquid water, Romps 2017 Eq. (4).
+
+    `p_trip` and `e_0v` are overridable so the forwarding tests can probe that
+    non-default constants actually reach this expression.
+    """
     return (
-        P_TRIP
+        p_trip
         * (temp / T_TRIP) ** ((C_PV - C_VL) / R_V)
-        * np.exp((E_0V - (C_VV - C_VL) * T_TRIP) / R_V * (1.0 / T_TRIP - 1.0 / temp))
+        * np.exp((e_0v - (C_VV - C_VL) * T_TRIP) / R_V * (1.0 / T_TRIP - 1.0 / temp))
     )
 
 
@@ -69,12 +75,18 @@ def _ref_c_pm(press: float, vap_press: float) -> float:
     return (1.0 - q_v) * C_PD + q_v * C_PV
 
 
-def _ref_temp_lcl(press: float, temp: float, rel_hum: float) -> float:
-    vap_press = rel_hum * _ref_sat_vap_press(temp)
+def _ref_temp_lcl(
+    press: float,
+    temp: float,
+    rel_hum: float,
+    p_trip: float = P_TRIP,
+    e_0v: float = E_0V,
+) -> float:
+    vap_press = rel_hum * _ref_sat_vap_press(temp, p_trip=p_trip, e_0v=e_0v)
     r_m = _ref_r_m(press, vap_press)
     c_pm = _ref_c_pm(press, vap_press)
     a = (C_VL - C_PV) / R_V + c_pm / r_m
-    b = -(E_0V - (C_VV - C_VL) * T_TRIP) / (R_V * temp)
+    b = -(e_0v - (C_VV - C_VL) * T_TRIP) / (R_V * temp)
     c = b / a
     return float(
         c * temp / scipy.special.lambertw(rel_hum ** (1.0 / a) * c * np.exp(c), -1).real
@@ -82,12 +94,26 @@ def _ref_temp_lcl(press: float, temp: float, rel_hum: float) -> float:
 
 
 def _ref_lcl_height(
-    press: float, temp: float, rel_hum: float, z_0: float = 0.0
+    press: float,
+    temp: float,
+    rel_hum: float,
+    z_0: float = 0.0,
+    p_trip: float = P_TRIP,
+    e_0v: float = E_0V,
 ) -> float:
-    vap_press = rel_hum * _ref_sat_vap_press(temp)
+    vap_press = rel_hum * _ref_sat_vap_press(temp, p_trip=p_trip, e_0v=e_0v)
     c_pm = _ref_c_pm(press, vap_press)
-    temp_lcl = _ref_temp_lcl(press, temp, rel_hum)
+    temp_lcl = _ref_temp_lcl(press, temp, rel_hum, p_trip=p_trip, e_0v=e_0v)
     return z_0 + c_pm / GRAV_EARTH * (temp - temp_lcl)
+
+
+# Representative (press, temp) points spanning the lower troposphere, used to
+# broaden the known-value checks beyond a single parcel.
+KNOWN_POINTS = [
+    (1.0e5, 300.0),
+    (0.9e5, 290.0),
+    (0.7e5, 270.0),
+]
 
 
 # --- sat_vap_press_liq_wat -------------------------------------------------
@@ -150,11 +176,12 @@ class TestSpecHeatConstPressMoistAir:
 
 
 class TestTempLiftCondLevel:
-    def test_known_value(self) -> None:
+    @pytest.mark.parametrize("press,temp", KNOWN_POINTS)
+    def test_known_value(self, press: float, temp: float) -> None:
         """Full coefficient chain reconstructed from raw numpy/scipy."""
-        result = temp_lift_cond_level(PRESS, TEMP, REL_HUM)
+        result = temp_lift_cond_level(press, temp, REL_HUM)
         np.testing.assert_allclose(
-            result, _ref_temp_lcl(PRESS, TEMP, REL_HUM), rtol=1e-12
+            result, _ref_temp_lcl(press, temp, REL_HUM), rtol=1e-12
         )
 
     def test_cooler_than_parcel(self) -> None:
@@ -178,10 +205,11 @@ class TestTempLiftCondLevel:
 
 
 class TestLiftCondLevel:
-    def test_known_value(self) -> None:
-        result = lift_cond_level(PRESS, TEMP, REL_HUM)
+    @pytest.mark.parametrize("press,temp", KNOWN_POINTS)
+    def test_known_value(self, press: float, temp: float) -> None:
+        result = lift_cond_level(press, temp, REL_HUM)
         np.testing.assert_allclose(
-            result, _ref_lcl_height(PRESS, TEMP, REL_HUM), rtol=1e-12
+            result, _ref_lcl_height(press, temp, REL_HUM), rtol=1e-12
         )
 
     def test_saturated_parcel_at_surface(self) -> None:
@@ -204,10 +232,11 @@ class TestLiftCondLevel:
 
 
 class TestLiftCondTemp:
-    def test_known_value(self) -> None:
-        result = lift_cond_temp(PRESS, TEMP, REL_HUM)
+    @pytest.mark.parametrize("press,temp", KNOWN_POINTS)
+    def test_known_value(self, press: float, temp: float) -> None:
+        result = lift_cond_temp(press, temp, REL_HUM)
         np.testing.assert_allclose(
-            result, _ref_lcl_height(PRESS, TEMP, REL_HUM), rtol=1e-12
+            result, _ref_lcl_height(press, temp, REL_HUM), rtol=1e-12
         )
 
     def test_returns_height_equal_to_lift_cond_level(self) -> None:
@@ -221,6 +250,57 @@ class TestLiftCondTemp:
                 lift_cond_level(PRESS, TEMP, rel_hum),
                 rtol=1e-10,
             )
+
+
+# --- constant forwarding into the SVP call ---------------------------------
+
+
+class TestConstantForwarding:
+    """Thermodynamic constants must reach the internal saturation-vapor-pressure
+    call, not only the Lambert-W coefficients (PR #52 review).
+
+    `p_trip` enters the LCL expressions *only* through `sat_vap_press_liq_wat`,
+    so it is a clean probe: were it dropped on the way to the SVP call (the
+    original bug), a non-default `p_trip` would leave the result unchanged.
+    """
+
+    P_TRIP_ALT = P_TRIP * 1.1
+    E_0V_ALT = E_0V * 1.02
+
+    def test_temp_lift_cond_level_forwards_p_trip(self) -> None:
+        alt = temp_lift_cond_level(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
+        # A dropped-forwarding bug returns a byte-identical default, so exact
+        # inequality is the precise discriminator (the effect is small).
+        assert alt != temp_lift_cond_level(PRESS, TEMP, REL_HUM)
+        np.testing.assert_allclose(
+            alt, _ref_temp_lcl(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT), rtol=1e-12
+        )
+
+    def test_lift_cond_level_forwards_p_trip(self) -> None:
+        alt = lift_cond_level(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
+        assert alt != lift_cond_level(PRESS, TEMP, REL_HUM)
+        np.testing.assert_allclose(
+            alt,
+            _ref_lcl_height(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT),
+            rtol=1e-12,
+        )
+
+    def test_lift_cond_temp_forwards_p_trip(self) -> None:
+        alt = lift_cond_temp(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
+        assert alt != lift_cond_temp(PRESS, TEMP, REL_HUM)
+        np.testing.assert_allclose(
+            alt,
+            _ref_lcl_height(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT),
+            rtol=1e-12,
+        )
+
+    def test_e_0v_forwarded_into_svp(self) -> None:
+        """`e_0v` appears in both the SVP and the Lambert-W coefficients; a full
+        reconstruction stays consistent only if it reaches the SVP call too."""
+        alt = temp_lift_cond_level(PRESS, TEMP, REL_HUM, e_0v=self.E_0V_ALT)
+        np.testing.assert_allclose(
+            alt, _ref_temp_lcl(PRESS, TEMP, REL_HUM, e_0v=self.E_0V_ALT), rtol=1e-12
+        )
 
 
 # --- ArrayLike input support ----------------------------------------------

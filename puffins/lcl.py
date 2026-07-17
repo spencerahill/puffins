@@ -34,7 +34,6 @@ def sat_vap_press_liq_wat(
     temp: ArrayLike,
     p_trip: float = P_TRIP,
     t_trip: float = T_TRIP,
-    r_d: float = R_D,
     e_0v: float = E_0V,
     r_v: float = R_V,
     c_pv: float = C_PV,
@@ -105,7 +104,16 @@ def lift_cond_temp(
     https://doi.org/10.1175/JAS-D-17-0102.1.
 
     """
-    sat_vap_press = sat_vap_press_liq_wat(temp)
+    sat_vap_press = sat_vap_press_liq_wat(
+        temp,
+        p_trip=p_trip,
+        t_trip=t_trip,
+        e_0v=e_0v,
+        r_v=r_v,
+        c_pv=c_pv,
+        c_vv=c_vv,
+        c_vl=c_vl,
+    )
     vap_press = rel_hum * sat_vap_press
 
     r_m = gas_const_moist_air(press, vap_press, r_d=r_d, r_v=r_v)
@@ -164,7 +172,16 @@ def temp_lift_cond_level(
     https://romps.berkeley.edu/papers/pubdata/2016/lcl/lcl.py
 
     """
-    sat_vap_press = sat_vap_press_liq_wat(temp)
+    sat_vap_press = sat_vap_press_liq_wat(
+        temp,
+        p_trip=p_trip,
+        t_trip=t_trip,
+        e_0v=e_0v,
+        r_v=r_v,
+        c_pv=c_pv,
+        c_vv=c_vv,
+        c_vl=c_vl,
+    )
     vap_press = rel_hum * sat_vap_press
 
     r_m = gas_const_moist_air(press, vap_press, r_d=r_d, r_v=r_v)
@@ -211,7 +228,16 @@ def lift_cond_level(
     https://romps.berkeley.edu/papers/pubdata/2016/lcl/lcl.py
 
     """
-    sat_vap_press = sat_vap_press_liq_wat(temp)
+    sat_vap_press = sat_vap_press_liq_wat(
+        temp,
+        p_trip=p_trip,
+        t_trip=t_trip,
+        e_0v=e_0v,
+        r_v=r_v,
+        c_pv=c_pv,
+        c_vv=c_vv,
+        c_vl=c_vl,
+    )
     vap_press = rel_hum * sat_vap_press
     c_pm = spec_heat_const_press_moist_air(
         press, vap_press, r_d=r_d, r_v=r_v, c_pd=c_pd, c_pv=c_pv
