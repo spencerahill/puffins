@@ -93,6 +93,30 @@ class TestPolarAmpIndex:
         assert sh_weight != nh_weight
         np.testing.assert_allclose(float(result), expected, rtol=1e-10)
 
+    def test_restricted_denom_bounds(self) -> None:
+        """A non-global denom_bounds changes only the denominator.
+
+        Pins the denom_bounds branch: reconstructing the index with a
+        tropics-only denominator (and default polar caps) fails if the
+        source ignores denom_bounds for the denominator average.
+        """
+        lats = _uniform_sinlat_grid(100)
+        data = lats**2  # poleward-increasing, so the mean depends on the range
+        arr = _sinlat_field(data, lats)
+
+        denom_bounds = (-30.0, 30.0)
+        result = polar_amp_index(arr, denom_bounds=denom_bounds)
+
+        denom = _reconstruct_region_mean(data, lats, *denom_bounds)
+        sh_avg = _reconstruct_region_mean(data, lats, -90.0, -60.0)  # default sh_bound
+        nh_avg = _reconstruct_region_mean(data, lats, 60.0, 90.0)  # default nh_bound
+        numer = (30.0 * sh_avg + 30.0 * nh_avg) / 60.0
+        expected = numer / denom
+
+        # The restricted denominator must actually differ from the global one.
+        assert not np.isclose(denom, _reconstruct_region_mean(data, lats, -90.0, 90.0))
+        np.testing.assert_allclose(float(result), expected, rtol=1e-10)
+
     def test_grid_path_matches_calculus(self) -> None:
         """On a uniform-lat grid the area-weighted (grid) path is used.
 
