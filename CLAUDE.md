@@ -113,6 +113,8 @@ For functions with a nontrivial coefficient chain or closed-form expression, inc
 
 The mutation-check applies beyond closed-form formulas. Any function with nontrivial internal logic (a partition or split, an index or slice offset, a branch, a disjointness condition) needs at least one test that fails when that logic is perturbed, confirmed by mutation. A limiting-case anchor can be blind to the very logic it appears to cover: `boot_risk_ratio`'s constant-array test passed even with its numerator/denominator split mutated to overlap, because a constant array yields risk ratio 1 for any split, and the gap survived until an independent review. Where the function seeds its RNG internally, add a `seed` parameter so a reconstruction test can reproduce the draw and pin the logic exactly.
 
+Before considering a module's tests complete, enumerate every parameter that affects the output and confirm each is exercised with a non-default value in at least one test whose assertion would fail if that parameter's handling were broken (mutation-checked). A parameter used only at its default in every test has no teeth: `polar_amp`'s `denom_bounds` shipped that way in the first draft (every test used the global `(-90, 90)` default), and hardcoding the denominator to the global range passed all 12 tests until an independent review caught it. Applying the mutation-check to the headline formula alone is not enough; sweep it across the full parameter surface.
+
 ## Important Notes
 
 - This is a personal research tool with no official support
