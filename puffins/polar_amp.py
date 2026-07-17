@@ -5,19 +5,26 @@ ratio of high-latitude change to global-mean change. Supports Arctic,
 Antarctic, and combined polar amplification calculations.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import cast
+
+import xarray as xr
+
 from .calculus import merid_avg_grid_data, merid_avg_sinlat_data
 from .names import LAT_STR
 
 
 def polar_amp_index(
-    arr,
-    include_sh=True,
-    include_nh=True,
-    denom_bounds=(-90, 90),
-    sh_bound=-60,
-    nh_bound=60,
-    lat_str=LAT_STR,
-):
+    arr: xr.DataArray,
+    include_sh: bool = True,
+    include_nh: bool = True,
+    denom_bounds: tuple[float, float] = (-90, 90),
+    sh_bound: float = -60,
+    nh_bound: float = 60,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Compute ratio of value averaged over pole(s) to global average.
 
     Computes a weighted average over one or both polar regions and
@@ -63,6 +70,7 @@ def polar_amp_index(
     if not (include_sh or include_nh):
         raise ValueError("One or both of SH or NH must be selected.")
 
+    func_avg: Callable[..., xr.DataArray]
     try:
         denom = merid_avg_grid_data(
             arr, min_lat=min(denom_bounds), max_lat=max(denom_bounds), lat_str=lat_str
@@ -74,6 +82,8 @@ def polar_amp_index(
         )
         func_avg = merid_avg_sinlat_data
 
+    sh_avg: xr.DataArray | float
+    nh_avg: xr.DataArray | float
     if include_sh:
         sh_avg = func_avg(arr, max_lat=sh_bound, lat_str=lat_str)
         sh_weight = abs(-90 - sh_bound)
@@ -87,10 +97,15 @@ def polar_amp_index(
         nh_avg = 0
         nh_weight = 0
     numer = (sh_weight * sh_avg + nh_weight * nh_avg) / (sh_weight + nh_weight)
-    return numer / denom
+    return cast(xr.DataArray, numer / denom)
 
 
-def arctic_amp(arr, min_lat=60, denom_bounds=(-90, 90), lat_str=LAT_STR):
+def arctic_amp(
+    arr: xr.DataArray,
+    min_lat: float = 60,
+    denom_bounds: tuple[float, float] = (-90, 90),
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Ratio of NH high-latitude average to global average.
 
     Parameters
@@ -124,7 +139,12 @@ def arctic_amp(arr, min_lat=60, denom_bounds=(-90, 90), lat_str=LAT_STR):
     )
 
 
-def antarctic_amp(arr, max_lat=-60, denom_bounds=(-90, 90), lat_str=LAT_STR):
+def antarctic_amp(
+    arr: xr.DataArray,
+    max_lat: float = -60,
+    denom_bounds: tuple[float, float] = (-90, 90),
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Ratio of SH high-latitude average to global average.
 
     Parameters
@@ -158,7 +178,9 @@ def antarctic_amp(arr, max_lat=-60, denom_bounds=(-90, 90), lat_str=LAT_STR):
     )
 
 
-def print_polar_amp(arr, denom_bounds=(-90, 90)):
+def print_polar_amp(
+    arr: xr.DataArray, denom_bounds: tuple[float, float] = (-90, 90)
+) -> None:
     """Compute and print Arctic, Antarctic, and combined polar amplification indices.
 
     Prints the Arctic (60N-90N), Antarctic (90S-60S), and combined polar
