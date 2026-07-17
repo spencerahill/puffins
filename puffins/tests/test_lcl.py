@@ -31,7 +31,7 @@ from puffins.constants import (
 from puffins.lcl import (
     gas_const_moist_air,
     lift_cond_level,
-    lift_cond_temp,
+    pres_lift_cond_level,
     sat_vap_press_liq_wat,
     spec_heat_const_press_moist_air,
     temp_lift_cond_level,
@@ -105,6 +105,21 @@ def _ref_lcl_height(
     c_pm = _ref_c_pm(press, vap_press)
     temp_lcl = _ref_temp_lcl(press, temp, rel_hum, p_trip=p_trip, e_0v=e_0v)
     return z_0 + c_pm / GRAV_EARTH * (temp - temp_lcl)
+
+
+def _ref_pres_lcl(
+    press: float,
+    temp: float,
+    rel_hum: float,
+    p_trip: float = P_TRIP,
+    e_0v: float = E_0V,
+) -> float:
+    """Romps 2017 Eq. (22b): p_lcl = press * (T_lcl / T) ** (c_pm / R_m)."""
+    vap_press = rel_hum * _ref_sat_vap_press(temp, p_trip=p_trip, e_0v=e_0v)
+    r_m = _ref_r_m(press, vap_press)
+    c_pm = _ref_c_pm(press, vap_press)
+    temp_lcl = _ref_temp_lcl(press, temp, rel_hum, p_trip=p_trip, e_0v=e_0v)
+    return press * (temp_lcl / temp) ** (c_pm / r_m)
 
 
 # Representative (press, temp) points spanning the lower troposphere, used to
@@ -228,28 +243,33 @@ class TestLiftCondLevel:
         assert lift_cond_level(PRESS, TEMP, 0.3) > lift_cond_level(PRESS, TEMP, 0.9)
 
 
-# --- lift_cond_temp --------------------------------------------------------
+# --- pres_lift_cond_level --------------------------------------------------
 
 
-class TestLiftCondTemp:
+class TestPresLiftCondLevel:
     @pytest.mark.parametrize("press,temp", KNOWN_POINTS)
     def test_known_value(self, press: float, temp: float) -> None:
-        result = lift_cond_temp(press, temp, REL_HUM)
+        """Full reconstruction of Romps 2017 Eq. (22b) from raw numpy/scipy."""
+        result = pres_lift_cond_level(press, temp, REL_HUM)
         np.testing.assert_allclose(
-            result, _ref_lcl_height(press, temp, REL_HUM), rtol=1e-12
+            result, _ref_pres_lcl(press, temp, REL_HUM), rtol=1e-12
         )
 
-    def test_returns_height_equal_to_lift_cond_level(self) -> None:
-        """`lift_cond_temp` currently returns a HEIGHT, identical to
-        `lift_cond_level`, despite its name/docstring (see issue #41 part 2).
-        Pin the actual behavior so any future physics fix is a deliberate,
-        test-visible change rather than a silent one."""
-        for rel_hum in (0.3, 0.5, 0.7, 0.9):
-            np.testing.assert_allclose(
-                lift_cond_temp(PRESS, TEMP, rel_hum),
-                lift_cond_level(PRESS, TEMP, rel_hum),
-                rtol=1e-10,
-            )
+    def test_saturated_parcel_at_launch_pressure(self) -> None:
+        """A saturated parcel is already at its LCL, so p_lcl == press."""
+        np.testing.assert_allclose(
+            pres_lift_cond_level(PRESS, TEMP, 1.0), PRESS, rtol=1e-10
+        )
+
+    def test_below_launch_pressure(self) -> None:
+        """An unsaturated parcel's LCL sits above launch, at lower pressure."""
+        assert pres_lift_cond_level(PRESS, TEMP, REL_HUM) < PRESS
+
+    def test_drier_is_lower_pressure(self) -> None:
+        """A drier parcel reaches its LCL higher up, at lower pressure."""
+        assert pres_lift_cond_level(PRESS, TEMP, 0.3) < pres_lift_cond_level(
+            PRESS, TEMP, 0.9
+        )
 
 
 # --- constant forwarding into the SVP call ---------------------------------
@@ -285,12 +305,12 @@ class TestConstantForwarding:
             rtol=1e-12,
         )
 
-    def test_lift_cond_temp_forwards_p_trip(self) -> None:
-        alt = lift_cond_temp(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
-        assert alt != lift_cond_temp(PRESS, TEMP, REL_HUM)
+    def test_pres_lift_cond_level_forwards_p_trip(self) -> None:
+        alt = pres_lift_cond_level(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
+        assert alt != pres_lift_cond_level(PRESS, TEMP, REL_HUM)
         np.testing.assert_allclose(
             alt,
-            _ref_lcl_height(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT),
+            _ref_pres_lcl(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT),
             rtol=1e-12,
         )
 
@@ -308,8 +328,8 @@ class TestConstantForwarding:
 
 @pytest.mark.parametrize(
     "func",
-    [temp_lift_cond_level, lift_cond_level, lift_cond_temp],
-    ids=["temp_lift_cond_level", "lift_cond_level", "lift_cond_temp"],
+    [temp_lift_cond_level, pres_lift_cond_level, lift_cond_level],
+    ids=["temp_lift_cond_level", "pres_lift_cond_level", "lift_cond_level"],
 )
 @pytest.mark.parametrize(
     "press,temp,rel_hum",
