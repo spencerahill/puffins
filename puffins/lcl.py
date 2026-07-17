@@ -1,28 +1,46 @@
+#! /usr/bin/env python
+"""Lifting condensation level, following Romps 2017.
+
+Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
+Journal of the Atmospheric Sciences 74 (12): 3891-3900.
+https://doi.org/10.1175/JAS-D-17-0102.1.
+
+"""
+
+from typing import cast
+
+import numpy as np
+import scipy.special
+
+from ._typing import ArrayLike
+from .constants import (
+    C_PD,
+    C_PV,
+    C_VL,
+    C_VV,
+    E_0V,
+    GRAV_EARTH,
+    P_TRIP,
+    R_D,
+    R_V,
+    T_TRIP,
+)
+
 # Parameters
-T_TRIP = pf.constants.T_TRIP
-P_TRIP = pf.constants.P_TRIP
-E_0V = pf.constants.E_0V
-E_0S = pf.constants.E_0S
-R_D = pf.constants.R_D
-R_V = pf.constants.R_V
-C_VV = pf.constants.C_VV
-C_VL = pf.constants.C_VL
-C_PD = pf.constants.C_PD
-C_PV = pf.constants.C_PV
-GRAV = pf.constants.GRAV_EARTH
+GRAV = GRAV_EARTH
 
 
 def sat_vap_press_liq_wat(
-    temp,
-    p_trip=P_TRIP,
-    t_trip=T_TRIP,
-    r_d=R_D,
-    e_0v=E_0V,
-    r_v=R_V,
-    c_pv=C_PV,
-    c_vv=C_VV,
-    c_vl=C_VL,
-):
+    temp: ArrayLike,
+    p_trip: float = P_TRIP,
+    t_trip: float = T_TRIP,
+    r_d: float = R_D,
+    e_0v: float = E_0V,
+    r_v: float = R_V,
+    c_pv: float = C_PV,
+    c_vv: float = C_VV,
+    c_vl: float = C_VL,
+) -> ArrayLike:
     """Saturation vapor pressure over liquid water.  Romps 2017."""
     return (
         p_trip
@@ -31,44 +49,59 @@ def sat_vap_press_liq_wat(
     )
 
 
-def _q_v(press, vap_press, r_d=R_D, r_v=R_V):
+def _q_v(
+    press: ArrayLike,
+    vap_press: ArrayLike,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     return r_d * vap_press / (r_v * press + (r_d - r_v) * vap_press)
 
 
-def gas_const_moist_air(press, vap_press, r_d=R_D, r_v=R_V):
+def gas_const_moist_air(
+    press: ArrayLike,
+    vap_press: ArrayLike,
+    r_d: float = R_D,
+    r_v: float = R_V,
+) -> ArrayLike:
     """Gas constant of moist air.  Romps 2017."""
     q_v = _q_v(press, vap_press, r_d=r_d, r_v=r_v)
     return (1 - q_v) * r_d + q_v * r_v
 
 
 def spec_heat_const_press_moist_air(
-    press, vap_press, r_d=R_D, r_v=R_V, c_pd=C_PD, c_pv=C_PV
-):
-    """Specifi heat at constant pressure of moist air."""
+    press: ArrayLike,
+    vap_press: ArrayLike,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    c_pd: float = C_PD,
+    c_pv: float = C_PV,
+) -> ArrayLike:
+    """Specific heat at constant pressure of moist air."""
     q_v = _q_v(press, vap_press, r_d=r_d, r_v=r_v)
     return (1 - q_v) * c_pd + q_v * c_pv
 
 
 def lift_cond_temp(
-    press,
-    temp,
-    rel_hum,
-    z_0=0.0,
-    p_trip=P_TRIP,
-    t_trip=T_TRIP,
-    r_d=R_D,
-    r_v=R_V,
-    c_pd=C_PD,
-    c_pv=C_PV,
-    c_vv=C_VV,
-    c_vl=C_VL,
-    e_0v=E_0V,
-    grav=GRAV,
-):
+    press: ArrayLike,
+    temp: ArrayLike,
+    rel_hum: ArrayLike,
+    z_0: float = 0.0,
+    p_trip: float = P_TRIP,
+    t_trip: float = T_TRIP,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    c_pd: float = C_PD,
+    c_pv: float = C_PV,
+    c_vv: float = C_VV,
+    c_vl: float = C_VL,
+    e_0v: float = E_0V,
+    grav: float = GRAV,
+) -> ArrayLike:
     """Temperature at lifting condensation level.  C.f. Romps 2017.
 
-    Romps, David M. 2017. “Exact Expression for the Lifting Condensation Level.”
-    Journal of the Atmospheric Sciences 74 (12): 3891–3900.
+    Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
+    Journal of the Atmospheric Sciences 74 (12): 3891-3900.
     https://doi.org/10.1175/JAS-D-17-0102.1.
 
     """
@@ -88,36 +121,43 @@ def lift_cond_temp(
         * np.exp(-(e_0v - (c_vv - c_vl) * t_trip) / (r_v * temp))
     )
 
-    return z_0 + c_pm * temp / grav * (
-        1.0
-        - term_b
-        / (
-            term_a
-            * scipy.special.lambertw(
-                term_b / term_a * term_c ** (1.0 / term_a), -1
-            ).real
-        )
+    return cast(
+        ArrayLike,
+        z_0
+        + c_pm
+        * temp
+        / grav
+        * (
+            1.0
+            - term_b
+            / (
+                term_a
+                * scipy.special.lambertw(
+                    term_b / term_a * term_c ** (1.0 / term_a), -1
+                ).real
+            )
+        ),
     )
 
 
 def temp_lift_cond_level(
-    press,
-    temp,
-    rel_hum,
-    p_trip=P_TRIP,
-    t_trip=T_TRIP,
-    r_d=R_D,
-    r_v=R_V,
-    c_pd=C_PD,
-    c_pv=C_PV,
-    c_vv=C_VV,
-    c_vl=C_VL,
-    e_0v=E_0V,
-):
+    press: ArrayLike,
+    temp: ArrayLike,
+    rel_hum: ArrayLike,
+    p_trip: float = P_TRIP,
+    t_trip: float = T_TRIP,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    c_pd: float = C_PD,
+    c_pv: float = C_PV,
+    c_vv: float = C_VV,
+    c_vl: float = C_VL,
+    e_0v: float = E_0V,
+) -> ArrayLike:
     """Temperature at lifting condensation level.  C.f. Romps 2017.
 
-    Romps, David M. 2017. “Exact Expression for the Lifting Condensation Level.”
-    Journal of the Atmospheric Sciences 74 (12): 3891–3900.
+    Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
+    Journal of the Atmospheric Sciences 74 (12): 3891-3900.
     https://doi.org/10.1175/JAS-D-17-0102.1.
 
     Modified from scripts provided by D. Romps at
@@ -135,35 +175,36 @@ def temp_lift_cond_level(
     term_a = (c_vl - c_pv) / r_v + c_pm / r_m
     term_b = -(e_0v - (c_vv - c_vl) * t_trip) / (r_v * temp)
     term_c = term_b / term_a
-    return (
+    return cast(
+        ArrayLike,
         term_c
         * temp
         / scipy.special.lambertw(
             rel_hum ** (1.0 / term_a) * term_c * np.exp(term_c), -1
-        ).real
+        ).real,
     )
 
 
 def lift_cond_level(
-    press,
-    temp,
-    rel_hum,
-    z_0=0.0,
-    p_trip=P_TRIP,
-    t_trip=T_TRIP,
-    r_d=R_D,
-    r_v=R_V,
-    c_pd=C_PD,
-    c_pv=C_PV,
-    c_vv=C_VV,
-    c_vl=C_VL,
-    e_0v=E_0V,
-    grav=GRAV,
-):
+    press: ArrayLike,
+    temp: ArrayLike,
+    rel_hum: ArrayLike,
+    z_0: float = 0.0,
+    p_trip: float = P_TRIP,
+    t_trip: float = T_TRIP,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    c_pd: float = C_PD,
+    c_pv: float = C_PV,
+    c_vv: float = C_VV,
+    c_vl: float = C_VL,
+    e_0v: float = E_0V,
+    grav: float = GRAV,
+) -> ArrayLike:
     """Lifting condensation level.  C.f. Romps 2017.
 
-    Romps, David M. 2017. “Exact Expression for the Lifting Condensation Level.”
-    Journal of the Atmospheric Sciences 74 (12): 3891–3900.
+    Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
+    Journal of the Atmospheric Sciences 74 (12): 3891-3900.
     https://doi.org/10.1175/JAS-D-17-0102.1.
 
     Modified from scripts provided by D. Romps at

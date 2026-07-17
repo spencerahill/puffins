@@ -17,6 +17,7 @@ from . import (
     hides,
     interp,
     kuo_el,
+    lcl,
     lindzen_hou_1988,
     longitude,
     names,

@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-16 |
+| **Last updated** | 2026-07-17 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -50,7 +50,7 @@ signatures encode units and coordinate conventions.
 - [x] `thermodynamics.py` — thermodynamic calculations; 60 tests added, removed duplicate function definitions (completed 2026-03-26)
 - [x] `vert_coords.py` — vertical coordinate transformations; 62 tests (59 pass, 3 xfail for pre-existing xr.concat bug #26 in pfull_simm_burr) (completed 2026-03-29)
 - [x] `tropopause.py` — tropopause diagnostics; 18 tests (8 pass for `tropo_wmo`, 10 xfail for six legacy implementations broken since ~2020 per SAH source note); fixed hardcoded `level` dim string in `tropo_wmo` to use the `p_str` argument (completed 2026-04-18)
-- [ ] `lcl.py` — lifted condensation level
+- [x] `lcl.py` — lifted condensation level; fixed the missing-import breakage (issue #41 part 1) so the module is importable and re-exported from `__init__`; 27 tests added with raw-numpy known-value reconstructions of the Romps 2017 formulas. The `lift_cond_temp` naming/semantics question (issue #41 part 2) is a physics decision left open; a test pins its current behavior (returns a height equal to `lift_cond_level`) (completed 2026-07-17)
 
 ## Group 4: Climate Dynamics
 
