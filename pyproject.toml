@@ -133,6 +133,7 @@ module = [
     "puffins.longitude",
     "puffins.names",
     "puffins.num_solver",
+    "puffins.polar_amp",
     "puffins.radiation",
     "puffins.stats",
     "puffins.therm_inert",
