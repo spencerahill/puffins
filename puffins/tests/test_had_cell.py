@@ -433,6 +433,19 @@ class TestHadCellsEdges:
         assert abs(shared.item()) < 1.0, shared.item()
         assert 29.0 < north.item() < 30.0, north.item()
 
+    def test_frac_thresh_forwarded_to_outer_edges(self) -> None:
+        # frac_thresh must reach the two outer-edge calls (it is not a
+        # parameter of the shared-edge call, whose edge is a zero crossing).
+        sf = _make_streamfunc(edge_lat=30.0)
+        south, shared, north = (
+            _edge_arr(edge) for edge in had_cells_edges(sf, frac_thresh=0.3)
+        )
+        cell_max_rel = np.sin(np.pi * 14.5 / 30.0)
+        expected = 30.0 * (1.0 - np.arcsin(0.3 * cell_max_rel) / np.pi)
+        assert north.item() == pytest.approx(expected, abs=0.1)
+        assert south.item() == pytest.approx(-expected, abs=0.1)
+        assert abs(shared.item()) < 1.0, shared.item()
+
 
 # The meridional node latitudes are offset from the integer grid by 0.25
 # deg: a gridpoint lying exactly on a streamfunction zero is excluded from
@@ -545,6 +558,21 @@ class TestCellEdgesSigma:
         assert (
             weighted.sel(cell="nh_hadley").sel(lat="edge_north").item()
             > plain.sel(cell="nh_hadley").sel(lat="edge_north").item()
+        )
+
+    def test_custom_dim_names(self) -> None:
+        amp = 1e10
+        sf = _sigma_streamfunc(amp)
+        default = cell_edges_sigma(sf, frac_thresh=0.2)
+        renamed = sf.rename({LAT_STR: "latitude", SIGMA_STR: "s"})
+        result = cell_edges_sigma(
+            renamed, frac_thresh=0.2, lat_str="latitude", sigma_str="s"
+        )
+        assert "latitude" in result.dims
+        assert list(result["cell"].values) == ["sh_hadley", "nh_hadley"]
+        np.testing.assert_allclose(result.values, default.values)
+        np.testing.assert_allclose(
+            result["cell_strength"].values, default["cell_strength"].values
         )
 
 

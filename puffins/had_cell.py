@@ -306,7 +306,6 @@ def had_cells_shared_edge(
     min_plev: float | None = None,
     max_plev: float | None = None,
     do_avg_vert: bool = False,
-    frac_thresh: float | None = None,
     min_lat: float | None = None,
     max_lat: float | None = None,
     lat_str: str = LAT_STR,
@@ -527,11 +526,11 @@ def had_cells_edges(
     lev_str: str = LEV_STR,
 ) -> list[xr.DataArray | float]:
     """Southern, shared inner, and northern edge of the Hadley cells."""
-    # Kwargs common to all three edge functions. `cos_factor` is intentionally
-    # excluded: it applies to the outer-edge threshold detection in
-    # `had_cell_edge` and is not a parameter of `had_cells_shared_edge`.
+    # Kwargs common to all three edge functions. `frac_thresh` and
+    # `cos_factor` are intentionally excluded: they apply to the outer-edge
+    # threshold detection in `had_cell_edge`, and the shared inner edge is a
+    # zero crossing, so neither is a parameter of `had_cells_shared_edge`.
     shared_kwargs: dict[str, Any] = dict(
-        frac_thresh=frac_thresh,
         min_plev=min_plev,
         max_plev=max_plev,
         do_avg_vert=do_avg_vert,
@@ -540,12 +539,13 @@ def had_cells_edges(
         lat_str=lat_str,
         lev_str=lev_str,
     )
+    outer_kwargs = dict(frac_thresh=frac_thresh, cos_factor=cos_factor)
     func_and_kwargs: list[
         tuple[Callable[..., xr.DataArray | float], dict[str, Any]]
     ] = [
-        (had_cell_edge, dict(cell="south", edge="south", cos_factor=cos_factor)),
+        (had_cell_edge, dict(cell="south", edge="south", **outer_kwargs)),
         (had_cells_shared_edge, {}),
-        (had_cell_edge, dict(cell="north", edge="north", cos_factor=cos_factor)),
+        (had_cell_edge, dict(cell="north", edge="north", **outer_kwargs)),
     ]
     return [f_kw[0](strmfunc, **f_kw[1], **shared_kwargs) for f_kw in func_and_kwargs]
 
@@ -594,7 +594,7 @@ def cell_edges_sigma(
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
-    return _hadley_ferrel_cells(cells_arr)
+    return _hadley_ferrel_cells(cells_arr, lat_str=lat_str)
 
 
 def _find_cell_and_edges(
@@ -612,7 +612,7 @@ def _find_cell_and_edges(
     cell_sign = np.sign(n)
     sf_one_cell = _single_cell(streamfunc, labels, n) * cell_sign
     # Discard cells that aren't sufficiently deep.
-    sigma_cell = sf_one_cell.dropna(SIGMA_STR, how="all")[SIGMA_STR]
+    sigma_cell = sf_one_cell.dropna(sigma_str, how="all")[sigma_str]
     cell_sigma_depth = sigma_cell.max() - sigma_cell.min()
     if cell_sigma_depth < cell_min_sigma_depth:
         raise ValueError("Cell is insufficiently deep.")
@@ -798,9 +798,9 @@ def _hadley_ferrel_cells(
     )
     # Discard cells that are entirely within the edges of a larger cell.
     for i, cell in enumerate(cells):
-        bad = (cell.sel(lat="edge_south") > cells.sel(lat="edge_south")) & (
-            cell.sel(lat="edge_north") < cells.sel(lat="edge_north")
-        )
+        bad = (
+            cell.sel({lat_str: "edge_south"}) > cells.sel({lat_str: "edge_south"})
+        ) & (cell.sel({lat_str: "edge_north"}) < cells.sel({lat_str: "edge_north"}))
         if np.any(bad):
             cells = cells.where(cells["cell"] != i)
     cells = cells.dropna("cell")
@@ -814,9 +814,9 @@ def _hadley_ferrel_cells(
         cells_neg = cells_neg.isel(cell=slice(0, max_num_cells))
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
     # Sort from south to north.
-    cells = cells.sortby(cells.sel(lat="center"))
+    cells = cells.sortby(cells.sel({lat_str: "center"}))
     # Label each Hadley cell that can be identified.
-    center_nearest_eq = np.abs(cells.sel(lat="center")).min()
+    center_nearest_eq = np.abs(cells.sel({lat_str: "center"})).min()
     labels: list[int | str] = list(range(len(cells)))
     for i, cell in enumerate(cells):
         # Assume that the cell nearest the equator is one of the Hadley cells.
@@ -827,8 +827,8 @@ def _hadley_ferrel_cells(
                 # Once one Hadley cell has been found, assume the adjacent cell
                 # is the other one, provided it is physicaly close enough
                 if i != len(cells) - 1:
-                    lat_gap = cells[i + 1].sel(lat="edge_south") - cell.sel(
-                        lat="edge_north"
+                    lat_gap = cells[i + 1].sel({lat_str: "edge_south"}) - cell.sel(
+                        {lat_str: "edge_north"}
                     )
                     if lat_gap < max_lat_gap:
                         labels[i + 1] = "nh_hadley"
