@@ -186,9 +186,7 @@ class TestLiftCondLevel:
 
     def test_saturated_parcel_at_surface(self) -> None:
         """A saturated parcel has its LCL at the launch height z_0."""
-        np.testing.assert_allclose(
-            lift_cond_level(PRESS, TEMP, 1.0), 0.0, atol=1e-6
-        )
+        np.testing.assert_allclose(lift_cond_level(PRESS, TEMP, 1.0), 0.0, atol=1e-6)
 
     def test_z0_offset(self) -> None:
         """z_0 shifts the LCL height by a constant offset."""
