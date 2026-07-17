@@ -134,6 +134,7 @@ module = [
     "puffins.names",
     "puffins.num_solver",
     "puffins.radiation",
+    "puffins.stats",
     "puffins.therm_inert",
     "puffins.thermodynamics",
     "puffins.tropopause",

@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-04-18 |
+| **Last updated** | 2026-07-16 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -72,7 +72,7 @@ signatures encode units and coordinate conventions.
 
 ## Group 6: Statistics & Analysis
 
-- [ ] `stats.py` — statistical analysis tools
+- [x] `stats.py` — statistical analysis tools; 66 tests added; fixed `rmse` (`squared=` removed in sklearn ≥1.4) and `quantile_regress` (returned a length-1 `coef_` array that broke `apply_ufunc`) to work with modern sklearn/numpy (completed 2026-07-16)
 - [ ] `bootstrap.py` — bootstrap methods
 - [ ] `eofs.py` — empirical orthogonal functions
 - [ ] `budget_adj.py` — column budget adjustment (**priority**: has mypy `no-any-return` error)
