@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-06-29 |
+| **Last updated** | 2026-07-18 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -21,12 +21,18 @@ API reference, narrative tutorials, theory pages, and sustainable hosting.
 - Theory/concept pages for all theoretical model modules
 - Docstring standards enforced in CI
 
-## Current State Assessment
+## Current State Assessment (updated 2026-07-18)
 
-- **Docstring coverage**: ~71% overall, ranging from 33% (`hides.py`) to 100% (`dates.py`, `therm_inert.py`, `budget_adj.py`)
+- **Docstring coverage**: **~94%** overall (public functions), pulled up by the
+  type-hint work; only `longitude` (67%), `dates` (75%), and `vert_coords`
+  (77%) sit below 80%. (Was ~71% at the March assessment.)
 - **Docstring style**: NumPy-style where present, but quality varies from one-liners to full Parameters/Returns sections
-- **Type hints**: Sporadic; most modules lack them (covered by [Roadmap 001](001-modernize-repo-standards.md) Phase 4)
-- **Doc build system**: None (no Sphinx, no generated API docs)
+- **Type hints**: 20 of 30 modules fully annotated — see [Roadmap 003](003-type-hints.md)
+- **Doc build system**: **Sphinx scaffold in place** — `docs/conf.py`
+  (autodoc + napoleon + intersphinx + mathjax + viewcode, pydata-sphinx-theme),
+  per-module API stubs under `docs/api/`, a `docs` extra, and a CI job that
+  builds with `-W`. Hosting configured via `.readthedocs.yaml` (Phase 2 largely
+  delivered; see below).
 - **Tutorials/examples**: None beyond two one-liners in `README.md`
 
 ---
