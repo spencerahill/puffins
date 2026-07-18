@@ -288,8 +288,8 @@ class TestHadCellsStrength:
 
     def test_min_max_lat(self) -> None:
         # Asymmetric bounds, so that the two surviving candidates aren't
-        # at exactly mirrored latitudes (which trips a separate bug; see
-        # the PR discussion).
+        # at exactly mirrored latitudes, which trips a separate bug:
+        # https://github.com/spencerahill/puffins/issues/55
         sf = _two_cell_streamfunc()
         result = had_cells_strength(sf, min_lat=-12.0, max_lat=10.0)
         sh = result.sel(cell="had_cell_sh")
@@ -445,6 +445,26 @@ class TestHadCellsEdges:
         assert north.item() == pytest.approx(expected, abs=0.1)
         assert south.item() == pytest.approx(-expected, abs=0.1)
         assert abs(shared.item()) < 1.0, shared.item()
+
+    def test_custom_dim_names(self) -> None:
+        # Exercises had_cell_edge and had_cells_shared_edge (via
+        # had_cells_edges) with non-default lat_str/lev_str.
+        sf = _make_streamfunc(edge_lat=30.0)
+        default = [
+            _edge_arr(edge).item() for edge in had_cells_edges(sf, **EDGE_KWARGS)
+        ]
+        renamed_edges = [
+            _edge_arr(edge)
+            for edge in had_cells_edges(
+                sf.rename({LAT_STR: "latitude", LEV_STR: "pressure"}),
+                lat_str="latitude",
+                lev_str="pressure",
+                **EDGE_KWARGS,
+            )
+        ]
+        np.testing.assert_allclose([edge.item() for edge in renamed_edges], default)
+        for edge in renamed_edges:
+            assert list(edge.coords) == ["latitude"], edge.coords
 
 
 # The meridional node latitudes are offset from the integer grid by 0.25
@@ -700,4 +720,30 @@ class TestFixedRoBciEdgeSolver:
         burg = HEIGHT_TROPO * GRAV_EARTH / (ROT_RATE_EARTH * RAD_EARTH) ** 2
         h00lat = np.rad2deg((burg * DELTA_V / 2.0) ** 0.25)
         resid = _bci_polynomial_residual(edge, 0.0, float(h00lat))
+        assert abs(resid) < 1e-6, (edge, resid)
+
+    def test_burger_path_nondefault_params(self) -> None:
+        # Pins the theory and planet parameters of the Burger-number path;
+        # with the defaults, ross_num and c_descent are multiplicative
+        # identities and dropping their forwarding would go unnoticed.
+        height, grav, rot_rate, radius = 1.5e4, 10.0, 8e-5, 5e6
+        ross_num, c_descent, delta_v = 0.8, 1.2, 0.15
+        ascentlat = 5.0
+        edge = float(
+            np.asarray(
+                fixed_ro_bci_edge(
+                    ascentlat,
+                    ross_num=ross_num,
+                    c_descent=c_descent,
+                    delta_v=delta_v,
+                    height=height,
+                    grav=grav,
+                    rot_rate=rot_rate,
+                    radius=radius,
+                )
+            )
+        )
+        burg = height * grav / (rot_rate * radius) ** 2
+        h00lat = c_descent * np.rad2deg((burg * delta_v / (2.0 * ross_num)) ** 0.25)
+        resid = _bci_polynomial_residual(edge, ascentlat, float(h00lat))
         assert abs(resid) < 1e-6, (edge, resid)

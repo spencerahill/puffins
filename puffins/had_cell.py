@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -410,8 +410,8 @@ def had_cell_edge(
         # If there's only one point, assume it's one of the poles.
         if np.isnan(dlat_avg):
             if edge == "north":
-                return 90
-            return -90
+                return 90.0
+            return -90.0
         lats_interp = np.arange(
             sf_one_side[lat_str].min(),
             sf_one_side[lat_str].max() - 0.2 * dlat_avg,
@@ -880,7 +880,7 @@ def fixed_ro_bci_edge(
     grav: float = GRAV_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
-    zero_bounds_guess_range: np.ndarray | None = None,
+    zero_bounds_guess_range: Sequence[float] | np.ndarray | None = None,
 ) -> ArrayLike:
     """Numerically solve fixed-Ro, 2-layer BCI model of HC edge."""
     if zero_bounds_guess_range is None:
