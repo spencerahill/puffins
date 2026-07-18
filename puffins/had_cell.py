@@ -1,9 +1,15 @@
 """Hadley cells and other meridional overturning circulation things."""
 
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, cast
+
 import numpy as np
 import scipy.ndimage
 import xarray as xr
 
+from ._typing import ArrayLike
 from .constants import (
     DELTA_V,
     GRAV_EARTH,
@@ -24,17 +30,20 @@ from .nb_utils import (
 from .num_solver import brentq_solver_sweep_param
 from .vert_coords import subtract_col_avg
 
+if TYPE_CHECKING:
+    from xarray.core.types import CompatOptions
+
 
 def merid_streamfunc(
-    v,
-    dp,
-    grav=GRAV_EARTH,
-    radius=RAD_EARTH,
-    impose_zero_col_flux=True,
-    lat_str=LAT_STR,
-    lon_str=LON_STR,
-    lev_str=LEV_STR,
-):
+    v: xr.DataArray,
+    dp: xr.DataArray,
+    grav: float = GRAV_EARTH,
+    radius: float = RAD_EARTH,
+    impose_zero_col_flux: bool = True,
+    lat_str: str = LAT_STR,
+    lon_str: str = LON_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray:
     """Meridional mass streamfunction.
 
     Parameters
@@ -75,28 +84,29 @@ def merid_streamfunc(
     else:
         raise ValueError(f"Levels are not monotonic: {levels}")
     # At each vertical level, integrate from TOA to that level.
-    streamfunc = (v_znl_mean * dp_znl_mean).sel(**{lev_str: levslice}).cumsum(
+    streamfunc = (v_znl_mean * dp_znl_mean).sel({lev_str: levslice}).cumsum(
         dim=lev_str
     ) / grav
     # Weight by surface area to get a mass overturning rate.
-    return (
+    return cast(
+        xr.DataArray,
         (lat_area_weight(v[lat_str], radius=radius) * streamfunc)
         .transpose(*v_znl_mean.dims)
         .rename("streamfunc")
-        .where(np.isfinite(v))
+        .where(np.isfinite(v)),
     )
 
 
 def had_cell_strength(
-    streamfunc,
-    dim=None,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    do_interp_lat=False,
-    lev_str=LEV_STR,
-    lat_str=LAT_STR,
-):
+    streamfunc: xr.DataArray,
+    dim: str | None = None,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    do_interp_lat: bool = False,
+    lev_str: str = LEV_STR,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Hadley cell strength, as maximum of streamfunction.
 
     If a dimension is given, compute the strength separately at each value of
@@ -133,9 +143,9 @@ def had_cell_strength(
         dlat_mean = sf_valid[lat_str].diff(lat_str).mean()
         dsf_dlat = (
             sf_valid.differentiate(lat_str)
-            .sel(**{lev_str: lev_center, "method": "nearest"})
+            .sel({lev_str: lev_center}, method="nearest")
             .sel(
-                **{
+                {
                     lat_str: slice(
                         lat_center_raw - 1.1 * dlat_mean,
                         lat_center_raw + 1.1 * dlat_mean,
@@ -144,26 +154,26 @@ def had_cell_strength(
             )
         )
         lat_center = zero_cross_interp(dsf_dlat, lat_str).values
-        sf_at_center = sf_valid.interp(**{lat_str: lat_center, "method": "cubic"})
-        return max_and_argmax(sf_at_center)
+        sf_at_center = sf_valid.interp({lat_str: lat_center}, method="cubic")
+        return cast(xr.DataArray, max_and_argmax(sf_at_center))
 
     if dim is None:
-        return max_and_argmax(sf_valid)
-    return max_and_argmax_along_dim(sf_valid, dim)
+        return cast(xr.DataArray, max_and_argmax(sf_valid))
+    return cast(xr.DataArray, max_and_argmax_along_dim(sf_valid, dim))
 
 
 def had_cells_strength(
-    strmfunc,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    min_lat=None,
-    max_lat=None,
-    do_interp_lat=False,
-    compat="override",
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    do_interp_lat: bool = False,
+    compat: CompatOptions = "override",
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray:
     """Location and signed magnitude of both Hadley cell centers."""
     lat = strmfunc[lat_str]
 
@@ -178,7 +188,7 @@ def had_cells_strength(
     # these whose centers are nearest the equator.
     cell_strength_vals = []
 
-    kwargs_hc_strength = dict(
+    kwargs_hc_strength: dict[str, Any] = dict(
         min_plev=min_plev,
         max_plev=max_plev,
         do_avg_vert=do_avg_vert,
@@ -279,27 +289,28 @@ def had_cells_strength(
     return ds_strengths["cell_strength"]
 
 
-def _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str=LEV_STR):
+def _streamfunc_at_avg_lev_max(
+    strmfunc: xr.DataArray, hc_strengths: xr.DataArray, lev_str: str = LEV_STR
+) -> xr.DataArray:
     """Streamfunction at the average level of the two Hadley cell centers."""
     lev_sh_max = hc_strengths[lev_str][0]
     lev_nh_max = hc_strengths[lev_str][1]
     lev = strmfunc[lev_str]
-    lev_avg = lev.sel(**{lev_str: 0.5 * (lev_sh_max + lev_nh_max), "method": "nearest"})
-    return strmfunc.sel(**{lev_str: lev_avg})
+    lev_avg = lev.sel({lev_str: 0.5 * (lev_sh_max + lev_nh_max)}, method="nearest")
+    return cast(xr.DataArray, strmfunc.sel({lev_str: lev_avg}))
 
 
 def had_cells_shared_edge(
-    strmfunc,
-    fixed_plev=None,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    frac_thresh=None,
-    min_lat=None,
-    max_lat=None,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    fixed_plev: float | None = None,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray:
     """Latitude of shared inner edge of Hadley cells."""
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
@@ -318,30 +329,32 @@ def had_cells_shared_edge(
     if fixed_plev is None:
         sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
     else:
-        sf_at_max = strmfunc.sel(**{lev_str: fixed_plev, "method": "nearest"})
+        sf_at_max = strmfunc.sel({lev_str: fixed_plev}, method="nearest")
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max), drop=True)
     edge_lat = zero_cross_interp(sf_max2max, lat_str)[lat_str]
     # Drop scalar coords inherited from intermediates (e.g. the level of the
     # cell max); the edge is just a latitude.
-    return edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
+    return cast(
+        xr.DataArray, edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
+    )
 
 
 def had_cell_edge(
-    strmfunc,
-    cell="north",
-    edge="north",
-    frac_thresh=0.1,
-    fixed_plev=None,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    min_lat=None,
-    max_lat=None,
-    cos_factor=False,
-    do_interp=False,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    cell: str = "north",
+    edge: str = "north",
+    frac_thresh: float = 0.1,
+    fixed_plev: float | None = None,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    cos_factor: bool = False,
+    do_interp: bool = False,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray | float:
     """Latitude of poleward edge of either the NH or SH Hadley cell."""
     hc_strengths = had_cells_strength(
         strmfunc,
@@ -366,13 +379,13 @@ def had_cell_edge(
     lev_of_max = cell_max[lev_str]
 
     if do_avg_vert:
-        sf_at_max = strmfunc.sel(**{lev_str: slice(min_plev, max_plev)}).mean(lev_str)
+        sf_at_max = strmfunc.sel({lev_str: slice(min_plev, max_plev)}).mean(lev_str)
     else:
         if fixed_plev is None:
             lev_for_edges = float(lev_of_max)
         else:
             lev_for_edges = fixed_plev
-        sf_at_max = strmfunc.sel(**{lev_str: lev_for_edges, "method": "nearest"})
+        sf_at_max = strmfunc.sel({lev_str: lev_for_edges}, method="nearest")
 
     # Restrict to the latitudes north or south of the max, as specified.
     lat = strmfunc[lat_str]
@@ -397,14 +410,14 @@ def had_cell_edge(
         # If there's only one point, assume it's one of the poles.
         if np.isnan(dlat_avg):
             if edge == "north":
-                return 90
-            return -90
+                return 90.0
+            return -90.0
         lats_interp = np.arange(
             sf_one_side[lat_str].min(),
             sf_one_side[lat_str].max() - 0.2 * dlat_avg,
             0.1 * dlat_avg,
         )
-        sf_one_side_interp = sf_one_side.interp(**{lat_str: lats_interp})
+        sf_one_side_interp = sf_one_side.interp({lat_str: lats_interp})
         # Explicitly make the last value equal to the original, as otherwise the
         # interp step can overwrite it with nan for some reason.
         sf_one_side_interp = xr.concat(
@@ -433,22 +446,24 @@ def had_cell_edge(
     edge_lat = interpolate(sf_edge_bounds, sf_edge_bounds[lat_str], 0, lat_str)[lat_str]
     # Drop scalar coords inherited from intermediates (the 'cell' selection
     # label and the level of the cell max); the edge is just a latitude.
-    return edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
+    return cast(
+        xr.DataArray, edge_lat.drop_vars([c for c in edge_lat.coords if c != lat_str])
+    )
 
 
 def had_cells_south_edge(
-    strmfunc,
-    frac_thresh=0.1,
-    fixed_plev=None,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    min_lat=None,
-    max_lat=None,
-    cos_factor=False,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    frac_thresh: float = 0.1,
+    fixed_plev: float | None = None,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray | float:
     """Latitude of southern edge of southern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -468,18 +483,18 @@ def had_cells_south_edge(
 
 
 def had_cells_north_edge(
-    strmfunc,
-    frac_thresh=0.1,
-    fixed_plev=None,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    min_lat=None,
-    max_lat=None,
-    cos_factor=False,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    frac_thresh: float = 0.1,
+    fixed_plev: float | None = None,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> xr.DataArray | float:
     """Latitude of northern edge of northern Hadley cell."""
     return had_cell_edge(
         strmfunc,
@@ -499,23 +514,23 @@ def had_cells_north_edge(
 
 
 def had_cells_edges(
-    strmfunc,
-    frac_thresh=0.1,
-    min_plev=None,
-    max_plev=None,
-    do_avg_vert=False,
-    min_lat=None,
-    max_lat=None,
-    cos_factor=False,
-    lat_str=LAT_STR,
-    lev_str=LEV_STR,
-):
+    strmfunc: xr.DataArray,
+    frac_thresh: float = 0.1,
+    min_plev: float | None = None,
+    max_plev: float | None = None,
+    do_avg_vert: bool = False,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
+) -> list[xr.DataArray | float]:
     """Southern, shared inner, and northern edge of the Hadley cells."""
-    # Kwargs common to all three edge functions. `cos_factor` is intentionally
-    # excluded: it applies to the outer-edge threshold detection in
-    # `had_cell_edge` and is not a parameter of `had_cells_shared_edge`.
-    shared_kwargs = dict(
-        frac_thresh=frac_thresh,
+    # Kwargs common to all three edge functions. `frac_thresh` and
+    # `cos_factor` are intentionally excluded: they apply to the outer-edge
+    # threshold detection in `had_cell_edge`, and the shared inner edge is a
+    # zero crossing, so neither is a parameter of `had_cells_shared_edge`.
+    shared_kwargs: dict[str, Any] = dict(
         min_plev=min_plev,
         max_plev=max_plev,
         do_avg_vert=do_avg_vert,
@@ -524,24 +539,27 @@ def had_cells_edges(
         lat_str=lat_str,
         lev_str=lev_str,
     )
-    func_and_kwargs = [
-        (had_cell_edge, dict(cell="south", edge="south", cos_factor=cos_factor)),
+    outer_kwargs = dict(frac_thresh=frac_thresh, cos_factor=cos_factor)
+    func_and_kwargs: list[
+        tuple[Callable[..., xr.DataArray | float], dict[str, Any]]
+    ] = [
+        (had_cell_edge, dict(cell="south", edge="south", **outer_kwargs)),
         (had_cells_shared_edge, {}),
-        (had_cell_edge, dict(cell="north", edge="north", cos_factor=cos_factor)),
+        (had_cell_edge, dict(cell="north", edge="north", **outer_kwargs)),
     ]
     return [f_kw[0](strmfunc, **f_kw[1], **shared_kwargs) for f_kw in func_and_kwargs]
 
 
 def cell_edges_sigma(
-    streamfunc,
-    frac_thresh=0.1,
-    cos_factor=False,
-    center_min_sigma=0.1,
-    center_max_sigma=1,
-    cell_min_sigma_depth=0.3,
-    lat_str=LAT_STR,
-    sigma_str=SIGMA_STR,
-):
+    streamfunc: xr.DataArray,
+    frac_thresh: float = 0.1,
+    cos_factor: bool = False,
+    center_min_sigma: float = 0.1,
+    center_max_sigma: float = 1,
+    cell_min_sigma_depth: float = 0.3,
+    lat_str: str = LAT_STR,
+    sigma_str: str = SIGMA_STR,
+) -> xr.DataArray:
     """Compute edges of all contiguous streamfunction overturning cells."""
     # Discard values in the boundary layer and stratosphere (if specified).
     sigma = streamfunc[sigma_str]
@@ -576,25 +594,25 @@ def cell_edges_sigma(
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
-    return _hadley_ferrel_cells(cells_arr)
+    return _hadley_ferrel_cells(cells_arr, lat_str=lat_str)
 
 
 def _find_cell_and_edges(
-    streamfunc,
-    labels,
-    n,
-    cell_min_sigma_depth=0.3,
-    frac_thresh=0.1,
-    cos_factor=False,
-    lat_str=LAT_STR,
-    sigma_str=SIGMA_STR,
-):
+    streamfunc: xr.DataArray,
+    labels: xr.DataArray,
+    n: int,
+    cell_min_sigma_depth: float = 0.3,
+    frac_thresh: float = 0.1,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+    sigma_str: str = SIGMA_STR,
+) -> xr.DataArray:
     """Find the cell with a given label and determine its edges."""
     # Isolate the cell labeled by 'n' and make it positive.
     cell_sign = np.sign(n)
     sf_one_cell = _single_cell(streamfunc, labels, n) * cell_sign
     # Discard cells that aren't sufficiently deep.
-    sigma_cell = sf_one_cell.dropna(SIGMA_STR, how="all")[SIGMA_STR]
+    sigma_cell = sf_one_cell.dropna(sigma_str, how="all")[sigma_str]
     cell_sigma_depth = sigma_cell.max() - sigma_cell.min()
     if cell_sigma_depth < cell_min_sigma_depth:
         raise ValueError("Cell is insufficiently deep.")
@@ -620,7 +638,9 @@ def _find_cell_and_edges(
     return edges_arr
 
 
-def _split_streamfunc_into_cells(streamfunc):
+def _split_streamfunc_into_cells(
+    streamfunc: xr.DataArray,
+) -> tuple[xr.DataArray, list[int]]:
     """Identify all coherent same-signed structures in a streamfunction."""
     # Algorithm works by distinguishing between zero and nonzero values.  So
     # first set negative values to zero to identify cells with positive
@@ -637,37 +657,53 @@ def _split_streamfunc_into_cells(streamfunc):
     return labels, indices
 
 
-def _single_cell(streamfunc, labels, n):
+def _single_cell(
+    streamfunc: xr.DataArray, labels: xr.DataArray, n: int
+) -> xr.DataArray:
     """Restrict streamfunction to single previously identified cell."""
-    return streamfunc.where(labels == n)
+    return cast(xr.DataArray, streamfunc.where(labels == n))
 
 
-def _cell_at_max(sf_one_cell, sf_max, sigma_str=SIGMA_STR):
+def _cell_at_max(
+    sf_one_cell: xr.DataArray, sf_max: xr.DataArray, sigma_str: str = SIGMA_STR
+) -> xr.DataArray:
     """Restrict the streamfunction to the level of the cell's maximum."""
     sigma_max = float(sf_max[sigma_str].values)
-    return sf_one_cell.sel(**{sigma_str: sigma_max})
+    return cast(xr.DataArray, sf_one_cell.sel({sigma_str: sigma_max}))
 
 
-def _cell_and_opp_sign_cells(sf_at_max, labels, n, sigma_str=SIGMA_STR):
+def _cell_and_opp_sign_cells(
+    sf_at_max: xr.DataArray, labels: xr.DataArray, n: int, sigma_str: str = SIGMA_STR
+) -> xr.DataArray:
     """Restrict to one positive overturning cell and negative cells."""
-    labels_at_max = labels.sel(**{sigma_str: sf_at_max[sigma_str]})
+    labels_at_max = labels.sel({sigma_str: sf_at_max[sigma_str]})
     sign_at_max = np.sign(sf_at_max)
-    return sf_at_max.where((labels_at_max == n) | (sign_at_max < 0))
+    return cast(xr.DataArray, sf_at_max.where((labels_at_max == n) | (sign_at_max < 0)))
 
 
-def _cell_is_bad(sf_max, lats, sf_and_opp_sign, min_width=3, lat_str=LAT_STR):
+def _cell_is_bad(
+    sf_max: xr.DataArray,
+    lats: xr.DataArray,
+    sf_and_opp_sign: xr.DataArray,
+    min_width: int = 3,
+    lat_str: str = LAT_STR,
+) -> bool:
     """Determine if identified cell is physically meaningful or not."""
     lat_max = float(sf_max[lat_str].values)
     center_at_pole = np.abs(lat_max) == float(np.abs(lats.values[0]))
     cell_too_narrow = (
         len(sf_and_opp_sign.where(sf_and_opp_sign > 0, drop=True)) < min_width
     )
-    return center_at_pole or cell_too_narrow
+    return bool(center_at_pole or cell_too_narrow)
 
 
 def _one_cell_edges(
-    sf_and_opp_sign, cell_sign, frac_thresh, cos_factor=False, lat_str=LAT_STR
-):
+    sf_and_opp_sign: xr.DataArray,
+    cell_sign: int,
+    frac_thresh: float,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+) -> list[xr.DataArray]:
     """Compute northern and southern edges of a cell."""
     edges = []
     # Look for the northern edge and then, by reversing the sign of the
@@ -694,7 +730,7 @@ def _one_cell_edges(
         lat_cell = sf_norm[lat_str] * sign_factor
         sf_norm[lat_str] = lat_cell
         if sign_factor == -1:
-            sf_norm = sf_norm.isel(**{lat_str: slice(None, None, -1)})
+            sf_norm = sf_norm.isel({lat_str: slice(None, None, -1)})
             lat_cell = sf_norm[lat_str]
 
         # Restrict to latitudes greater than that at the maximum.
@@ -709,19 +745,19 @@ def _one_cell_edges(
         # zero at that pole.
         if len(sf_below) == 0:
             first_lat_below = 90.0 * np.sign(lat_one_side.max(lat_str))
-            first_below = xr.zeros_like(sf_norm.isel(**{lat_str: -1}))
+            first_below = xr.zeros_like(sf_norm.isel({lat_str: -1}))
             first_below[lat_str].values = first_lat_below
 
         # Otherwise, keep the adjacent below-threshold point.
         else:
             first_lat_below = sf_below[lat_str].min()
-            first_below = sf_below.sel(**{lat_str: first_lat_below})
+            first_below = sf_below.sel({lat_str: first_lat_below})
 
         # Get the adjacent above-threshold value towards the cell center.
         last_lat_above = lat_one_side.where(
             lat_one_side < first_lat_below, drop=True
         ).max()
-        last_above = sf_one_side.sel(**{lat_str: last_lat_above}).copy()
+        last_above = sf_one_side.sel({lat_str: last_lat_above}).copy()
 
         # Revert the streamfunctions and latitudes to their original sign.
         first_below *= cell_sign
@@ -742,8 +778,12 @@ def _one_cell_edges(
 
 
 def _hadley_ferrel_cells(
-    cells, min_frac_strength=0.05, max_num_cells=4, max_lat_gap=10, lat_str=LAT_STR
-):
+    cells: xr.DataArray,
+    min_frac_strength: float = 0.05,
+    max_num_cells: int = 4,
+    max_lat_gap: float = 10,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """From identified cell edges, keep only the Hadley and Ferrel cells.
 
     TODO: In a very few cases, the polar cell in one hemisphere is stronger
@@ -758,9 +798,9 @@ def _hadley_ferrel_cells(
     )
     # Discard cells that are entirely within the edges of a larger cell.
     for i, cell in enumerate(cells):
-        bad = (cell.sel(lat="edge_south") > cells.sel(lat="edge_south")) & (
-            cell.sel(lat="edge_north") < cells.sel(lat="edge_north")
-        )
+        bad = (
+            cell.sel({lat_str: "edge_south"}) > cells.sel({lat_str: "edge_south"})
+        ) & (cell.sel({lat_str: "edge_north"}) < cells.sel({lat_str: "edge_north"}))
         if np.any(bad):
             cells = cells.where(cells["cell"] != i)
     cells = cells.dropna("cell")
@@ -774,21 +814,21 @@ def _hadley_ferrel_cells(
         cells_neg = cells_neg.isel(cell=slice(0, max_num_cells))
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
     # Sort from south to north.
-    cells = cells.sortby(cells.sel(lat="center"))
+    cells = cells.sortby(cells.sel({lat_str: "center"}))
     # Label each Hadley cell that can be identified.
-    center_nearest_eq = np.abs(cells.sel(lat="center")).min()
-    labels = list(range(len(cells)))
+    center_nearest_eq = np.abs(cells.sel({lat_str: "center"})).min()
+    labels: list[int | str] = list(range(len(cells)))
     for i, cell in enumerate(cells):
         # Assume that the cell nearest the equator is one of the Hadley cells.
-        center = cell.sel(**{lat_str: "center"})
+        center = cell.sel({lat_str: "center"})
         if np.abs(center) == center_nearest_eq:
-            if cell.sel(**{lat_str: "edge_south"}) < 0:
+            if cell.sel({lat_str: "edge_south"}) < 0:
                 labels[i] = "sh_hadley"
                 # Once one Hadley cell has been found, assume the adjacent cell
                 # is the other one, provided it is physicaly close enough
                 if i != len(cells) - 1:
-                    lat_gap = cells[i + 1].sel(lat="edge_south") - cell.sel(
-                        lat="edge_north"
+                    lat_gap = cells[i + 1].sel({lat_str: "edge_south"}) - cell.sel(
+                        {lat_str: "edge_north"}
                     )
                     if lat_gap < max_lat_gap:
                         labels[i + 1] = "nh_hadley"
@@ -804,41 +844,44 @@ def _hadley_ferrel_cells(
 
 # Descending edge predictions based on baroclinic instability onset."""
 def fixed_ro_bci_edge_small_angle_lata0(
-    burg_num,
-    ross_num=1,
-    delta_v=DELTA_V,
-    c_descent=1,
-):
+    burg_num: ArrayLike,
+    ross_num: float = 1,
+    delta_v: float = DELTA_V,
+    c_descent: float = 1,
+) -> ArrayLike:
     """HC edge for fixed-Ro, BCI model with equatorial ascent."""
-    return c_descent * np.rad2deg(((burg_num * delta_v) / (2.0 * ross_num)) ** 0.25)
+    return cast(
+        ArrayLike,
+        c_descent * np.rad2deg(((burg_num * delta_v) / (2.0 * ross_num)) ** 0.25),
+    )
 
 
-def _fixed_ro_bci_edge(lat, ascentlat, h00lat):
+def _fixed_ro_bci_edge(lat: float, ascentlat: float, h00lat: float) -> float:
     """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
     sinlat = sindeg(lat)
     coslat = cosdeg(lat)
     term1 = sinlat**4
     term2 = -(sindeg(ascentlat) ** 2) * sinlat**2
     term3 = -(np.deg2rad(h00lat) ** 4) * coslat**2
-    return np.rad2deg(term1 + term2 + term3)
+    return cast(float, np.rad2deg(term1 + term2 + term3))
 
 
 _DEFAULT_ZERO_BOUNDS_GUESS_RANGE = np.arange(0.1, 90, 5)
 
 
 def fixed_ro_bci_edge(
-    ascentlat,
-    lat_fixed_ro_ann=None,
-    burg_num=None,
-    ross_num=1.0,
-    c_descent=1.0,
-    delta_v=DELTA_V,
-    height=HEIGHT_TROPO,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    zero_bounds_guess_range=None,
-):
+    ascentlat: ArrayLike,
+    lat_fixed_ro_ann: ArrayLike | None = None,
+    burg_num: float | None = None,
+    ross_num: float = 1.0,
+    c_descent: float = 1.0,
+    delta_v: float = DELTA_V,
+    height: float = HEIGHT_TROPO,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    zero_bounds_guess_range: Sequence[float] | np.ndarray | None = None,
+) -> ArrayLike:
     """Numerically solve fixed-Ro, 2-layer BCI model of HC edge."""
     if zero_bounds_guess_range is None:
         zero_bounds_guess_range = _DEFAULT_ZERO_BOUNDS_GUESS_RANGE
@@ -854,40 +897,48 @@ def fixed_ro_bci_edge(
             c_descent=c_descent,
         )
 
-    def _solver(lat_a, lat_h):
+    def _solver(lat_a: float, lat_h: float) -> float:
         # Start guess at the average of the two given latitudes.
         init_guess = 0.5 * (lat_a + lat_h)
-        return brentq_solver_sweep_param(
-            _fixed_ro_bci_edge,
-            lat_a,
-            init_guess,
-            zero_bounds_guess_range,
-            funcargs=(lat_h,),
+        # The solver returns a length-1 DataArray for scalar inputs; return
+        # the bare scalar so that ``np.vectorize`` can assemble the results.
+        return float(
+            brentq_solver_sweep_param(
+                _fixed_ro_bci_edge,
+                lat_a,
+                init_guess,
+                zero_bounds_guess_range,
+                funcargs=(lat_h,),
+            ).item()
         )
 
-    return xr.apply_ufunc(
-        _solver, ascentlat, lat_fixed_ro_ann, vectorize=True, dask="parallelized"
+    return cast(
+        ArrayLike,
+        xr.apply_ufunc(
+            _solver, ascentlat, lat_fixed_ro_ann, vectorize=True, dask="parallelized"
+        ),
     )
 
 
 def fixed_ro_bci_edge_small_angle(
-    ascentlat,
-    lat_fixed_ro_ann=None,
-    burg_num=None,
-    ross_num=1,
-    delta_v=DELTA_V,
-    c_descent=1.0,
-    height=HEIGHT_TROPO,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    ascentlat: ArrayLike,
+    lat_fixed_ro_ann: ArrayLike | None = None,
+    burg_num: float | None = None,
+    ross_num: float = 1,
+    delta_v: float = DELTA_V,
+    c_descent: float = 1.0,
+    height: float = HEIGHT_TROPO,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Small-angle solution for fixed-Ro, BCI model for HC descending edge.
 
     Both ascentlat and lat_fixed_ro_ann should be in degrees, not radians.
     And the return value is in degrees, not radians.
 
     """
+    lat_fixed_ro_ann4: ArrayLike
     if lat_fixed_ro_ann is None:
         if burg_num is None:
             burg_num = plan_burg_num(
@@ -898,44 +949,51 @@ def fixed_ro_bci_edge_small_angle(
         lat_fixed_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
 
     lat_a2 = np.deg2rad(ascentlat) ** 2
-    return c_descent * np.rad2deg(
-        np.sqrt(0.5 * lat_a2 + np.sqrt(0.25 * lat_a2**2 + lat_fixed_ro_ann4))
+    return cast(
+        ArrayLike,
+        c_descent
+        * np.rad2deg(
+            np.sqrt(0.5 * lat_a2 + np.sqrt(0.25 * lat_a2**2 + lat_fixed_ro_ann4))
+        ),
     )
 
 
 # TODO: for all below, correct the missing 2 factor multiplying Ro,
 # which I've corrected for above already.
 def lin_ro_bci_edge_small_angle_lata0(
-    burg_num,
-    ross_ascent,
-    ross_descent,
-    delta_v=DELTA_V,
-):
+    burg_num: ArrayLike,
+    ross_ascent: float,
+    ross_descent: float,
+    delta_v: float = DELTA_V,
+) -> ArrayLike:
     """Baroclinic instab. est. for cell edge, linear Ro profile."""
-    return np.rad2deg(
-        (3 * burg_num * delta_v / (ross_ascent + 2 * ross_descent)) ** 0.25
+    return cast(
+        ArrayLike,
+        np.rad2deg((3 * burg_num * delta_v / (ross_ascent + 2 * ross_descent)) ** 0.25),
     )
 
 
 # Edge solutions using supercriticality to predict ascent location.
-def lat_ascent_eta0_approx(therm_ro, c_ascent=1.0):
+def lat_ascent_eta0_approx(therm_ro: ArrayLike, c_ascent: float = 1.0) -> ArrayLike:
     """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
     if np.all(therm_ro == 0):
         return 0.0
-    return np.sign(therm_ro) * np.rad2deg(
-        c_ascent * (0.5 * np.abs(therm_ro)) ** (1.0 / 3.0)
+    return cast(
+        ArrayLike,
+        np.sign(therm_ro)
+        * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro)) ** (1.0 / 3.0)),
     )
 
 
 def fixed_ro_bci_edge_supercrit_ascent(
-    therm_ross,
-    max_lat=90,
-    c_ascent=1,
-    c_descent=1,
-    delta_v=DELTA_V,
-    delta_h=1.0 / 15.0,
-    ross_num=1,
-):
+    therm_ross: ArrayLike,
+    max_lat: float = 90,
+    c_ascent: float = 1,
+    c_descent: float = 1,
+    delta_v: float = DELTA_V,
+    delta_h: float = 1.0 / 15.0,
+    ross_num: float = 1,
+) -> ArrayLike:
     """Descending edge approx including theory for ascent lat.
 
     From Hill, Bordoni, and Mitchell, 2022, JAS, "A Theory for the Hadley Cell
@@ -955,8 +1013,13 @@ def fixed_ro_bci_edge_supercrit_ascent(
     term1 = (2 ** (4.0 / 3.0)) / (c_ascent**4)
     term2 = delta_v / (delta_h * sindeg(max_lat))
     term3 = 1.0 / (ross_num * (therm_ross ** (1.0 / 3.0)))
-    return c_descent * np.rad2deg(
-        np.deg2rad(lat_ascent) * np.sqrt(0.5 + np.sqrt(0.25 + term1 * term2 * term3))
+    return cast(
+        ArrayLike,
+        c_descent
+        * np.rad2deg(
+            np.deg2rad(lat_ascent)
+            * np.sqrt(0.5 + np.sqrt(0.25 + term1 * term2 * term3))
+        ),
     )
 
 
