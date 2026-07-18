@@ -16,21 +16,24 @@ import scipy.special
 import xarray as xr
 
 from puffins._typing import ArrayLike
-from puffins.constants import (
+
+# Import the constants from the module under test, not puffins.constants: lcl.py
+# deliberately keeps Romps's own optimized values, so the independent reference
+# reconstruction below must use that same set to validate the formulas. The
+# values themselves are pinned against the paper in TestRompsConstants.
+from puffins.lcl import (
     C_PD,
     C_PV,
     C_VL,
     C_VV,
     E_0V,
-    GRAV_EARTH,
+    GRAV,
     P_TRIP,
     R_D,
     R_V,
     T_TRIP,
-)
-from puffins.lcl import (
     gas_const_moist_air,
-    lift_cond_level,
+    height_lift_cond_level,
     pres_lift_cond_level,
     sat_vap_press_liq_wat,
     spec_heat_const_press_moist_air,
@@ -104,7 +107,7 @@ def _ref_lcl_height(
     vap_press = rel_hum * _ref_sat_vap_press(temp, p_trip=p_trip, e_0v=e_0v)
     c_pm = _ref_c_pm(press, vap_press)
     temp_lcl = _ref_temp_lcl(press, temp, rel_hum, p_trip=p_trip, e_0v=e_0v)
-    return z_0 + c_pm / GRAV_EARTH * (temp - temp_lcl)
+    return z_0 + c_pm / GRAV * (temp - temp_lcl)
 
 
 def _ref_pres_lcl(
@@ -129,6 +132,36 @@ KNOWN_POINTS = [
     (0.9e5, 290.0),
     (0.7e5, 270.0),
 ]
+
+
+# --- Romps constant set ----------------------------------------------------
+
+
+class TestRompsConstants:
+    """lcl.py deliberately uses Romps 2017's optimized constants, not the
+    general-purpose textbook values in puffins.constants (see the note in the
+    module). Pin them to the published values and guard the divergence.
+    """
+
+    def test_match_published_values(self) -> None:
+        assert P_TRIP == 611.65  # Eq. (7)
+        assert T_TRIP == 273.16  # Eq. (8)
+        assert E_0V == 2.3740e6  # Eq. (9)
+        assert R_D == 287.04  # Eq. (18)
+        assert R_V == 461.0  # Eq. (11)
+        assert C_VV == 1418.0  # Eq. (6)
+        assert C_VL == 4119.0  # Eq. (12)
+        assert C_PV == 1418.0 + 461.0  # c_pv = c_vv + R_v
+        assert C_PD == 719.0 + 287.04  # c_pa = c_va + R_a
+        assert GRAV == 9.81
+
+    def test_deliberately_differ_from_shared_constants(self) -> None:
+        """If someone "fixes" the module to import from puffins.constants, the
+        optimized fit is lost; this fails loudly to flag that."""
+        from puffins import constants as pc
+
+        assert C_VL != pc.C_VL  # 4119 (Romps) vs 4186 (textbook)
+        assert R_V != pc.R_V  # 461 vs 461.4
 
 
 # --- sat_vap_press_liq_wat -------------------------------------------------
@@ -216,31 +249,35 @@ class TestTempLiftCondLevel:
         )
 
 
-# --- lift_cond_level -------------------------------------------------------
+# --- height_lift_cond_level -------------------------------------------------------
 
 
-class TestLiftCondLevel:
+class TestHeightLiftCondLevel:
     @pytest.mark.parametrize("press,temp", KNOWN_POINTS)
     def test_known_value(self, press: float, temp: float) -> None:
-        result = lift_cond_level(press, temp, REL_HUM)
+        result = height_lift_cond_level(press, temp, REL_HUM)
         np.testing.assert_allclose(
             result, _ref_lcl_height(press, temp, REL_HUM), rtol=1e-12
         )
 
     def test_saturated_parcel_at_surface(self) -> None:
         """A saturated parcel has its LCL at the launch height z_0."""
-        np.testing.assert_allclose(lift_cond_level(PRESS, TEMP, 1.0), 0.0, atol=1e-6)
+        np.testing.assert_allclose(
+            height_lift_cond_level(PRESS, TEMP, 1.0), 0.0, atol=1e-6
+        )
 
     def test_z0_offset(self) -> None:
         """z_0 shifts the LCL height by a constant offset."""
         z_0 = 500.0
-        base = lift_cond_level(PRESS, TEMP, REL_HUM)
-        shifted = lift_cond_level(PRESS, TEMP, REL_HUM, z_0=z_0)
+        base = height_lift_cond_level(PRESS, TEMP, REL_HUM)
+        shifted = height_lift_cond_level(PRESS, TEMP, REL_HUM, z_0=z_0)
         np.testing.assert_allclose(shifted - base, z_0, rtol=1e-10)
 
     def test_drier_is_higher(self) -> None:
         """A drier parcel must rise farther to reach saturation."""
-        assert lift_cond_level(PRESS, TEMP, 0.3) > lift_cond_level(PRESS, TEMP, 0.9)
+        assert height_lift_cond_level(PRESS, TEMP, 0.3) > height_lift_cond_level(
+            PRESS, TEMP, 0.9
+        )
 
 
 # --- pres_lift_cond_level --------------------------------------------------
@@ -296,9 +333,9 @@ class TestConstantForwarding:
             alt, _ref_temp_lcl(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT), rtol=1e-12
         )
 
-    def test_lift_cond_level_forwards_p_trip(self) -> None:
-        alt = lift_cond_level(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
-        assert alt != lift_cond_level(PRESS, TEMP, REL_HUM)
+    def test_height_lift_cond_level_forwards_p_trip(self) -> None:
+        alt = height_lift_cond_level(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT)
+        assert alt != height_lift_cond_level(PRESS, TEMP, REL_HUM)
         np.testing.assert_allclose(
             alt,
             _ref_lcl_height(PRESS, TEMP, REL_HUM, p_trip=self.P_TRIP_ALT),
@@ -328,8 +365,8 @@ class TestConstantForwarding:
 
 @pytest.mark.parametrize(
     "func",
-    [temp_lift_cond_level, pres_lift_cond_level, lift_cond_level],
-    ids=["temp_lift_cond_level", "pres_lift_cond_level", "lift_cond_level"],
+    [temp_lift_cond_level, pres_lift_cond_level, height_lift_cond_level],
+    ids=["temp_lift_cond_level", "pres_lift_cond_level", "height_lift_cond_level"],
 )
 @pytest.mark.parametrize(
     "press,temp,rel_hum",

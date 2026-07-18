@@ -1,6 +1,10 @@
 #! /usr/bin/env python
 """Lifting condensation level, following Romps 2017.
 
+This module deliberately defines its own physical constants (below) with
+Romps's optimized values rather than importing from :mod:`puffins.constants`;
+see the comment on the constant block for the rationale.
+
 Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
 Journal of the Atmospheric Sciences 74 (12): 3891-3900.
 https://doi.org/10.1175/JAS-D-17-0102.1.
@@ -13,21 +17,28 @@ import numpy as np
 import scipy.special
 
 from ._typing import ArrayLike
-from .constants import (
-    C_PD,
-    C_PV,
-    C_VL,
-    C_VV,
-    E_0V,
-    GRAV_EARTH,
-    P_TRIP,
-    R_D,
-    R_V,
-    T_TRIP,
-)
 
-# Parameters
-GRAV = GRAV_EARTH
+# Physical constants, following Romps (2017) exactly.
+#
+# These DELIBERATELY differ from ``puffins.constants``.  Romps jointly optimized
+# R_V and C_VL (along with the ice values, unused here), together with the fixed
+# triple-point quantities, so that the analytic saturation-vapor-pressure
+# expression [Eq. (4)] matches the Wagner and Pruss (2002) laboratory data; that
+# fit is what gives the LCL its ~5 m accuracy.  Substituting the general-purpose
+# textbook values from ``puffins.constants`` (e.g. C_VL = 4186 vs. 4119 here, or
+# R_V = 461.4 vs. 461) would silently degrade that accuracy, so this module
+# keeps its own self-consistent set.  Equation numbers below are from Romps (2017).
+P_TRIP = 611.65  # Triple-point vapor pressure (Pa); Eq. (7).
+T_TRIP = 273.16  # Triple-point temperature (K); Eq. (8).
+E_0V = 2.3740e6  # Vapor-liquid internal-energy difference at T_TRIP (J/kg); Eq. (9).
+R_D = 287.04  # Specific gas constant of dry air (J/kg/K); Eq. (18).
+R_V = 461.0  # Specific gas constant of water vapor (J/kg/K); Eq. (11).
+C_VD = 719.0  # Specific heat of dry air at constant volume (J/kg/K); Eq. (19).
+C_VV = 1418.0  # Specific heat of water vapor at constant volume (J/kg/K); Eq. (6).
+C_VL = 4119.0  # Specific heat of liquid water (J/kg/K); Eq. (12).
+C_PD = C_VD + R_D  # Dry-air specific heat at constant pressure (= 1006.04 J/kg/K).
+C_PV = C_VV + R_V  # Water-vapor specific heat at constant pressure (= 1879.0 J/kg/K).
+GRAV = 9.81  # Gravitational acceleration (m/s^2); Romps (2017).
 
 
 def sat_vap_press_liq_wat(
@@ -191,7 +202,7 @@ def pres_lift_cond_level(
     return cast(ArrayLike, press * (temp_lcl / temp) ** (c_pm / r_m))
 
 
-def lift_cond_level(
+def height_lift_cond_level(
     press: ArrayLike,
     temp: ArrayLike,
     rel_hum: ArrayLike,
@@ -207,7 +218,10 @@ def lift_cond_level(
     e_0v: float = E_0V,
     grav: float = GRAV,
 ) -> ArrayLike:
-    """Lifting condensation level.  C.f. Romps 2017.
+    """Height of the lifting condensation level.  C.f. Romps 2017, Eq. (22c).
+
+    ``z_lcl = z_0 + (c_pm / grav) * (temp - temp_lcl)``, valid in a well-mixed
+    layer where the parcel's dry static energy is conserved.
 
     Romps, David M. 2017. "Exact Expression for the Lifting Condensation Level."
     Journal of the Atmospheric Sciences 74 (12): 3891-3900.
