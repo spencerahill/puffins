@@ -130,6 +130,7 @@ module = [
     "puffins.eofs",
     "puffins.hides",
     "puffins.interp",
+    "puffins.lcl",
     "puffins.longitude",
     "puffins.names",
     "puffins.num_solver",
