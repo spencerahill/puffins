@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-03-16 |
+| **Last updated** | 2026-07-18 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -59,40 +59,27 @@ editor support, catch bugs early, and serve as machine-readable documentation
 — especially valuable in a physics codebase where function signatures encode
 units and coordinate conventions.
 
-Suggested order (simplest → most complex):
+**Now tracked in detail by [Roadmap 003 — Type Hints](003-type-hints.md).**
+The per-module checklist lives there to avoid duplication.
 
-- [ ] `constants.py`, `names.py`, `longitude.py` — simple values and utilities
-- [ ] `calculus.py`, `interp.py`, `num_solver.py` — core numerical utilities
-- [ ] `dynamics.py`, `thermodynamics.py`, `vert_coords.py` — physics modules
-- [ ] `had_cell.py`, `grad_bal.py`, `eq_area.py` — climate dynamics
-- [ ] `held_hou_1980.py`, `lindzen_hou_1988.py`, `plumb_hou_1992.py` — theoretical models
-- [ ] Remaining modules (`stats.py`, `bootstrap.py`, `eofs.py`, `plotting.py`, etc.)
-- [ ] Add mypy to CI (initially non-blocking, then required)
+Status (2026-07-18): **20 of 30 modules fully annotated** under the
+`pyproject.toml` mypy strict overrides. mypy runs in CI but is still
+non-blocking (`continue-on-error: true`). Remaining: `budget_adj` (priority),
+`eq_area`, `grad_bal`, `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`,
+`plumb_hou_1992`, `fixed_temp_tropo`, `plotting`, `nb_utils`; then promote the
+mypy check to blocking and enable global strict mode.
 
 ## Phase 5: Test Coverage
 
-Current state: 1 test file (skipped without windspharm), effectively 0%
-coverage. Tests are essential for safe refactoring and verifying that type
-annotations don't change behavior.
+**Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
+The per-module checklist and testing strategies live there.
 
-Suggested priority order (core utilities first, then physics, then models):
-
-- [ ] `calculus.py` — differentiation, integration, surface area
-- [ ] `dynamics.py` — Coriolis, angular momentum, vorticity, Rossby number
-- [ ] `constants.py` — verify constant values against references
-- [ ] `names.py` — trivial but good for completeness
-- [ ] `interp.py` — interpolation utilities
-- [ ] `thermodynamics.py` — thermodynamic calculations
-- [ ] `had_cell.py` — streamfunction, cell strength/extent
-- [ ] `eq_area.py` — equal-area coordinate transforms
-- [ ] `grad_bal.py` — gradient wind balance
-- [ ] `held_hou_1980.py`, `lindzen_hou_1988.py`, `plumb_hou_1992.py` — theoretical models
-- [ ] `longitude.py`, `dates.py`, `num_solver.py` — smaller utility modules
-- [ ] `vert_coords.py`, `tropopause.py`, `lcl.py` — vertical coord / tropopause
-- [ ] `stats.py`, `bootstrap.py`, `eofs.py` — statistical tools
-- [ ] `plotting.py` — smoke tests for plot generation (image comparison optional)
-- [ ] `nb_utils.py` — notebook utilities (where testable)
-- [ ] `budget_adj.py` — already has tests; improve coverage
+Status (2026-07-18): from effectively 0% to **731 tests passing across 22 test
+files, 86% total line coverage**. 21 modules meet the ≥80% target; the
+remaining gap is the theoretical-model / climate-diagnostic cluster
+(`budget_adj`, `kuo_el`, `lindzen_hou_1988`, `grad_bal`, `fixed_temp_tropo`,
+`plumb_hou_1992`, `held_hou_1980`). A CI coverage gate (`--cov-fail-under`) is
+not yet enabled.
 
 Target: ≥80% line coverage for all modules except `plotting.py` and `nb_utils.py`.
 

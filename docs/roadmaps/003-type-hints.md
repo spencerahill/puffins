@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-17 |
+| **Last updated** | 2026-07-18 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -20,6 +20,15 @@ signatures encode units and coordinate conventions.
 - Type annotations on all function parameters and return values
 - Tests accompany each newly annotated module
 - mypy passes (initially non-blocking, eventually required in CI)
+
+## Progress
+
+**20 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-18. Remaining (10): `budget_adj` (priority — has a
+`no-any-return` error), `eq_area`, `grad_bal`, `kuo_el`, `held_hou_1980`,
+`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `plotting`,
+`nb_utils`. mypy is still non-blocking in CI; current source-file errors: 4
+(`budget_adj` ×1, `eq_area` ×2, `grad_bal` ×1).
 
 ---
 
@@ -54,7 +63,7 @@ signatures encode units and coordinate conventions.
 
 ## Group 4: Climate Dynamics
 
-- [ ] `had_cell.py` — Hadley cell / meridional overturning diagnostics
+- [x] `had_cell.py` — Hadley cell / meridional overturning diagnostics; type hints + tests added, `cell_edges_sigma` custom-dim fix and unused `frac_thresh` drop (PR #54). Surfaced three latent bugs filed as issues #55, #56, #57 (completed 2026-07-17)
 - [ ] `grad_bal.py` — gradient wind balance
 - [ ] `eq_area.py` — equal-area coordinate transformations
 - [x] `hides.py` — Hide's theorem (completed 2026-03-16)
@@ -67,14 +76,14 @@ signatures encode units and coordinate conventions.
 - [ ] `plumb_hou_1992.py` — Plumb-Hou 1992 model
 - [ ] `kuo_el.py` — Kuo-Eliassen equation solver
 - [ ] `fixed_temp_tropo.py` — fixed tropopause temperature model
-- [ ] `polar_amp.py` — polar amplification diagnostics
-- [ ] `therm_inert.py` — thermal inertia calculations
+- [x] `polar_amp.py` — polar amplification diagnostics; type hints + tests added, `denom_bounds` given teeth in tests (completed 2026-07-16)
+- [x] `therm_inert.py` — thermal inertia calculations; type hints + tests added, `temp_rad_eq_eff` annual-cycle coefficient and phase pinned (completed 2026-07-01)
 
 ## Group 6: Statistics & Analysis
 
 - [x] `stats.py` — statistical analysis tools; 66 tests added; fixed `rmse` (`squared=` removed in sklearn ≥1.4) and `quantile_regress` (returned a length-1 `coef_` array that broke `apply_ufunc`) to work with modern sklearn/numpy (completed 2026-07-16)
-- [ ] `bootstrap.py` — bootstrap methods
-- [ ] `eofs.py` — empirical orthogonal functions
+- [x] `bootstrap.py` — bootstrap methods; type hints + tests added, seedable `boot_risk_ratio`, wider `rand_states`, NaN handling (completed 2026-07-15)
+- [x] `eofs.py` — empirical orthogonal functions; type hints + tests added, `lat_str` coverage and unified RNG (completed 2026-07-13)
 - [ ] `budget_adj.py` — column budget adjustment (**priority**: has mypy `no-any-return` error)
 
 ## Group 7: Visualization & Notebooks

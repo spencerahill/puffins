@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-06-29 |
+| **Last updated** | 2026-07-18 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -13,15 +13,33 @@ Take puffins from near-zero test coverage to near-comprehensive coverage
 with best-practice infrastructure, targeting at least one test per public
 function and enforced coverage thresholds in CI.
 
-## Current State
+## Current State (as of 2026-07-18)
 
-- **13 test files**, covering 13 of ~31 modules
-- **448 tests passing** (1 skipped, 13 xfailed)
-- **~328 public functions**, many still untested
+- **22 test files**, covering 22 of 30 modules
+- **731 tests passing** (1 skipped, 13 xfailed)
+- **86% total line coverage**
 - CI workflow (`ci.yml`) and pytest configuration in `pyproject.toml` now exist (added in Roadmap 001)
 - pytest and pytest-cov are project dev dependencies
 
 The existing tests are well-structured and serve as good templates: they use xarray fixtures, descriptive test class names, and test both correctness and type contracts.
+
+### Coverage by module
+
+Meets the ≥80% success criterion (21 modules): `bootstrap` 100, `calculus`
+98, `constants` 100, `dates` 98, `dynamics` 99, `eofs` 100, `eq_area` 99,
+`had_cell` 87, `hides` 96, `interp` 99, `lcl` 100, `longitude` 88, `names`
+100, `num_solver` 98, `polar_amp` 100, `radiation` 100, `stats` 93,
+`therm_inert` 100, `thermodynamics` 96, `tropopause` 83, `vert_coords` 98.
+
+Below the bar — the remaining work (7 modules): `budget_adj` 11 (has a test
+file but minimal coverage), `kuo_el` 19, `lindzen_hou_1988` 36, `grad_bal`
+38, `fixed_temp_tropo` 39, `plumb_hou_1992` 50, `held_hou_1980` 54. The
+theoretical-model cluster (`held_hou_1980`, `lindzen_hou_1988`,
+`plumb_hou_1992`, `fixed_temp_tropo`, `kuo_el`) is the main untested frontier
+and overlaps with the untyped modules in [Roadmap 003](003-type-hints.md).
+
+Exempt per the success criterion: `plotting` 0 (smoke tests only), `nb_utils`
+47.
 
 ---
 
@@ -57,10 +75,10 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 |--------|-------------|----------------|--------|
 | `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write | — (no functions) |
 | `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent | — (no functions) |
-| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | Not started |
-| `thermodynamics.py` | 24 | Pure math; heavily used downstream | Not started |
-| `calculus.py` | 14 | Differentiation/integration — easy to validate against analytical solutions | Done (pre-existing) |
-| `num_solver.py` | 5 | Small module, testable against known roots | Not started |
+| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (58 tests, 99% cov) |
+| `thermodynamics.py` | 24 | Pure math; heavily used downstream | **Done** (60 tests, 96% cov) |
+| `calculus.py` | 14 | Differentiation/integration — easy to validate against analytical solutions | **Done** (98% cov) |
+| `num_solver.py` | 5 | Small module, testable against known roots | **Done** (25 tests, 98% cov) |
 | `dates.py` | 5 | Small, pure utilities | **Done** (20 tests, 2026-03-19) |
 | `longitude.py` | 3 + class | Small, self-contained | **Done** (51 tests, 2026-03-19) |
 

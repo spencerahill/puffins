@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Spencer A. Hill", email = "shill1@ccny.cuny.edu" }]
 keywords = ["climate", "science"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
   "Natural Language :: English",
@@ -45,6 +45,10 @@ dev = [
   "pytest",
   "pytest-cov",
   "ruff",
+]
+docs = [
+  "sphinx>=7",
+  "pydata-sphinx-theme>=0.15",
 ]
 
 [project.urls]
