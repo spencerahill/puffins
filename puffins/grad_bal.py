@@ -361,7 +361,13 @@ def grad_wind_cqe(
     r_v: float = R_V,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
-    """Gradient balanced zonal wind in convective quasi-equilibrium atmosphere."""
+    """Gradient balanced zonal wind in convective quasi-equilibrium atmosphere.
+
+    ``const_stab`` selects the branch by truthiness: a nonzero value is used
+    directly as the (constant) stability, while ``False`` (or ``0``/``0.0``)
+    routes to the ``temp_tropo`` branch, which then requires ``temp_tropo``.
+    Pass a nonzero float to specify a constant stability.
+    """
     numer: ArrayLike
     if const_stab:
         numer = c_p * const_stab

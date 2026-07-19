@@ -645,6 +645,36 @@ class TestPfullSimBurr:
                 rtol=1e-12,
             )
 
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_labeled_pfull_coordinate(self, increasing: bool) -> None:
+        """Works when ``pfull_ref`` carries a ``pfull`` dimension-coordinate.
+
+        Selecting the top half level and ``expand_dims``-ing it yields an
+        index-free length-1 ``pfull`` dimension. When ``pfull_not_top`` does
+        carry a ``pfull`` index (as it does whenever ``pfull_ref`` is labeled),
+        ``xr.concat`` used to raise "Dimension pfull already exists"; the top
+        level must be labeled to match. Second half of the issue #26 fix.
+
+        The check is against the coordinate-free result of the same call, so it
+        isolates the coordinate handling and does not depend on the raw-numpy
+        cross-check (which the decreasing ordering does not currently satisfy).
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
+        labeled_ref = pfull_ref.assign_coords({PFULL_STR: pfull_ref.values})
+
+        # Labeled input previously raised here; it must now succeed.
+        result = pfull_simm_burr(phalf, phalf_ref, labeled_ref)
+        baseline = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+
+        # The pfull coordinate is preserved, in order, from pfull_ref.
+        np.testing.assert_allclose(result[PFULL_STR].values, pfull_ref.values)
+        # Labeling pfull_ref must not change the computed pressures.
+        np.testing.assert_allclose(
+            result.transpose(PFULL_STR, ...).values,
+            baseline.transpose(PFULL_STR, ...).values,
+            rtol=1e-12,
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestFlipDim

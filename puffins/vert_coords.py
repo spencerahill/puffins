@@ -535,6 +535,13 @@ def pfull_simm_burr(
             pfull_str
         ),
     )
+    # If the working array carries a ``pfull`` dimension-coordinate, label the
+    # expanded top level to match ``pfull_not_top`` so ``xr.concat`` keeps a
+    # single consistent index instead of raising "Dimension pfull already
+    # exists" (issue #26 for coordinate-labeled inputs).
+    if pfull_str in pfull_not_top.coords:
+        top_coord = pfull_ref[pfull_str].isel({pfull_str: [ind_top]})
+        pfull_top = pfull_top.assign_coords({pfull_str: top_coord.values})
 
     if p_is_increasing:
         return cast(xr.DataArray, xr.concat([pfull_top, pfull_not_top], pfull_str))

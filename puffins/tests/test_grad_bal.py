@@ -553,11 +553,11 @@ class TestURceMinusUAmcCqe:
 class TestAbsVortZeroCrossCqe:
     """Thin composition of grad_wind_cqe -> abs_vort_from_u -> zero_cross_interp,
     restricted to the northern hemisphere. For a smooth, sub-critical RCE
-    profile the absolute vorticity stays positive, so the pipeline runs to
-    completion and the (separately tested) zero-cross finder reports no
-    crossing. An equator-free grid keeps grad_wind_cqe non-singular."""
+    profile the absolute vorticity never changes sign, so the (separately
+    tested) zero-cross finder finds no crossing and raises ``ValueError``. An
+    equator-free grid keeps grad_wind_cqe non-singular."""
 
-    def test_no_crossing_for_subcritical_profile(self) -> None:
+    def test_raises_when_no_crossing_for_subcritical_profile(self) -> None:
         lats = np.linspace(1.0, 40.0, 40)
         theta_b = _lat_da(lats, 340.0 - 0.1 * lats**2)
         with pytest.raises(ValueError, match="zero cross"):
