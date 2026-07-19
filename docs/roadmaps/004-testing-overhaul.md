@@ -15,12 +15,12 @@ function and enforced coverage thresholds in CI.
 
 ## Current State (as of 2026-07-19)
 
-- **22 test files**, covering 22 of 30 modules
-- **772 tests passing** (1 skipped, 10 xfailed)
+- **23 test files**, covering 23 of 30 modules
+- **781 tests passing** (1 skipped, 10 xfailed)
 - **88% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
-  (the 239 xarray FutureWarning/PendingDeprecationWarnings from `nb_utils`'s
-  bare `DataArray.argmax()` and `GroupBy.apply` were fixed).
+  (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
+  `nb_utils`'s bare `DataArray.argmax()` and `GroupBy.apply` were fixed).
 - CI workflow (`ci.yml`) and pytest configuration in `pyproject.toml` now exist (added in Roadmap 001)
 - pytest and pytest-cov are project dev dependencies
 
@@ -33,15 +33,18 @@ Meets the ≥80% success criterion (22 modules): `bootstrap` 100, `calculus`
 `grad_bal` 97, `had_cell` 87, `hides` 96, `interp` 99, `lcl` 100, `longitude`
 88, `names` 100, `num_solver` 98, `polar_amp` 100, `radiation` 100, `stats`
 93, `therm_inert` 100, `thermodynamics` 96, `tropopause` 83, `vert_coords`
-98.
+99.
 
-Below the bar — the remaining work (6 modules): `budget_adj` 11, `kuo_el` 19,
-`lindzen_hou_1988` 36, `fixed_temp_tropo` 39, `plumb_hou_1992` 50,
+Below the bar — the remaining work (6 modules): `budget_adj` 16, `kuo_el` 19,
+`lindzen_hou_1988` 36, `plumb_hou_1992` 78, `fixed_temp_tropo` 39,
 `held_hou_1980` 54. `budget_adj` has a full test file, but its numerical
 tests require `windspharm`/`pyspharm` (Fortran + legacy build tooling) which
 is not installed in CI, so they are skipped there and its coverage cannot
-rise without that dependency — a packaging limitation, not missing tests. The
-theoretical-model cluster (`held_hou_1980`, `lindzen_hou_1988`,
+rise without that dependency — a packaging limitation, not missing tests.
+`plumb_hou_1992` gained an initial `test_plumb_hou_1992.py` (2 tests) in PR
+#60 alongside the fix of a latent crash in `u_ph92_rce` (it forwarded an
+unsupported `plus_solution` kwarg to `grad_wind_bouss`), lifting it to 78%.
+The theoretical-model cluster (`held_hou_1980`, `lindzen_hou_1988`,
 `plumb_hou_1992`, `fixed_temp_tropo`, `kuo_el`) is the main untested frontier
 and overlaps with the untyped modules in [Roadmap 003](003-type-hints.md).
 
