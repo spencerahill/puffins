@@ -526,13 +526,16 @@ def pfull_simm_burr(
         pfull_not_top = pfull.isel({pfull_str: slice(None, -1)})
 
     top_lev_factor = float(pfull_ref[ind_top] / phalf_ref[ind_phalf_next_to_top])
+    # Selecting a single half level drops the vertical dimension, leaving a
+    # scalar-coordinate ``pfull``; ``expand_dims`` restores it as a length-1
+    # dimension so it concatenates cleanly with ``pfull_not_top`` (issue #26).
     pfull_top = cast(
         xr.DataArray,
-        top_lev_factor * phalf.isel({phalf_str: ind_phalf_next_to_top}),
+        (top_lev_factor * phalf.isel({phalf_str: ind_phalf_next_to_top})).expand_dims(
+            pfull_str
+        ),
     )
-    pfull_top.coords[pfull_str] = pfull_ref.isel({pfull_str: ind_top})
 
-    # Known xr.concat bug with modern xarray: see issue #26.
     if p_is_increasing:
         return cast(xr.DataArray, xr.concat([pfull_top, pfull_not_top], pfull_str))
     return cast(xr.DataArray, xr.concat([pfull_not_top, pfull_top], pfull_str))

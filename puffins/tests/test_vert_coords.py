@@ -608,22 +608,12 @@ class TestPfullSimBurr:
         )
         return phalf_2d, phalf_ref, pfull_ref
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_returns_dataarray(self) -> None:
         """Return type is DataArray."""
         phalf, phalf_ref, pfull_ref = self._make_inputs()
         result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
         assert isinstance(result, xr.DataArray)
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_increasing_pressure(self) -> None:
         """Works with increasing pressure ordering."""
         phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=True)
@@ -631,17 +621,29 @@ class TestPfullSimBurr:
         assert result.sizes[PFULL_STR] == pfull_ref.sizes[PFULL_STR]
         assert (result.values > 0).all()
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_decreasing_pressure(self) -> None:
         """Works with decreasing pressure ordering."""
         phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=False)
         result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
         assert result.sizes[PFULL_STR] == pfull_ref.sizes[PFULL_STR]
         assert (result.values > 0).all()
+
+    def test_matches_raw_numpy_values(self) -> None:
+        """The xarray wrapper reproduces the raw-numpy reference values.
+
+        ``pfull_vals_simm_burr`` computes the Simmons-Burridge full-level
+        pressures directly from numpy; ``pfull_simm_burr`` must return the
+        same numbers on every column (issue #26 regression test).
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=True)
+        result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+        expected = pfull_vals_simm_burr(phalf.isel(time=0), phalf_ref, pfull_ref)
+        for t in range(phalf.sizes["time"]):
+            np.testing.assert_allclose(
+                result.isel(time=t).transpose(PFULL_STR).values,
+                expected,
+                rtol=1e-12,
+            )
 
 
 # ---------------------------------------------------------------------------

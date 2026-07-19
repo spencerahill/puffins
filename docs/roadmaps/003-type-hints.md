@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-18 |
+| **Last updated** | 2026-07-19 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -23,12 +23,11 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**20 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-18. Remaining (10): `budget_adj` (priority — has a
-`no-any-return` error), `eq_area`, `grad_bal`, `kuo_el`, `held_hou_1980`,
-`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `plotting`,
-`nb_utils`. mypy is still non-blocking in CI; current source-file errors: 4
-(`budget_adj` ×1, `eq_area` ×2, `grad_bal` ×1).
+**22 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-19. Remaining (8): `eq_area` (priority — has two
+`no-any-return` errors), `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`,
+`plumb_hou_1992`, `fixed_temp_tropo`, `plotting`, `nb_utils`. mypy is still
+non-blocking in CI; current source-file errors: 2 (`eq_area` ×2).
 
 ---
 
@@ -64,7 +63,7 @@ overrides) as of 2026-07-18. Remaining (10): `budget_adj` (priority — has a
 ## Group 4: Climate Dynamics
 
 - [x] `had_cell.py` — Hadley cell / meridional overturning diagnostics; type hints + tests added, `cell_edges_sigma` custom-dim fix and unused `frac_thresh` drop (PR #54). Surfaced three latent bugs filed as issues #55, #56, #57 (completed 2026-07-17)
-- [ ] `grad_bal.py` — gradient wind balance
+- [x] `grad_bal.py` — gradient wind balance; type hints + 40 tests added (raw-numpy known-value reconstructions across the angular-momentum, uniform-Ro, linear-Ro, Boussinesq, CQE, and pressure-coordinate functions, mutation-checked). Fixed the `no-any-return` error and surfaced/fixed a latent bug: `u_rce_minus_u_amc_cqe` always crashed because it forwarded an unsupported `plus_solution` kwarg to `grad_wind_cqe` (dropped the dead parameter). Added a guard requiring `temp_tropo` when `const_stab` is False (completed 2026-07-19)
 - [ ] `eq_area.py` — equal-area coordinate transformations
 - [x] `hides.py` — Hide's theorem (completed 2026-03-16)
 - [x] `radiation.py` — Planck function and Wien's law (completed 2026-03-18)
@@ -84,7 +83,7 @@ overrides) as of 2026-07-18. Remaining (10): `budget_adj` (priority — has a
 - [x] `stats.py` — statistical analysis tools; 66 tests added; fixed `rmse` (`squared=` removed in sklearn ≥1.4) and `quantile_regress` (returned a length-1 `coef_` array that broke `apply_ufunc`) to work with modern sklearn/numpy (completed 2026-07-16)
 - [x] `bootstrap.py` — bootstrap methods; type hints + tests added, seedable `boot_risk_ratio`, wider `rand_states`, NaN handling (completed 2026-07-15)
 - [x] `eofs.py` — empirical orthogonal functions; type hints + tests added, `lat_str` coverage and unified RNG (completed 2026-07-13)
-- [ ] `budget_adj.py` — column budget adjustment (**priority**: has mypy `no-any-return` error)
+- [x] `budget_adj.py` — column budget adjustment; already had type hints, so fixed the `no-any-return` error (line 69) and added it to the mypy strict overrides. Its tests require `windspharm`/`pyspharm` (Fortran + legacy build tooling), which is not installed in CI, so they remain skipped there and coverage stays low — this is a packaging limitation, not missing tests (completed 2026-07-19)
 
 ## Group 7: Visualization & Notebooks
 
