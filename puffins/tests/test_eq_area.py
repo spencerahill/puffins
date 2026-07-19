@@ -188,7 +188,9 @@ class TestUniformRoEqualArea:
         theta = pot_temp_mean_ro(
             np.rad2deg(lat_rad), ro, therm, DELTA_H, theta_ref=THETA_REF
         )
-        cont, integ_rel = _equal_area_residuals(lat_rad, theta, DELTA_H, THETA_REF)
+        cont, integ_rel = _equal_area_residuals(
+            lat_rad, np.asarray(theta), DELTA_H, THETA_REF
+        )
         np.testing.assert_allclose(cont, 0.0, atol=1e-9)
         assert abs(integ_rel) < 1e-6
 
@@ -578,7 +580,9 @@ class TestLinRoEqualArea:
             delta_h=DELTA_H,
             theta_ref=THETA_REF,
         )
-        cont, integ_rel = _equal_area_residuals(lat_rad, theta, DELTA_H, THETA_REF)
+        cont, integ_rel = _equal_area_residuals(
+            lat_rad, np.asarray(theta), DELTA_H, THETA_REF
+        )
         np.testing.assert_allclose(cont, 0.0, atol=1e-9)
         assert abs(integ_rel) < 1e-6
 

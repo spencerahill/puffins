@@ -133,6 +133,7 @@ module = [
     "puffins.dates",
     "puffins.dynamics",
     "puffins.eofs",
+    "puffins.eq_area",
     "puffins.grad_bal",
     "puffins.had_cell",
     "puffins.hides",

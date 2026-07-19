@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-18 |
+| **Last updated** | 2026-07-19 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -62,12 +62,12 @@ units and coordinate conventions.
 **Now tracked in detail by [Roadmap 003 — Type Hints](003-type-hints.md).**
 The per-module checklist lives there to avoid duplication.
 
-Status (2026-07-18): **20 of 30 modules fully annotated** under the
-`pyproject.toml` mypy strict overrides. mypy runs in CI but is still
-non-blocking (`continue-on-error: true`). Remaining: `budget_adj` (priority),
-`eq_area`, `grad_bal`, `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`,
-`plumb_hou_1992`, `fixed_temp_tropo`, `plotting`, `nb_utils`; then promote the
-mypy check to blocking and enable global strict mode.
+Status (2026-07-19): **23 of 30 modules fully annotated** under the
+`pyproject.toml` mypy strict overrides, with **0 source-file mypy errors**.
+mypy runs in CI but is still non-blocking (`continue-on-error: true`).
+Remaining: `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
+`fixed_temp_tropo`, `plotting`, `nb_utils`; then promote the mypy check to
+blocking and enable global strict mode.
 
 ## Phase 5: Test Coverage
 

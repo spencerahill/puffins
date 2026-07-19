@@ -23,11 +23,12 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**22 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-19. Remaining (8): `eq_area` (priority — has two
-`no-any-return` errors), `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`,
-`plumb_hou_1992`, `fixed_temp_tropo`, `plotting`, `nb_utils`. mypy is still
-non-blocking in CI; current source-file errors: 2 (`eq_area` ×2).
+**23 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-19. Remaining (7): `kuo_el`, `held_hou_1980`,
+`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `plotting`,
+`nb_utils` — all in the theoretical-model / visualization cluster. mypy is
+still non-blocking in CI; source-file errors are now **0** (the two
+`eq_area` `no-any-return` errors were resolved when it was annotated).
 
 ---
 
@@ -64,7 +65,7 @@ non-blocking in CI; current source-file errors: 2 (`eq_area` ×2).
 
 - [x] `had_cell.py` — Hadley cell / meridional overturning diagnostics; type hints + tests added, `cell_edges_sigma` custom-dim fix and unused `frac_thresh` drop (PR #54). Surfaced three latent bugs filed as issues #55, #56, #57 (completed 2026-07-17)
 - [x] `grad_bal.py` — gradient wind balance; type hints + 40 tests added (raw-numpy known-value reconstructions across the angular-momentum, uniform-Ro, linear-Ro, Boussinesq, CQE, and pressure-coordinate functions, mutation-checked). Fixed the `no-any-return` error and surfaced/fixed a latent bug: `u_rce_minus_u_amc_cqe` always crashed because it forwarded an unsupported `plus_solution` kwarg to `grad_wind_cqe` (dropped the dead parameter). Added a guard requiring `temp_tropo` when `const_stab` is False (completed 2026-07-19)
-- [ ] `eq_area.py` — equal-area coordinate transformations
+- [x] `eq_area.py` — equal-area analytical solutions and numerical solvers; type hints added across all ~33 functions (already at 99% test coverage, so no new tests). Resolved the module's two `no-any-return` errors: the cell-edge closed forms now wrap their `np.rad2deg(...)` returns in `float()`, and `_checked_root_solve` casts `scipy`'s `sol.x`. Untyped numpy/scipy return values are contained with `cast(ArrayLike, ...)` on the flux/wind fields (matching `grad_bal`) and `float(...)` on the scalar residual/integrand helpers; the RCE-profile callbacks are typed `Callable[[float], float]` (completed 2026-07-19)
 - [x] `hides.py` — Hide's theorem (completed 2026-03-16)
 - [x] `radiation.py` — Planck function and Wien's law (completed 2026-03-18)
 
