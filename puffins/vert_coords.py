@@ -439,11 +439,25 @@ def pfull_vals_simm_burr(
     --------
     pfull_simm_burr : xarray-aware wrapper.
     """
-    dp_vals = phalf.diff(phalf_str).values
-    # Above means vertically above (i.e. lower pressure).
-    phalf_above = phalf.isel({phalf_str: slice(None, -1)})
-    phalf_below = phalf.isel({phalf_str: slice(1, None)})
+    # ``above`` means vertically above (i.e. lower pressure). Handle both
+    # pressure orderings the same way as ``pfull_simm_burr`` (issue #26): the
+    # top level is index 0 when pressure increases with index and index -1 when
+    # it decreases. Without this branch the decreasing case mislabeled both the
+    # top and the surface level.
+    if float(phalf_ref[0]) < float(phalf_ref[1]):
+        phalf_above = phalf.isel({phalf_str: slice(None, -1)})
+        phalf_below = phalf.isel({phalf_str: slice(1, None)})
+        ind_top = 0
+        ind_phalf_next_to_top = 1
+    else:
+        phalf_above = phalf.isel({phalf_str: slice(1, None)})
+        phalf_below = phalf.isel({phalf_str: slice(None, -1)})
+        ind_top = -1
+        ind_phalf_next_to_top = -2
 
+    # Layer thickness with ``below`` (higher pressure) minus ``above`` (lower
+    # pressure), so it is positive regardless of ordering.
+    dp_vals = phalf_below.values - phalf_above.values
     dlog_phalf_vals = np.log(phalf_below.values / phalf_above.values)
     phalf_over_dp_vals = phalf_above.values / dp_vals
 
@@ -451,8 +465,10 @@ def pfull_vals_simm_burr(
 
     ln_pfull_vals = np.log(phalf_below.values) - alpha_vals
     pfull_vals: npt.NDArray[np.float64] = np.exp(ln_pfull_vals)
-    top_lev_factor = float(pfull_ref[0] / phalf_ref[1])
-    pfull_vals[0] = phalf.isel({phalf_str: 1}) * top_lev_factor
+    top_lev_factor = float(pfull_ref[ind_top] / phalf_ref[ind_phalf_next_to_top])
+    pfull_vals[ind_top] = (
+        phalf.isel({phalf_str: ind_phalf_next_to_top}).values * top_lev_factor
+    )
     return pfull_vals
 
 
