@@ -19,6 +19,7 @@ References
 """
 
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import numpy as np
 import scipy.integrate
@@ -52,11 +53,11 @@ from .nb_utils import sin2deg
 
 # Analytical solutions for annual-mean, uniform-Ro, small-angle case
 def eq_pot_temp_mean_ro(
-    ross_num,
-    therm_ross_num,
-    delta_h,
-    theta_ref=THETA_REF,
-):
+    ross_num: float,
+    therm_ross_num: float,
+    delta_h: float,
+    theta_ref: float = THETA_REF,
+) -> float:
     """Equatorial potential temperature for the fixed-Ro, small-angle, equal-area solution.
 
     Parameters
@@ -81,12 +82,12 @@ def eq_pot_temp_mean_ro(
 
 
 def pot_temp_mean_ro(
-    lat,
-    ross_num,
-    therm_ross_num,
-    delta_h,
-    theta_ref=THETA_REF,
-):
+    lat: ArrayLike,
+    ross_num: float,
+    therm_ross_num: float,
+    delta_h: float,
+    theta_ref: float = THETA_REF,
+) -> ArrayLike:
     """Potential temperature profile for the fixed-Ro, small-angle, equal-area solution.
 
     Parameters
@@ -123,9 +124,9 @@ def pot_temp_mean_ro(
 
 
 def cell_edge_mean_ro(
-    ross_num,
-    therm_ross_num,
-):
+    ross_num: float,
+    therm_ross_num: float,
+) -> float:
     """Hadley cell edge for the fixed-Ro, small-angle, equatorial-ascent case.
 
     Parameters
@@ -140,19 +141,19 @@ def cell_edge_mean_ro(
     float
         Cell edge latitude (degrees).
     """
-    return np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5)
+    return float(np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5))
 
 
 def heat_flux_mean_ro(
-    lat,
-    therm_ross_num,
-    ross_num,
-    theta_ref=THETA_REF,
-    radius=RAD_EARTH,
-    height=HEIGHT_TROPO,
-    delta_h=DELTA_H,
-    tau=20 * 86400,
-):
+    lat: ArrayLike,
+    therm_ross_num: float,
+    ross_num: float,
+    theta_ref: float = THETA_REF,
+    radius: float = RAD_EARTH,
+    height: float = HEIGHT_TROPO,
+    delta_h: float = DELTA_H,
+    tau: float = 20 * 86400,
+) -> ArrayLike:
     """Meridional heat flux for the fixed-Ro, small-angle, equatorial-ascent case.
 
     Parameters
@@ -189,24 +190,25 @@ def heat_flux_mean_ro(
         * (therm_ross_num / ross_num) ** 1.5
     )
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
-    return (
+    return cast(
+        ArrayLike,
         theta_ref
         * prefac
-        * (lat_div_lat_ro - 2 * lat_div_lat_ro**3 + lat_div_lat_ro**5)
+        * (lat_div_lat_ro - 2 * lat_div_lat_ro**3 + lat_div_lat_ro**5),
     )
 
 
 def mom_flux_mean_ro(
-    lat,
-    therm_ross_num,
-    ross_num,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    height=HEIGHT_TROPO,
-    delta_h=DELTA_H,
-    delta_v=DELTA_V,
-    tau=20 * 86400,
-):
+    lat: ArrayLike,
+    therm_ross_num: float,
+    ross_num: float,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    height: float = HEIGHT_TROPO,
+    delta_h: float = DELTA_H,
+    delta_v: float = DELTA_V,
+    tau: float = 20 * 86400,
+) -> ArrayLike:
     """Meridional momentum flux for the fixed-Ro, small-angle, equatorial-ascent case.
 
     Parameters
@@ -238,28 +240,29 @@ def mom_flux_mean_ro(
     prefac = rot_rate * radius**2 * height * delta_h / (6 * tau * delta_v)
     latrad = np.deg2rad(lat)
     latrad2 = latrad**2
-    return (
+    return cast(
+        ArrayLike,
         prefac
         * latrad**3
         * (
             5 * therm_ross_num / 3
             - ross_num * latrad2 * (2 - 3 * ross_num * latrad2 / (5 * therm_ross_num))
-        )
+        ),
     )
 
 
 def u_sfc_mean_ro(
-    lat,
-    therm_ross_num,
-    ross_num,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    height=HEIGHT_TROPO,
-    delta_h=DELTA_H,
-    delta_v=DELTA_V,
-    tau=20 * 86400,
-    drag_coeff=0.005,
-):
+    lat: ArrayLike,
+    therm_ross_num: float,
+    ross_num: float,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    height: float = HEIGHT_TROPO,
+    delta_h: float = DELTA_H,
+    delta_v: float = DELTA_V,
+    tau: float = 20 * 86400,
+    drag_coeff: float = 0.005,
+) -> ArrayLike:
     """Surface zonal wind for the fixed-Ro, small-angle, equatorial-ascent case.
 
     Parameters
@@ -294,14 +297,15 @@ def u_sfc_mean_ro(
         -25 * rot_rate * radius * height * delta_h / (18 * drag_coeff * tau * delta_v)
     )
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
-    return (
+    return cast(
+        ArrayLike,
         prefac
         * (therm_ross_num / ross_num) ** 2
         * (
             lat_div_lat_ro**2
             - (10 / 3) * lat_div_lat_ro**4
             + (7 / 3) * lat_div_lat_ro**6
-        )
+        ),
     )
 
 
@@ -330,13 +334,13 @@ def cell_edge_lin_ro_lata0_full(
     """
     delro = ross_ascent - ross_descent
 
-    def _term_latd4(ross_ascent, delro):
+    def _term_latd4(ross_ascent: float, delro: float) -> float:
         return ross_ascent**2 / 7 - ross_ascent * delro / 6 + 4 * delro**2 / 81
 
-    def _term_latd2(ross_ascent, delro):
+    def _term_latd2(ross_ascent: float, delro: float) -> float:
         return 2 * ross_ascent / 5 - 2 * delro / 9
 
-    def _term_latd0(therm_ro):
+    def _term_latd0(therm_ro: float) -> float:
         return -2 * therm_ro / 3
 
     poly_obj = np.polynomial.Polynomial(
@@ -356,10 +360,12 @@ def cell_edge_lin_ro_lata0_full(
             "no non-negative real root for the cell-edge polynomial in "
             f"latitude-squared; got roots {roots}"
         )
-    return np.rad2deg(max(real_roots.max(), 0.0) ** 0.5)
+    return float(np.rad2deg(max(real_roots.max(), 0.0) ** 0.5))
 
 
-def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: float, ross_ascent: float, ross_descent: float
+) -> float:
     """Leading-order approximation for cell edge with a linear Rossby number profile.
 
     Parameters
@@ -381,16 +387,18 @@ def cell_edge_lin_ro_lata0_approx(therm_ross, ross_ascent, ross_descent):
     cell_edge_lin_ro_lata0_full : Full (non-approximate) solution.
     """
     delta_ross = ross_ascent - ross_descent
-    return np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5)
+    return float(
+        np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5)
+    )
 
 
 def eq_pot_temp_lin_ro_lata0_small_ang(
-    therm_ross,
-    ross_ascent,
-    ross_descent,
-    delta_h=DELTA_H,
-    theta_ref=THETA_REF,
-):
+    therm_ross: float,
+    ross_ascent: float,
+    ross_descent: float,
+    delta_h: float = DELTA_H,
+    theta_ref: float = THETA_REF,
+) -> float:
     """Equatorial potential temperature for the small-angle, linear-Ro, equal-area case.
 
     Parameters
@@ -417,23 +425,26 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
         np.deg2rad(cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent))
         ** 2
     )
-    return theta_ref * (
-        1
-        + delta_h / 3
-        - latd2
+    return float(
+        theta_ref
         * (
-            delta_h
-            + latd2
-            / burg_num
+            1
+            + delta_h / 3
+            - latd2
             * (
-                4 * delro / 15
-                - ross_ascent / 2
-                + (
-                    -(ross_ascent**2) / 6
-                    + 4 * ross_ascent * delro / 21
-                    - (delro**2) / 18
+                delta_h
+                + latd2
+                / burg_num
+                * (
+                    4 * delro / 15
+                    - ross_ascent / 2
+                    + (
+                        -(ross_ascent**2) / 6
+                        + 4 * ross_ascent * delro / 21
+                        - (delro**2) / 18
+                    )
+                    * latd2
                 )
-                * latd2
             )
         )
     )
@@ -517,25 +528,39 @@ def _checked_root_solve(
     sol = scipy.optimize.root(func, init_guess, args=args)
     if not sol.success:
         raise RuntimeError(f"equal-area solver did not converge: {sol.message}")
-    return sol.x
+    return cast(np.ndarray, sol.x)
 
 
 # Original Lindzen and Hou 1988.
-def _theta_hat_amc_lh88(sinlat, sinlat_1, theta_hat_1, theta_ref, del_h_over_ro):
+def _theta_hat_amc_lh88(
+    sinlat: float,
+    sinlat_1: float,
+    theta_hat_1: float,
+    theta_ref: float,
+    del_h_over_ro: float,
+) -> float:
     """Lindzen and Hou 1988 Eq. 7."""
     return theta_hat_1 - 0.5 * theta_ref * del_h_over_ro * (
         sinlat**2 - sinlat_1**2
     ) ** 2 / (1 - sinlat**2)
 
 
-def _theta_hat_rce_lh88(sinlat, sinlat_0, theta_ref, delta_h):
+def _theta_hat_rce_lh88(
+    sinlat: float, sinlat_0: float, theta_ref: float, delta_h: float
+) -> float:
     """Lindzen and Hou 1988 Eq. 1b."""
     return theta_ref * (1 + delta_h / 3.0 - delta_h * (sinlat - sinlat_0) ** 2)
 
 
 def _lh88_amc_rce_theta_hat_diff(
-    sinlat, sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro
-):
+    sinlat: float,
+    sinlat_0: float,
+    sinlat_1: float,
+    theta_hat_1: float,
+    theta_ref: float,
+    delta_h: float,
+    thermal_ro: float,
+) -> float:
     """Difference between AMC and RCE depth-averaged potential temperatures.
 
     At the cell edges, this difference is zero by construction.
@@ -547,17 +572,31 @@ def _lh88_amc_rce_theta_hat_diff(
 
 
 def _lh88_cons_energy_integral(
-    sinlat_edge, sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro
-):
-    return scipy.integrate.quad(
-        _lh88_amc_rce_theta_hat_diff,
-        sinlat_1,
-        sinlat_edge,
-        args=(sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro),
-    )[0]
+    sinlat_edge: float,
+    sinlat_0: float,
+    sinlat_1: float,
+    theta_hat_1: float,
+    theta_ref: float,
+    delta_h: float,
+    thermal_ro: float,
+) -> float:
+    return float(
+        scipy.integrate.quad(
+            _lh88_amc_rce_theta_hat_diff,
+            sinlat_1,
+            sinlat_edge,
+            args=(sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro),
+        )[0]
+    )
 
 
-def _lh88_model(x, sinlat_0, theta_ref, delta_h, thermal_ro):
+def _lh88_model(
+    x: np.ndarray,
+    sinlat_0: float,
+    theta_ref: float,
+    delta_h: float,
+    thermal_ro: float,
+) -> np.ndarray:
     """Matrix representation of the Lindzen-Hou 1988 equal-area model.
 
     Parameters
@@ -586,8 +625,12 @@ def _lh88_model(x, sinlat_0, theta_ref, delta_h, thermal_ro):
 
 
 def equal_area_lh88(
-    init_guess, sinlat_0, theta_ref=THETA_REF, delta_h=DELTA_H, thermal_ro=0.15
-):
+    init_guess: Sequence[float] | np.ndarray,
+    sinlat_0: float,
+    theta_ref: float = THETA_REF,
+    delta_h: float = DELTA_H,
+    thermal_ro: float = 0.15,
+) -> np.ndarray:
     """Solve the Lindzen-Hou 1988 equal-area model numerically.
 
     Finds the winter cell edge, shared inner edge, summer cell edge,
@@ -626,19 +669,19 @@ def equal_area_lh88(
 
 # Modified LH88: fixed lapse rate and tropopause temperature.
 def _lh88_amc_rce_theta_diff_fixed_tt(
-    sinlat,
-    sinlat_0,
-    sinlat_1,
-    temp_sfc_1,
-    theta_ref,
-    delta_h,
-    gamma,
-    dtheta_dts,
-    temp_tropo,
-    rot_rate,
-    radius,
-    c_p,
-):
+    sinlat: float,
+    sinlat_0: float,
+    sinlat_1: float,
+    temp_sfc_1: float,
+    theta_ref: float,
+    delta_h: float,
+    gamma: float,
+    dtheta_dts: float,
+    temp_tropo: float,
+    rot_rate: float,
+    radius: float,
+    c_p: float,
+) -> float:
     """Difference between AMC and RCE wind in Lindzen and Hou 1988 model,
     but assuming that the tropopause temperature is fixed, rather than
     the standard Boussinesq assumption that tropopause height is fixed.
@@ -664,55 +707,57 @@ def _lh88_amc_rce_theta_diff_fixed_tt(
         height=1.0,
         delta_h=delta_h,
     )
-    return theta_avg_amc - theta_avg_rce
+    return float(theta_avg_amc - theta_avg_rce)
 
 
 def _lh88_cons_energy_integral_fixed_tt(
-    sinlat_edge,
-    sinlat_0,
-    sinlat_1,
-    temp_sfc_1,
-    theta_ref,
-    delta_h,
-    gamma,
-    dtheta_dts,
-    temp_tropo,
-    rot_rate,
-    radius,
-    c_p,
-):
-    return scipy.integrate.quad(
-        _lh88_amc_rce_theta_diff_fixed_tt,
-        sinlat_1,
-        sinlat_edge,
-        args=(
-            sinlat_0,
+    sinlat_edge: float,
+    sinlat_0: float,
+    sinlat_1: float,
+    temp_sfc_1: float,
+    theta_ref: float,
+    delta_h: float,
+    gamma: float,
+    dtheta_dts: float,
+    temp_tropo: float,
+    rot_rate: float,
+    radius: float,
+    c_p: float,
+) -> float:
+    return float(
+        scipy.integrate.quad(
+            _lh88_amc_rce_theta_diff_fixed_tt,
             sinlat_1,
-            temp_sfc_1,
-            theta_ref,
-            delta_h,
-            gamma,
-            dtheta_dts,
-            temp_tropo,
-            rot_rate,
-            radius,
-            c_p,
-        ),
-    )[0]
+            sinlat_edge,
+            args=(
+                sinlat_0,
+                sinlat_1,
+                temp_sfc_1,
+                theta_ref,
+                delta_h,
+                gamma,
+                dtheta_dts,
+                temp_tropo,
+                rot_rate,
+                radius,
+                c_p,
+            ),
+        )[0]
+    )
 
 
 def _lh88_model_fixed_tt(
-    x,
-    sinlat_0,
-    theta_ref,
-    delta_h,
-    gamma,
-    dtheta_dts,
-    temp_tropo,
-    rot_rate,
-    radius,
-    c_p,
-):
+    x: np.ndarray,
+    sinlat_0: float,
+    theta_ref: float,
+    delta_h: float,
+    gamma: float,
+    dtheta_dts: float,
+    temp_tropo: float,
+    rot_rate: float,
+    radius: float,
+    c_p: float,
+) -> np.ndarray:
     """LH88 equal area, assuming fixed lapse rate and tropopause temperature.
 
     Parameters
@@ -757,17 +802,17 @@ def _lh88_model_fixed_tt(
 
 
 def equal_area_lh88_fixed_temp_tropo(
-    init_guess,
-    sinlat_0,
-    theta_ref=THETA_REF,
-    delta_h=DELTA_H,
-    gamma=1.0,
-    dtheta_dts=1.0,
-    temp_tropo=TEMP_TROPO,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    c_p=C_P,
-):
+    init_guess: Sequence[float] | np.ndarray,
+    sinlat_0: float,
+    theta_ref: float = THETA_REF,
+    delta_h: float = DELTA_H,
+    gamma: float = 1.0,
+    dtheta_dts: float = 1.0,
+    temp_tropo: float = TEMP_TROPO,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    c_p: float = C_P,
+) -> np.ndarray:
     """Solve the LH88 equal-area model with fixed tropopause temperature.
 
     Variant of the Lindzen-Hou 1988 model that assumes a fixed lapse rate
@@ -823,8 +868,13 @@ def equal_area_lh88_fixed_temp_tropo(
 
 # Boussinesq, generic RCE field (rather than that from Lindzen and Hou 1988)
 def _amc_rce_theta_diff_bouss(
-    sinlat, sinlat_1, theta_1, theta_ref, del_h_over_ro, _theta_rce_func
-):
+    sinlat: float,
+    sinlat_1: float,
+    theta_1: float,
+    theta_ref: float,
+    del_h_over_ro: float,
+    _theta_rce_func: Callable[[float], float],
+) -> float:
     """Difference between AMC and RCE wind for a generic RCE wind field
 
     At the cell edges, this difference is zero by construction.
@@ -836,17 +886,29 @@ def _amc_rce_theta_diff_bouss(
 
 
 def _cons_energy_integral_bouss(
-    sinlat_edge, sinlat_1, theta_1, theta_ref, del_h_over_ro, _theta_rce_func
-):
-    return scipy.integrate.quad(
-        _amc_rce_theta_diff_bouss,
-        sinlat_1,
-        sinlat_edge,
-        args=(sinlat_1, theta_1, theta_ref, del_h_over_ro, _theta_rce_func),
-    )[0]
+    sinlat_edge: float,
+    sinlat_1: float,
+    theta_1: float,
+    theta_ref: float,
+    del_h_over_ro: float,
+    _theta_rce_func: Callable[[float], float],
+) -> float:
+    return float(
+        scipy.integrate.quad(
+            _amc_rce_theta_diff_bouss,
+            sinlat_1,
+            sinlat_edge,
+            args=(sinlat_1, theta_1, theta_ref, del_h_over_ro, _theta_rce_func),
+        )[0]
+    )
 
 
-def _equal_area_model_bouss(x, theta_ref, del_h_over_ro, _theta_rce_func):
+def _equal_area_model_bouss(
+    x: np.ndarray,
+    theta_ref: float,
+    del_h_over_ro: float,
+    _theta_rce_func: Callable[[float], float],
+) -> np.ndarray:
     """Matrix representation of the equal area model for any given RCE field
 
     Parameters
@@ -872,7 +934,12 @@ def _equal_area_model_bouss(x, theta_ref, del_h_over_ro, _theta_rce_func):
     return np.array([x0, x1, x2, x3])
 
 
-def equal_area_bouss(init_guess, theta_ref, del_h_over_ro, _theta_rce_func):
+def equal_area_bouss(
+    init_guess: Sequence[float] | np.ndarray,
+    theta_ref: float,
+    del_h_over_ro: float,
+    _theta_rce_func: Callable[[float], float],
+) -> np.ndarray:
     """Boussinesq equal-area model for arbitrary RCE potential temperatures.
 
     Solves the equal-area constraint system for the Boussinesq case with
@@ -913,43 +980,70 @@ def equal_area_bouss(init_guess, theta_ref, del_h_over_ro, _theta_rce_func):
 
 # Convective quasi-equilibrium atmosphere, general RCE profile
 def _amc_rce_theta_diff_cqe(
-    sinlat, sinlat_1, theta_1, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func
-):
+    sinlat: float,
+    sinlat_1: float,
+    theta_1: float,
+    sfc_trop_diff: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+    _theta_rce_func: Callable[[float], float],
+) -> float:
     """Difference between AMC and RCE wind for a generic RCE wind field
 
     At the cell edges, this difference is zero by construction.
 
     """
-    return pot_temp_amc_cqe(
-        sin2deg(sinlat),
-        sin2deg(sinlat_1),
-        theta_1,
-        sfc_trop_diff,
-        c_p=c_p,
-        radius=radius,
-        rot_rate=rot_rate,
-    ) - _theta_rce_func(sinlat)
+    return float(
+        pot_temp_amc_cqe(
+            sin2deg(sinlat),
+            sin2deg(sinlat_1),
+            theta_1,
+            sfc_trop_diff,
+            c_p=c_p,
+            radius=radius,
+            rot_rate=rot_rate,
+        )
+        - _theta_rce_func(sinlat)
+    )
 
 
 def _cons_energy_integral_cqe(
-    sinlat_edge,
-    sinlat_1,
-    theta_1,
-    sfc_trop_diff,
-    c_p,
-    radius,
-    rot_rate,
-    _theta_rce_func,
-):
-    return scipy.integrate.quad(
-        _amc_rce_theta_diff_cqe,
-        sinlat_1,
-        sinlat_edge,
-        args=(sinlat_1, theta_1, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func),
-    )[0]
+    sinlat_edge: float,
+    sinlat_1: float,
+    theta_1: float,
+    sfc_trop_diff: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+    _theta_rce_func: Callable[[float], float],
+) -> float:
+    return float(
+        scipy.integrate.quad(
+            _amc_rce_theta_diff_cqe,
+            sinlat_1,
+            sinlat_edge,
+            args=(
+                sinlat_1,
+                theta_1,
+                sfc_trop_diff,
+                c_p,
+                radius,
+                rot_rate,
+                _theta_rce_func,
+            ),
+        )[0]
+    )
 
 
-def _equal_area_model_cqe(x, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func):
+def _equal_area_model_cqe(
+    x: np.ndarray,
+    sfc_trop_diff: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+    _theta_rce_func: Callable[[float], float],
+) -> np.ndarray:
     """Matrix representation of the equal area model for any given RCE field
 
     Parameters
@@ -972,7 +1066,14 @@ def _equal_area_model_cqe(x, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_fu
     return np.array([x0, x1, x2, x3])
 
 
-def equal_area_cqe(init_guess, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func):
+def equal_area_cqe(
+    init_guess: Sequence[float] | np.ndarray,
+    sfc_trop_diff: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+    _theta_rce_func: Callable[[float], float],
+) -> np.ndarray:
     """CQE equal-area model for arbitrary RCE potential temperatures.
 
     Solves the equal-area constraint system under the convective
@@ -1011,18 +1112,18 @@ def equal_area_cqe(init_guess, sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_
 
 # CQE, fixed tropopause temperature.
 def _theta_hat_amc_rce_diff_cqe_fixed_tt(
-    sinlat,
-    sinlat_1,
-    theta_1,
-    theta_rce_func,
-    theta_guesses,
-    temp_tropo,
-    rel_hum,
-    pressure,
-    c_p,
-    radius,
-    rot_rate,
-):
+    sinlat: float,
+    sinlat_1: float,
+    theta_1: float,
+    theta_rce_func: Callable[[float], float],
+    theta_guesses: np.ndarray,
+    temp_tropo: float,
+    rel_hum: float,
+    pressure: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+) -> float:
     """Difference between AMC and RCE wind for a generic RCE wind field
 
     At the cell edges, this difference is zero by construction.
@@ -1047,48 +1148,50 @@ def _theta_hat_amc_rce_diff_cqe_fixed_tt(
 
 
 def _cons_energy_integral_cqe_fixed_tt(
-    sinlat_edge,
-    sinlat_1,
-    theta_1,
-    theta_rce_func,
-    theta_guesses,
-    temp_tropo,
-    rel_hum,
-    pressure,
-    c_p,
-    radius,
-    rot_rate,
-):
-    return scipy.integrate.quad(
-        _theta_hat_amc_rce_diff_cqe_fixed_tt,
-        sinlat_1,
-        sinlat_edge,
-        args=(
+    sinlat_edge: float,
+    sinlat_1: float,
+    theta_1: float,
+    theta_rce_func: Callable[[float], float],
+    theta_guesses: np.ndarray,
+    temp_tropo: float,
+    rel_hum: float,
+    pressure: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+) -> float:
+    return float(
+        scipy.integrate.quad(
+            _theta_hat_amc_rce_diff_cqe_fixed_tt,
             sinlat_1,
-            theta_1,
-            theta_rce_func,
-            theta_guesses,
-            temp_tropo,
-            rel_hum,
-            pressure,
-            c_p,
-            radius,
-            rot_rate,
-        ),
-    )[0]
+            sinlat_edge,
+            args=(
+                sinlat_1,
+                theta_1,
+                theta_rce_func,
+                theta_guesses,
+                temp_tropo,
+                rel_hum,
+                pressure,
+                c_p,
+                radius,
+                rot_rate,
+            ),
+        )[0]
+    )
 
 
 def _eq_area_cqe_fixed_tt(
-    x,
-    theta_rce_func,
-    theta_guesses,
-    temp_tropo,
-    rel_hum,
-    pressure,
-    c_p,
-    radius,
-    rot_rate,
-):
+    x: np.ndarray,
+    theta_rce_func: Callable[[float], float],
+    theta_guesses: np.ndarray,
+    temp_tropo: float,
+    rel_hum: float,
+    pressure: float,
+    c_p: float,
+    radius: float,
+    rot_rate: float,
+) -> np.ndarray:
     """Matrix representation of the equal area model for any given RCE field
 
     Parameters
@@ -1123,16 +1226,16 @@ def _eq_area_cqe_fixed_tt(
 
 
 def equal_area_cqe_fixed_tt(
-    init_guess,
-    theta_rce_func,
-    theta_guesses,
-    temp_tropo=TEMP_TROPO,
-    rel_hum=REL_HUM,
-    pressure=P0,
-    c_p=C_P,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-):
+    init_guess: Sequence[float] | np.ndarray,
+    theta_rce_func: Callable[[float], float],
+    theta_guesses: np.ndarray,
+    temp_tropo: float = TEMP_TROPO,
+    rel_hum: float = REL_HUM,
+    pressure: float = P0,
+    c_p: float = C_P,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+) -> np.ndarray:
     """CQE equal-area model with fixed tropopause temperature.
 
     Solves the equal-area constraint system under the convective
