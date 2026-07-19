@@ -127,11 +127,13 @@ ignore_missing_imports = true
 module = [
     "puffins._typing",
     "puffins.bootstrap",
+    "puffins.budget_adj",
     "puffins.calculus",
     "puffins.constants",
     "puffins.dates",
     "puffins.dynamics",
     "puffins.eofs",
+    "puffins.grad_bal",
     "puffins.had_cell",
     "puffins.hides",
     "puffins.interp",

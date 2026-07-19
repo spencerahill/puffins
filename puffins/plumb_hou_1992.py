@@ -64,7 +64,6 @@ def u_ph92_rce(
         grav=grav,
         rot_rate=rot_rate,
         radius=radius,
-        plus_solution=True,
     )
 
 

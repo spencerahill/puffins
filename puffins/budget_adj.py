@@ -1,5 +1,7 @@
 """Column budget adjustment quantities."""
 
+from typing import cast
+
 import numpy as np
 import windspharm.xarray
 import xarray as xr
@@ -66,4 +68,6 @@ def resid_after_col_adj(
     """
     vecwind = windspharm.xarray.VectorWind(u_col_adjusted, v_col_adjusted)
     div_col_adjusted = vecwind.divergence()
-    return tendency + div_col_adjusted - source
+    # ``windspharm`` is untyped, so ``divergence()`` is inferred as ``Any``;
+    # the result is a DataArray by construction.
+    return cast(xr.DataArray, tendency + div_col_adjusted - source)

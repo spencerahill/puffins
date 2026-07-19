@@ -531,10 +531,15 @@ class TestPfullFromPhalfAvg:
 class TestPfullValsSimBurr:
     """Tests for pfull_vals_simm_burr."""
 
-    def _make_inputs(self) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    def _make_inputs(
+        self, increasing: bool = True
+    ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
         """Create valid inputs for Simmons-Burridge calculation."""
         phalf_vals = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
         pfull_vals = 0.5 * (phalf_vals[:-1] + phalf_vals[1:])
+        if not increasing:
+            phalf_vals = phalf_vals[::-1]
+            pfull_vals = pfull_vals[::-1]
         phalf = xr.DataArray(phalf_vals, dims=[PHALF_STR])
         phalf_ref = phalf.copy()
         pfull_ref = xr.DataArray(pfull_vals, dims=[PFULL_STR])
@@ -552,18 +557,36 @@ class TestPfullValsSimBurr:
         result = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref)
         assert len(result) == len(phalf) - 1
 
-    def test_values_positive(self) -> None:
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_values_positive(self, increasing: bool) -> None:
         """All computed pressures are positive."""
-        phalf, phalf_ref, pfull_ref = self._make_inputs()
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
         result = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref)
         assert (result > 0).all()
 
-    def test_values_between_half_levels(self) -> None:
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_values_between_half_levels(self, increasing: bool) -> None:
         """Full-level pressures lie between adjacent half-level pressures."""
-        phalf, phalf_ref, pfull_ref = self._make_inputs()
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
         result = pfull_vals_simm_burr(phalf, phalf_ref, pfull_ref)
         for i in range(len(result)):
-            assert phalf.values[i] <= result[i] <= phalf.values[i + 1]
+            lo = min(phalf.values[i], phalf.values[i + 1])
+            hi = max(phalf.values[i], phalf.values[i + 1])
+            assert lo <= result[i] <= hi
+
+    def test_order_invariance(self) -> None:
+        """Reversing the vertical ordering reverses the output.
+
+        Guards the decreasing-pressure branch: the top level is index -1 (not
+        0) when pressure decreases with index, so the raw values must mirror
+        the increasing case rather than mislabel the top and surface levels
+        (issue #26).
+        """
+        phalf_i, phr_i, pfr_i = self._make_inputs(increasing=True)
+        phalf_d, phr_d, pfr_d = self._make_inputs(increasing=False)
+        inc = pfull_vals_simm_burr(phalf_i, phr_i, pfr_i)
+        dec = pfull_vals_simm_burr(phalf_d, phr_d, pfr_d)
+        np.testing.assert_allclose(dec, inc[::-1], rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -608,22 +631,12 @@ class TestPfullSimBurr:
         )
         return phalf_2d, phalf_ref, pfull_ref
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_returns_dataarray(self) -> None:
         """Return type is DataArray."""
         phalf, phalf_ref, pfull_ref = self._make_inputs()
         result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
         assert isinstance(result, xr.DataArray)
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_increasing_pressure(self) -> None:
         """Works with increasing pressure ordering."""
         phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=True)
@@ -631,17 +644,60 @@ class TestPfullSimBurr:
         assert result.sizes[PFULL_STR] == pfull_ref.sizes[PFULL_STR]
         assert (result.values > 0).all()
 
-    @pytest.mark.xfail(
-        reason="Pre-existing xr.concat bug (#26): pfull_top has 'pfull' as "
-        "scalar coordinate not dimension; modern xarray raises ValueError.",
-        strict=True,
-    )
     def test_decreasing_pressure(self) -> None:
         """Works with decreasing pressure ordering."""
         phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=False)
         result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
         assert result.sizes[PFULL_STR] == pfull_ref.sizes[PFULL_STR]
         assert (result.values > 0).all()
+
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_matches_raw_numpy_values(self, increasing: bool) -> None:
+        """The xarray wrapper reproduces the raw-numpy reference values.
+
+        ``pfull_vals_simm_burr`` computes the Simmons-Burridge full-level
+        pressures directly from numpy; ``pfull_simm_burr`` must return the
+        same numbers on every column, for both pressure orderings (issue #26
+        regression test).
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
+        result = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+        expected = pfull_vals_simm_burr(phalf.isel(time=0), phalf_ref, pfull_ref)
+        for t in range(phalf.sizes["time"]):
+            np.testing.assert_allclose(
+                result.isel(time=t).transpose(PFULL_STR).values,
+                expected,
+                rtol=1e-12,
+            )
+
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_labeled_pfull_coordinate(self, increasing: bool) -> None:
+        """Works when ``pfull_ref`` carries a ``pfull`` dimension-coordinate.
+
+        Selecting the top half level and ``expand_dims``-ing it yields an
+        index-free length-1 ``pfull`` dimension. When ``pfull_not_top`` does
+        carry a ``pfull`` index (as it does whenever ``pfull_ref`` is labeled),
+        ``xr.concat`` used to raise "Dimension pfull already exists"; the top
+        level must be labeled to match. Second half of the issue #26 fix.
+
+        The check is against the coordinate-free result of the same call, so it
+        isolates the coordinate handling from the pressure values themselves.
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
+        labeled_ref = pfull_ref.assign_coords({PFULL_STR: pfull_ref.values})
+
+        # Labeled input previously raised here; it must now succeed.
+        result = pfull_simm_burr(phalf, phalf_ref, labeled_ref)
+        baseline = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+
+        # The pfull coordinate is preserved, in order, from pfull_ref.
+        np.testing.assert_allclose(result[PFULL_STR].values, pfull_ref.values)
+        # Labeling pfull_ref must not change the computed pressures.
+        np.testing.assert_allclose(
+            result.transpose(PFULL_STR, ...).values,
+            baseline.transpose(PFULL_STR, ...).values,
+            rtol=1e-12,
+        )
 
 
 # ---------------------------------------------------------------------------

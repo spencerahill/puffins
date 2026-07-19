@@ -107,7 +107,7 @@ def groupby_apply_func(
     return (
         ds.stack(**{stacked_dim: groupby_dims})
         .groupby(stacked_dim)
-        .apply(func_on_ds)
+        .map(func_on_ds)
         .unstack(stacked_dim)
     )
 
@@ -131,15 +131,18 @@ def apply_maybe_groupby(func, non_groupby_dims, arrs, args=None, kwargs=None):
 # Find locations of array extrema and nearest neighbors.
 def max_and_argmax(arr, do_min=False):
     """Get extremum value and associated coordinate values."""
-    method = arr.argmin if do_min else arr.argmax
-    indexes = np.unravel_index(method(), arr.shape)
+    # Operate on the underlying array: a bare ``DataArray.argmax()`` (no
+    # ``dim``/``axis``) is deprecated and slated to change its return type.
+    # ``nan``-aware to match the skipna=True default of ``DataArray.argmax``.
+    flat_index = np.nanargmin(arr.data) if do_min else np.nanargmax(arr.data)
+    indexes = np.unravel_index(flat_index, arr.shape)
     return arr[indexes]
 
 
 def max_and_argmax_along_dim(dataset, dim, do_min=False):
     """Extremum and its coords for each value of a dimension."""
-    grouped = dataset.groupby(dim, squeeze=False)
-    return grouped.apply(max_and_argmax, do_min=do_min)
+    grouped = dataset.groupby(dim)
+    return grouped.map(max_and_argmax, do_min=do_min)
 
 
 def find_nearest(arr, value):

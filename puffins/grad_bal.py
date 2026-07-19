@@ -1,7 +1,10 @@
 #! /usr/bin/env python
 """Gradient balance and thermal wind balance."""
 
+from typing import cast
+
 import numpy as np
+import xarray as xr
 
 from ._typing import ArrayLike
 from .calculus import lat_deriv
@@ -26,28 +29,51 @@ from .thermodynamics import temp_from_equiv_pot_temp
 
 
 # Angular momentum conserving wind.
-def u_ang_mom_cons(lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_ang_mom_cons(
+    lats: ArrayLike,
+    lat_ascent: ArrayLike,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Angular momentum conserving zonal wind."""
     coslat = cosdeg(lats)
-    return rot_rate * radius * ((cosdeg(lat_ascent) ** 2 - coslat**2) / coslat)
+    return cast(
+        ArrayLike, rot_rate * radius * ((cosdeg(lat_ascent) ** 2 - coslat**2) / coslat)
+    )
 
 
 def u_ang_mom_cons_small_ang(
-    lats, lat_ascent, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
-):
+    lats: ArrayLike,
+    lat_ascent: ArrayLike,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Angular momentum conserving zonal wind in the small-angle limit"""
-    return rot_rate * radius * (np.deg2rad(lats) ** 2 - np.deg2rad(lat_ascent) ** 2)
+    return cast(
+        ArrayLike,
+        rot_rate * radius * (np.deg2rad(lats) ** 2 - np.deg2rad(lat_ascent) ** 2),
+    )
 
 
 # Fields corresponding to a specified, meridionally uniform Rossby number.
-def u_unif_ro(lat, lat_ascent, ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_unif_ro(
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    ross_num: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Zonal wind for a specified uniform local Rossby number"""
     return ross_num * u_ang_mom_cons(lat, lat_ascent, rot_rate=rot_rate, radius=radius)
 
 
 def u_unif_ro_small_ang(
-    lat, lat_ascent, ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    ross_num: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Zonal wind for a specified uniform local Rossby number, small-angle limit"""
     return ross_num * u_ang_mom_cons_small_ang(
         lat, lat_ascent, rot_rate=rot_rate, radius=radius
@@ -55,51 +81,62 @@ def u_unif_ro_small_ang(
 
 
 def abs_ang_mom_unif_ro(
-    lat, lat_ascent, ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    ross_num: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Absolute angular momentum for a given Rossby number."""
-    return (
+    return cast(
+        ArrayLike,
         rot_rate
         * radius**2
-        * ((1 - ross_num) * cosdeg(lat) ** 2 + ross_num * cosdeg(lat_ascent) ** 2)
+        * ((1 - ross_num) * cosdeg(lat) ** 2 + ross_num * cosdeg(lat_ascent) ** 2),
     )
 
 
 def pot_temp_avg_unif_ro(
-    lat,
-    lat_ascent,
-    pot_temp_ascent,
-    ross_num,
-    height=10e3,
-    theta_ref=THETA_REF,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    grav=GRAV_EARTH,
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    pot_temp_ascent: float,
+    ross_num: float,
+    height: float = 10e3,
+    theta_ref: float = THETA_REF,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
     """Potential temperature in gradient balance with fixed-Ro u wind."""
     prefactor = ross_num * rot_rate**2 * radius**2 / (2 * grav * height)
     coslat = cosdeg(lat)
     cosascent = cosdeg(lat_ascent)
     cos_ratio = cosascent / coslat
-    return pot_temp_ascent - theta_ref * prefactor * (
-        (2 - ross_num) * coslat**2
-        + cosascent**2
-        * (4 * (1 - ross_num) * np.log(cos_ratio) + ross_num * (cos_ratio) ** 2 - 2)
+    return cast(
+        ArrayLike,
+        pot_temp_ascent
+        - theta_ref
+        * prefactor
+        * (
+            (2 - ross_num) * coslat**2
+            + cosascent**2
+            * (4 * (1 - ross_num) * np.log(cos_ratio) + ross_num * (cos_ratio) ** 2 - 2)
+        ),
     )
 
 
 def pot_temp_avg_unif_ro_small_ang(
-    lat,
-    lat_ascent,
-    pot_temp_ascent,
-    ross_num,
-    burg_num=None,
-    height=10e3,
-    theta_ref=THETA_REF,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    grav=GRAV_EARTH,
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    pot_temp_ascent: float,
+    ross_num: float,
+    burg_num: float | None = None,
+    height: float = 10e3,
+    theta_ref: float = THETA_REF,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
     """Small-angle approx for pot. temp. in balance w/ fixed-Ro u wind."""
     if burg_num is None:
         burg_num = plan_burg_num(height, grav, rot_rate, radius)
@@ -113,16 +150,16 @@ def pot_temp_avg_unif_ro_small_ang(
 
 
 def pot_temp_avg_unif_ro_small_ang_eq_ascent(
-    lat,
-    pot_temp_equator,
-    ross_num=1,
-    theta_ref=THETA_REF,
-    burg_num=None,
-    height=10e3,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    grav=GRAV_EARTH,
-):
+    lat: ArrayLike,
+    pot_temp_equator: float,
+    ross_num: float = 1,
+    theta_ref: float = THETA_REF,
+    burg_num: float | None = None,
+    height: float = 10e3,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
     """Small-angle, ann. mean. pot. temp. balanced w/ fixed-Ro u"""
     if burg_num is None:
         burg_num = plan_burg_num(height, grav, rot_rate, radius)
@@ -133,14 +170,14 @@ def pot_temp_avg_unif_ro_small_ang_eq_ascent(
 
 # Fields corresponding to a Rossby number varying linearly in latitude.
 def u_lin_ro(
-    lat,
-    lat_ascent,
-    lat_descent,
-    ross_ascent,
-    ross_descent,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    lat_descent: ArrayLike,
+    ross_ascent: float,
+    ross_descent: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     r"""Zonal wind for Rossby number linear in sin(latitude).
 
     Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
@@ -151,20 +188,27 @@ def u_lin_ro(
     """
     u_ro_a = u_unif_ro(lat, lat_ascent, ross_ascent, rot_rate=rot_rate, radius=radius)
     sinlat = sindeg(lat)
-    return u_ro_a - 2 * rot_rate * radius * (ross_ascent - ross_descent) / (
-        3 * sindeg(lat_descent) * cosdeg(lat)
-    ) * (sinlat**3 - sindeg(lat_ascent) ** 3)
+    return cast(
+        ArrayLike,
+        u_ro_a
+        - 2
+        * rot_rate
+        * radius
+        * (ross_ascent - ross_descent)
+        / (3 * sindeg(lat_descent) * cosdeg(lat))
+        * (sinlat**3 - sindeg(lat_ascent) ** 3),
+    )
 
 
 def u_lin_ro_small_ang(
-    lat,
-    lat_ascent,
-    lat_descent,
-    ross_ascent,
-    ross_descent,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    lat: ArrayLike,
+    lat_ascent: ArrayLike,
+    lat_descent: ArrayLike,
+    ross_ascent: float,
+    ross_descent: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     r"""Small-angle zonal wind for Rossby number linear in latitude.
 
     Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
@@ -178,8 +222,15 @@ def u_lin_ro_small_ang(
     )
     delta_ro = ross_ascent - ross_descent
     latrad = np.deg2rad(lat)
-    return u_ro_a - 2 * delta_ro * rot_rate * radius / (3 * np.deg2rad(lat_descent)) * (
-        latrad**3 - np.deg2rad(lat_ascent) ** 3
+    return cast(
+        ArrayLike,
+        u_ro_a
+        - 2
+        * delta_ro
+        * rot_rate
+        * radius
+        / (3 * np.deg2rad(lat_descent))
+        * (latrad**3 - np.deg2rad(lat_ascent) ** 3),
     )
 
 
@@ -211,25 +262,26 @@ def pot_temp_lin_ro_lata0_small_ang(
     delro = ross_ascent - ross_descent
     latrad = np.deg2rad(lat)
     latd_rad = np.deg2rad(lat_descent)
-    return pot_temp_lat0 - theta_ref * (latrad**4) / burg_num * (
+    pot_temp: ArrayLike = pot_temp_lat0 - theta_ref * (latrad**4) / burg_num * (
         ross_ascent / 2
         - 4 * delro * latrad / (15 * latd_rad)
         + (ross_ascent**2) * (latrad**2) / 6
         - 4 * delro * ross_ascent * (latrad**3) / (21 * latd_rad)
         + (delro**2) * (latrad**4) / (18 * latd_rad**2)
     )
+    return pot_temp
 
 
 # Boussinesq atmospheres.
 def grad_wind_bouss(
-    lats,
-    height,
-    theta_ref,
-    dtheta_dlat,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    lats: ArrayLike,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: ArrayLike,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Gradient wind in balance with a given potential temperature profile."""
     coslat = cosdeg(lats)
     sqrt_fac = (
@@ -238,20 +290,20 @@ def grad_wind_bouss(
         * dtheta_dlat
         / (theta_ref * rot_rate**2 * radius**2 * coslat * sindeg(lats))
     )
-    return rot_rate * radius * coslat * ((1 - sqrt_fac) ** 0.5 - 1)
+    return cast(ArrayLike, rot_rate * radius * coslat * ((1 - sqrt_fac) ** 0.5 - 1))
 
 
 def pot_temp_avg_amc_bouss(
-    lat,
-    lat_max,
-    pot_temp_max,
-    pot_temp_ref,
-    height,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    grav=GRAV_EARTH,
-    extra_factor=1.0,
-):
+    lat: ArrayLike,
+    lat_max: ArrayLike,
+    pot_temp_max: float,
+    pot_temp_ref: float,
+    height: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+    extra_factor: float = 1.0,
+) -> ArrayLike:
     """Thermal field in gradient balance with angular momentum conserving wind.
 
     I.e. Eq. (7) of Lindzen and Hou 1988.  Holds for Boussinesq atmosphere.
@@ -259,20 +311,20 @@ def pot_temp_avg_amc_bouss(
     """
     chi = -1 * extra_factor * ((rot_rate**2 * radius**2) / (2.0 * grav * height))
     numerator = (sindeg(lat) ** 2 - sindeg(lat_max) ** 2) ** 2
-    arr = pot_temp_max + pot_temp_ref * chi * numerator / cosdeg(lat) ** 2
+    arr: ArrayLike = pot_temp_max + pot_temp_ref * chi * numerator / cosdeg(lat) ** 2
     return arr
 
 
 def u_rce_minus_u_amc_bouss(
-    lats,
-    lat_max,
-    height,
-    theta_ref,
-    dtheta_dlat,
-    grav=GRAV_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-):
+    lats: ArrayLike,
+    lat_max: ArrayLike,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: ArrayLike,
+    grav: float = GRAV_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """RCE minus AMC zonal wind for Boussinesq fluid."""
     coslat = cosdeg(lats)
     sqrt_fac = (
@@ -281,37 +333,47 @@ def u_rce_minus_u_amc_bouss(
         * dtheta_dlat
         / (coslat * sindeg(lats) * theta_ref * rot_rate**2 * radius**2)
     )
-    return (
+    return cast(
+        ArrayLike,
         rot_rate
         * radius
         * coslat
-        * ((1 - sqrt_fac) ** 0.5 - cosdeg(lat_max) ** 2 / coslat**2)
+        * ((1 - sqrt_fac) ** 0.5 - cosdeg(lat_max) ** 2 / coslat**2),
     )
 
 
 # Convective quasi-equilibrium (CQE) atmospheres.
 def grad_wind_cqe(
-    theta_b,
-    temp_tropo=None,
-    const_stab=False,
-    c_p=C_P,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    compute_temp_sfc=False,
-    rel_hum=0.7,
-    pressure=P0,
-    p0=P0,
-    tot_wat_mix_ratio=None,
-    c_liq=4185.5,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-    lat_str=LAT_STR,
-):
-    """Gradient balanced zonal wind in convective quasi-equilibrium atmosphere."""
+    theta_b: xr.DataArray,
+    temp_tropo: float | None = None,
+    const_stab: float | bool = False,
+    c_p: float = C_P,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    compute_temp_sfc: bool = False,
+    rel_hum: float = 0.7,
+    pressure: float = P0,
+    p0: float = P0,
+    tot_wat_mix_ratio: float | None = None,
+    c_liq: float = 4185.5,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
+    """Gradient balanced zonal wind in convective quasi-equilibrium atmosphere.
+
+    ``const_stab`` selects the branch by truthiness: a nonzero value is used
+    directly as the (constant) stability, while ``False`` (or ``0``/``0.0``)
+    routes to the ``temp_tropo`` branch, which then requires ``temp_tropo``.
+    Pass a nonzero float to specify a constant stability.
+    """
+    numer: ArrayLike
     if const_stab:
         numer = c_p * const_stab
     else:
+        if temp_tropo is None:
+            raise ValueError("`temp_tropo` is required when `const_stab` is False.")
         if compute_temp_sfc:
             temp_sfc = temp_from_equiv_pot_temp(
                 theta_b,
@@ -331,28 +393,29 @@ def grad_wind_cqe(
     lats = theta_b[lat_str]
     coslat = cosdeg(lats)
     denom = coslat * sindeg(lats) * rot_rate**2 * radius**2
-    sqrt_term = (1 - (numer / denom) * lat_deriv(np.log(theta_b), lat_str)) ** 0.5
-    return rot_rate * radius * coslat * (-1 + sqrt_term)
+    log_theta = cast(xr.DataArray, np.log(theta_b))
+    sqrt_term = (1 - (numer / denom) * lat_deriv(log_theta, lat_str)) ** 0.5
+    return cast(xr.DataArray, rot_rate * radius * coslat * (-1 + sqrt_term))
 
 
 def abs_vort_zero_cross_cqe(
-    theta_b,
-    temp_tropo=None,
-    const_stab=False,
-    c_p=C_P,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    compute_temp_sfc=False,
-    rel_hum=0.7,
-    pressure=P0,
-    p0=P0,
-    tot_wat_mix_ratio=None,
-    c_liq=4185.5,
-    l_v=L_V,
-    r_d=R_D,
-    r_v=R_V,
-    lat_str=LAT_STR,
-):
+    theta_b: xr.DataArray,
+    temp_tropo: float | None = None,
+    const_stab: float | bool = False,
+    c_p: float = C_P,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    compute_temp_sfc: bool = False,
+    rel_hum: float = 0.7,
+    pressure: float = P0,
+    p0: float = P0,
+    tot_wat_mix_ratio: float | None = None,
+    c_liq: float = 4185.5,
+    l_v: float = L_V,
+    r_d: float = R_D,
+    r_v: float = R_V,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Zero crossing of absolute vorticity in CQE atmosphere."""
     u = grad_wind_cqe(
         theta_b,
@@ -382,15 +445,15 @@ def abs_vort_zero_cross_cqe(
 
 
 def pot_temp_amc_cqe(
-    lat,
-    lat_max,
-    pot_temp_max,
-    vert_temp_diff,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    c_p=C_P,
-    extra_factor=1.0,
-):
+    lat: ArrayLike,
+    lat_max: ArrayLike,
+    pot_temp_max: float,
+    vert_temp_diff: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    c_p: float = C_P,
+    extra_factor: float = 1.0,
+) -> ArrayLike:
     """Subcloud equivalent potential temperature field in gradient balance with
     angular momentum conserving wind at the tropopause.
 
@@ -400,21 +463,20 @@ def pot_temp_amc_cqe(
     """
     chi = extra_factor * (rot_rate**2 * radius**2) / (c_p * vert_temp_diff)
     numerator = (cosdeg(lat_max) ** 2 - cosdeg(lat) ** 2) ** 2
-    arr = pot_temp_max * np.exp(-0.5 * chi * numerator / cosdeg(lat) ** 2)
+    arr: ArrayLike = pot_temp_max * np.exp(-0.5 * chi * numerator / cosdeg(lat) ** 2)
     return arr
 
 
 def u_rce_minus_u_amc_cqe(
-    lat_max,
-    theta_b,
-    temp_tropo=None,
-    const_stab=False,
-    c_p=C_P,
-    rot_rate=ROT_RATE_EARTH,
-    radius=RAD_EARTH,
-    plus_solution=True,
-    lat_str=LAT_STR,
-):
+    lat_max: ArrayLike,
+    theta_b: xr.DataArray,
+    temp_tropo: float | None = None,
+    const_stab: float | bool = False,
+    c_p: float = C_P,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Criticality in terms of zonal wind for continuous, CQE fluid.
 
     Assumes surface temperature equals theta_b.
@@ -428,17 +490,21 @@ def u_rce_minus_u_amc_cqe(
         c_p=c_p,
         rot_rate=rot_rate,
         radius=radius,
-        plus_solution=plus_solution,
         lat_str=lat_str,
     )
     u_amc = u_ang_mom_cons(lats, lat_max, rot_rate, radius)
-    return u_rce - u_amc
+    return cast(xr.DataArray, u_rce - u_amc)
 
 
 # Non-Boussinesq, non-CQE atmospheres, in pressure coordinates.
 def thermal_wind_shear_p_coords(
-    temp, pressure, radius=RAD_EARTH, rot_rate=ROT_RATE_EARTH, r_d=R_D, lat_str=LAT_STR
-):
+    temp: xr.DataArray,
+    pressure: ArrayLike,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    r_d: float = R_D,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
     """Thermal wind shear for data on the sphere in pressure coordinates.
 
     Assumes that pressure is in Pa, not hPa.
@@ -448,26 +514,27 @@ def thermal_wind_shear_p_coords(
 
 
     """
-    return (
+    return cast(
+        xr.DataArray,
         -1
         * r_d
         * lat_deriv(temp, lat_str)
-        / (2 * rot_rate * radius * pressure * sindeg(temp[lat_str]))
+        / (2 * rot_rate * radius * pressure * sindeg(temp[lat_str])),
     )
 
 
 def thermal_wind_p_coords(
-    height=None,
-    temp=None,
-    p_sfc=MEAN_SLP_EARTH,
-    p_top=1.0,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    r_d=R_D,
-    grav=GRAV_EARTH,
-    lat_str=LAT_STR,
-    p_str=LEV_STR,
-):
+    height: xr.DataArray | None = None,
+    temp: xr.DataArray | None = None,
+    p_sfc: float = MEAN_SLP_EARTH,
+    p_top: float = 1.0,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    r_d: float = R_D,
+    grav: float = GRAV_EARTH,
+    lat_str: str = LAT_STR,
+    p_str: str = LEV_STR,
+) -> xr.DataArray:
     """Thermal wind for data on the sphere in pressure coordinates.
 
     Assumes that pressure is in Pa, not hPa.
@@ -482,21 +549,24 @@ def thermal_wind_p_coords(
             temp, p_sfc=p_sfc, p_top=p_top, r_d=r_d, grav=grav, p_str=p_str
         )
     sinlat = sindeg(height[lat_str])
-    return -1 * grav * lat_deriv(height, lat_str) / (2 * rot_rate * radius * sinlat)
+    return cast(
+        xr.DataArray,
+        -1 * grav * lat_deriv(height, lat_str) / (2 * rot_rate * radius * sinlat),
+    )
 
 
 def grad_wind_p_coords(
-    height=None,
-    temp=None,
-    p_sfc=MEAN_SLP_EARTH,
-    p_top=1.0,
-    radius=RAD_EARTH,
-    rot_rate=ROT_RATE_EARTH,
-    grav=GRAV_EARTH,
-    r_d=R_D,
-    lat_str=LAT_STR,
-    p_str=LEV_STR,
-):
+    height: xr.DataArray | None = None,
+    temp: xr.DataArray | None = None,
+    p_sfc: float = MEAN_SLP_EARTH,
+    p_top: float = 1.0,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    grav: float = GRAV_EARTH,
+    r_d: float = R_D,
+    lat_str: str = LAT_STR,
+    p_str: str = LEV_STR,
+) -> xr.DataArray:
     """Gradient wind for data on the sphere in pressure coordinates.
 
     Assumes that pressure is in Pa, not hPa.
@@ -515,8 +585,9 @@ def grad_wind_p_coords(
     sqrt_arg = 1 - grav * lat_deriv(height, lat_str) / (
         sinlat * coslat * (rot_rate * radius) ** 2
     )
-    return (rot_rate * radius * coslat * (np.sqrt(sqrt_arg) - 1)).transpose(
-        *height.dims
+    return cast(
+        xr.DataArray,
+        (rot_rate * radius * coslat * (np.sqrt(sqrt_arg) - 1)).transpose(*height.dims),
     )
 
 
