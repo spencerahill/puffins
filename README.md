@@ -2,9 +2,12 @@
 
 **A Python toolkit for large-scale atmospheric and climate dynamics research.**
 
+[![PyPI](https://img.shields.io/pypi/v/puffins)](https://pypi.org/project/puffins/)
+[![Docs](https://readthedocs.org/projects/puffins/badge/?version=latest)](https://puffins.readthedocs.io)
+[![CI](https://github.com/spencerahill/puffins/actions/workflows/ci.yml/badge.svg)](https://github.com/spencerahill/puffins/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
-![Status: Pre-Alpha](https://img.shields.io/badge/status-pre--alpha-orange)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 
 puffins provides functions for computing physical quantities, analyzing
 climate data, and creating publication-ready visualizations. Built on
@@ -69,9 +72,16 @@ phi_h = puffins.held_hou_1980.hc_edge_hh80(delta_h=1/6)
 Functions accept planet-specific parameters (gravity, radius, rotation
 rate) so the same code works across planetary atmospheres.
 
+Full documentation, including the API reference, is at
+[puffins.readthedocs.io](https://puffins.readthedocs.io).
+
 ## Installation
 
-Clone the repository and install in editable mode:
+```bash
+pip install puffins
+```
+
+To work on puffins itself, clone the repository and install in editable mode:
 
 ```bash
 git clone https://github.com/spencerahill/puffins.git
