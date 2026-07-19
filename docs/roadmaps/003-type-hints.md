@@ -30,6 +30,15 @@ overrides) as of 2026-07-19. Remaining (7): `kuo_el`, `held_hou_1980`,
 still non-blocking in CI; source-file errors are now **0** (the two
 `eq_area` `no-any-return` errors were resolved when it was annotated).
 
+> **Note (mypy-version caveat):** the "0 errors" count reflects the mypy
+> version pinned by CI. Newer mypy (≥ 2.x) additionally flags
+> `overload-cannot-match` on the `@overload` stacks in `dates.py`
+> (line ~196) and `vert_coords.py` (lines ~36, ~38, ~353) — both already
+> in the strict overrides and untouched by the `eq_area` pass. These are
+> pre-existing overload-ordering issues, not regressions, but they must be
+> resolved (reorder the overloads so the narrower signature comes first)
+> before the mypy check can be promoted to blocking.
+
 ---
 
 ## Group 0: Infrastructure
