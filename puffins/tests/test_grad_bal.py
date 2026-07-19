@@ -140,7 +140,7 @@ class TestAbsAngMomUnifRo:
     def test_ross_one_is_uniform(self) -> None:
         """At Ro=1 the angular momentum is uniform (= Omega a^2 cos^2 phi_a)."""
         lats = np.array([-30.0, 0.0, 30.0])
-        vals = abs_ang_mom_unif_ro(lats, 15.0, 1.0)
+        vals = np.asarray(abs_ang_mom_unif_ro(lats, 15.0, 1.0))
         np.testing.assert_allclose(vals, vals[0], rtol=1e-13)
 
 
@@ -485,7 +485,8 @@ class TestGradWindCqe:
         coslat = np.cos(np.deg2rad(lats.values))
         sinlat = np.sin(np.deg2rad(lats.values))
         denom = coslat * sinlat * ROT_RATE**2 * RADIUS**2
-        dlnth = lat_deriv(np.log(theta_b), LAT_STR).values
+        log_theta = theta_b.copy(data=np.log(theta_b.values))
+        dlnth = lat_deriv(log_theta, LAT_STR).values
         sqrt_term = (1 - (numer / denom) * dlnth) ** 0.5
         expected = ROT_RATE * RADIUS * coslat * (-1 + sqrt_term)
         actual = grad_wind_cqe(
