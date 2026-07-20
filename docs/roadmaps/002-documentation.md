@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-18 |
+| **Last updated** | 2026-07-19 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -21,19 +21,23 @@ API reference, narrative tutorials, theory pages, and sustainable hosting.
 - Theory/concept pages for all theoretical model modules
 - Docstring standards enforced in CI
 
-## Current State Assessment (updated 2026-07-18)
+## Current State Assessment (updated 2026-07-19)
 
 - **Docstring coverage**: **~94%** overall (public functions), pulled up by the
   type-hint work; only `longitude` (67%), `dates` (75%), and `vert_coords`
   (77%) sit below 80%. (Was ~71% at the March assessment.)
 - **Docstring style**: NumPy-style where present, but quality varies from one-liners to full Parameters/Returns sections
-- **Type hints**: 20 of 30 modules fully annotated — see [Roadmap 003](003-type-hints.md)
-- **Doc build system**: **Sphinx scaffold in place** — `docs/conf.py`
+- **Type hints**: 23 of 30 modules fully annotated; see [Roadmap 003](003-type-hints.md)
+- **Doc build system**: **Sphinx scaffold in place**, via `docs/conf.py`
   (autodoc + napoleon + intersphinx + mathjax + viewcode, pydata-sphinx-theme),
   per-module API stubs under `docs/api/`, a `docs` extra, and a CI job that
-  builds with `-W`. Hosting configured via `.readthedocs.yaml` (Phase 2 largely
-  delivered; see below).
-- **Tutorials/examples**: None beyond two one-liners in `README.md`
+  builds with `-W`.
+- **Hosting**: **live at [puffins.readthedocs.io](https://puffins.readthedocs.io)**,
+  built from `.readthedocs.yaml`. Phase 2 and Phase 5.1 are delivered.
+- **Tutorials/examples**: None beyond two one-liners in `README.md`, so Phase 3
+  is the largest remaining gap.
+- **Docstring enforcement**: no `interrogate`/`pydocstyle` gate in CI yet
+  (Phase 5.3).
 
 ---
 

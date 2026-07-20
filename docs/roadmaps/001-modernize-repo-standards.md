@@ -63,23 +63,30 @@ units and coordinate conventions.
 The per-module checklist lives there to avoid duplication.
 
 Status (2026-07-19): **23 of 30 modules fully annotated** under the
-`pyproject.toml` mypy strict overrides, with **0 source-file mypy errors**.
+`pyproject.toml` mypy strict overrides, with **0 source-file mypy errors** at
+the mypy version CI pins (the remaining 62 errors are all in test files).
 mypy runs in CI but is still non-blocking (`continue-on-error: true`).
 Remaining: `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
 `fixed_temp_tropo`, `plotting`, `nb_utils`; then promote the mypy check to
-blocking and enable global strict mode.
+blocking and enable global strict mode. Promoting it to blocking also requires
+fixing the pre-existing `overload-cannot-match` ordering in `dates.py` and
+`vert_coords.py`, which newer mypy flags; see
+[Roadmap 003](003-type-hints.md).
 
 ## Phase 5: Test Coverage
 
 **Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
 The per-module checklist and testing strategies live there.
 
-Status (2026-07-18): from effectively 0% to **731 tests passing across 22 test
-files, 86% total line coverage**. 21 modules meet the ≥80% target; the
-remaining gap is the theoretical-model / climate-diagnostic cluster
-(`budget_adj`, `kuo_el`, `lindzen_hou_1988`, `grad_bal`, `fixed_temp_tropo`,
-`plumb_hou_1992`, `held_hou_1980`). A CI coverage gate (`--cov-fail-under`) is
-not yet enabled.
+Status (2026-07-19): from effectively 0% to **781 tests passing across 23 test
+files, 88% total line coverage** (1 skipped, 10 xfailed). 22 modules meet the
+≥80% target. The remaining gap is the theoretical-model cluster
+(`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
+`held_hou_1980` 54%, `plumb_hou_1992` 78%), plus `budget_adj` at 16%.
+`budget_adj` has a full test file, but its numerical tests need
+`windspharm`/`pyspharm`, which will not install in CI, so they skip there and
+its measured coverage understates what is actually tested. A CI coverage gate
+(`--cov-fail-under`) is not yet enabled.
 
 Target: ≥80% line coverage for all modules except `plotting.py` and `nb_utils.py`.
 
@@ -97,24 +104,42 @@ Each rule removal should be its own PR with any necessary code fixes.
 - [ ] `E501` — reduce remaining long lines
 - [ ] `SIM108` — adopt ternary expressions where they improve readability
 
-## Phase 7: Documentation Site
+## Phase 7: Documentation Site (mostly done)
 
-Set up generated API documentation.
+Set up generated API documentation. Delivered in PR #59; detailed planning
+lives in [Roadmap 002](002-documentation.md), which supersedes this phase.
 
-- [ ] Choose framework (Sphinx with autodoc, or MkDocs with mkdocstrings)
-- [ ] Scaffold docs structure mirroring module groups
-- [ ] Add docstring coverage check to CI
-- [ ] Host on GitHub Pages or Read the Docs
-- [ ] Add usage guides / tutorials for key workflows
+- [x] Choose framework (Sphinx with autodoc, napoleon, intersphinx, mathjax,
+      viewcode; `pydata-sphinx-theme`)
+- [x] Scaffold docs structure mirroring module groups (`docs/api/`, one stub
+      per module, grouped in `docs/api/index.rst`)
+- [x] Host on Read the Docs: live at
+      [puffins.readthedocs.io](https://puffins.readthedocs.io), configured by
+      `.readthedocs.yaml`. The CI `docs` job also builds with `-W`, so broken
+      cross-references fail the build.
+- [ ] Add docstring coverage check to CI (no `interrogate`/`pydocstyle` gate
+      yet; see Roadmap 002 Phase 5.3)
+- [ ] Add usage guides / tutorials for key workflows (only `installation.rst`
+      exists; see Roadmap 002 Phase 3)
 
-## Phase 8: Packaging & Release
+## Phase 8: Packaging & Release (mostly done)
 
 Prepare for proper PyPI releases.
 
-- [ ] Create first git tag (e.g. `v0.1.0`) so setuptools-scm produces clean versions
-- [ ] Configure PyPI trusted publishing environment in GitHub repo settings
-- [ ] Test publish workflow with a release
+- [x] Create first git tag so setuptools-scm produces clean versions
+- [x] Configure PyPI trusted publishing environment in GitHub repo settings
+- [x] Test publish workflow with a release: **`puffins` 0.2.0 is live on
+      [PyPI](https://pypi.org/project/puffins/)**, published 2026-07-18
 - [ ] Add `CHANGELOG.md` or adopt automated changelog generation
+
+### Why the first release is 0.2.0, not 0.1.0
+
+A `puffins` project already existed on PyPI, with `0.1` and `0.1.1` published
+in March 2021. PyPI refuses new file uploads to a release older than 14 days,
+so tagging `v0.1.0` produced a `400 Bad Request` and the publish workflow
+failed. Re-tagging as `v0.2.0` published cleanly. The practical consequence is
+that the PyPI version history jumps from a 2021-era `0.1.1` straight to
+`0.2.0`; there is no `0.1.0` and there never can be.
 
 ---
 
