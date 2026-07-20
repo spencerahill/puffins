@@ -1,12 +1,12 @@
 #! /usr/bin/env python
 """Gradient balance and thermal wind balance."""
 
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
 import xarray as xr
 
-from ._typing import ArrayLike
+from ._typing import ArrayLike, Scalar
 from .calculus import lat_deriv
 from .constants import (
     C_P,
@@ -273,6 +273,56 @@ def pot_temp_lin_ro_lata0_small_ang(
 
 
 # Boussinesq atmospheres.
+@overload
+def grad_wind_bouss(
+    lats: xr.DataArray,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: ArrayLike,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
+def grad_wind_bouss(
+    lats: ArrayLike,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: xr.DataArray,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
+def grad_wind_bouss(
+    lats: np.ndarray,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: np.ndarray | Scalar,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def grad_wind_bouss(
+    lats: Scalar,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: np.ndarray,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def grad_wind_bouss(
+    lats: Scalar,
+    height: float,
+    theta_ref: float,
+    dtheta_dlat: Scalar,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> Scalar: ...
 def grad_wind_bouss(
     lats: ArrayLike,
     height: float,

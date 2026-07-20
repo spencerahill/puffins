@@ -59,4 +59,5 @@ class TestUPh92Rce:
             rot_rate=ROT_RATE,
             radius=RADIUS,
         )
+        assert isinstance(actual, xr.DataArray)
         np.testing.assert_allclose(actual.values, expected.values, rtol=1e-13)

@@ -23,21 +23,26 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**23 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-19. Remaining (7): `kuo_el`, `held_hou_1980`,
-`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `plotting`,
-`nb_utils` — all in the theoretical-model / visualization cluster. mypy is
-still non-blocking in CI; source-file errors are now **0** (the two
-`eq_area` `no-any-return` errors were resolved when it was annotated).
+**24 of 31 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-20; the count excludes `__init__.py`. Remaining (7):
+`kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
+`fixed_temp_tropo`, `plotting`, `nb_utils`, all in the theoretical-model /
+visualization cluster.
 
-> **Note (mypy-version caveat):** the "0 errors" count reflects the mypy
-> version pinned by CI. Newer mypy (≥ 2.x) additionally flags
-> `overload-cannot-match` on the `@overload` stacks in `dates.py`
-> (line ~196) and `vert_coords.py` (lines ~36, ~38, ~353) — both already
-> in the strict overrides and untouched by the `eq_area` pass. These are
-> pre-existing overload-ordering issues, not regressions, but they must be
-> resolved (reorder the overloads so the narrower signature comes first)
-> before the mypy check can be promoted to blocking.
+**mypy is now blocking in CI** (2026-07-20). It reports 0 errors across all
+56 files it checks: the 32 source files plus the 24 test modules. CI runs
+`mypy puffins/`, which includes `puffins/tests/`, so the test suite is
+type-checked and gating alongside the library source.
+
+> **Note (overload ordering; claim retracted 2026-07-20):** an earlier
+> revision of this roadmap stated that mypy >= 2.x flags
+> `overload-cannot-match` on the `@overload` stacks in `dates.py` and
+> `vert_coords.py`, and that reordering them was a prerequisite for blocking
+> mypy. That claim was wrong and has been retracted. Verified against mypy
+> 2.3.0: the source tree reports 0 errors, and all three stacks already place
+> the narrower signature first, which is the correct order.
+> `overload-cannot-match` fires only when a narrower overload *follows* a
+> wider one. No reordering was needed.
 
 ---
 
@@ -46,7 +51,7 @@ still non-blocking in CI; source-file errors are now **0** (the two
 - [x] Create `puffins/_typing.py` with shared type aliases (`Scalar`, `ArrayLike`, `XarrayObj`)
 - [x] Add per-module mypy strict overrides in `pyproject.toml`
 - [x] Add mypy to CI (non-blocking, `continue-on-error: true`)
-- [ ] Promote mypy CI check to blocking (remove `continue-on-error`)
+- [x] Promote mypy CI check to blocking (remove `continue-on-error`) (completed 2026-07-20)
 - [ ] Promote global strict mode once all modules are annotated
 
 ## Group 1: Simple Values & Utilities

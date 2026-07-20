@@ -47,7 +47,9 @@ class TestAnnSubsets:
 
     def test_contains_ann(self) -> None:
         assert "ann" in ann_subsets
-        assert list(ann_subsets["ann"]) == list(range(1, 13))
+        ann_months = ann_subsets["ann"]
+        assert isinstance(ann_months, range)
+        assert list(ann_months) == list(range(1, 13))
 
 
 class TestSubsetAnn:

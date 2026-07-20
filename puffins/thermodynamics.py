@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import numpy as np
+import xarray as xr
 from scipy.optimize import brentq
 
-from ._typing import ArrayLike
+from ._typing import ArrayLike, Scalar
 from .constants import (
     C_P,
     C_PV,
@@ -23,6 +24,18 @@ from .constants import (
 )
 
 
+@overload
+def exner_func(
+    pressure: xr.DataArray, p0: float = ..., r_d: float = ..., c_p: float = ...
+) -> xr.DataArray: ...
+@overload
+def exner_func(
+    pressure: np.ndarray, p0: float = ..., r_d: float = ..., c_p: float = ...
+) -> np.ndarray: ...
+@overload
+def exner_func(
+    pressure: Scalar, p0: float = ..., r_d: float = ..., c_p: float = ...
+) -> Scalar: ...
 def exner_func(
     pressure: ArrayLike,
     p0: float = 1000.0,
@@ -33,6 +46,46 @@ def exner_func(
     return (pressure / p0) ** (r_d / c_p)
 
 
+@overload
+def pot_temp(
+    temp: xr.DataArray,
+    pressure: ArrayLike,
+    p0: float = ...,
+    r_d: float = ...,
+    c_p: float = ...,
+) -> xr.DataArray: ...
+@overload
+def pot_temp(
+    temp: ArrayLike,
+    pressure: xr.DataArray,
+    p0: float = ...,
+    r_d: float = ...,
+    c_p: float = ...,
+) -> xr.DataArray: ...
+@overload
+def pot_temp(
+    temp: np.ndarray,
+    pressure: np.ndarray | Scalar,
+    p0: float = ...,
+    r_d: float = ...,
+    c_p: float = ...,
+) -> np.ndarray: ...
+@overload
+def pot_temp(
+    temp: Scalar,
+    pressure: np.ndarray,
+    p0: float = ...,
+    r_d: float = ...,
+    c_p: float = ...,
+) -> np.ndarray: ...
+@overload
+def pot_temp(
+    temp: Scalar,
+    pressure: Scalar,
+    p0: float = ...,
+    r_d: float = ...,
+    c_p: float = ...,
+) -> Scalar: ...
 def pot_temp(
     temp: ArrayLike,
     pressure: ArrayLike,
@@ -79,6 +132,12 @@ def vap_press_from_mix_ratio(
     return mix_ratio * pressure / (epsilon + mix_ratio)
 
 
+@overload
+def specific_humidity(mixing_ratio: xr.DataArray) -> xr.DataArray: ...
+@overload
+def specific_humidity(mixing_ratio: np.ndarray) -> np.ndarray: ...
+@overload
+def specific_humidity(mixing_ratio: Scalar) -> Scalar: ...
 def specific_humidity(mixing_ratio: ArrayLike) -> ArrayLike:
     """Specific humidity computed from water vapor mixing ratio.
 
@@ -99,6 +158,12 @@ _TETENS_B = 17.27
 _TETENS_C = 237.3 - 273.15
 
 
+@overload
+def sat_vap_press_tetens_kelvin(temp: xr.DataArray) -> xr.DataArray: ...
+@overload
+def sat_vap_press_tetens_kelvin(temp: np.ndarray) -> np.ndarray: ...
+@overload
+def sat_vap_press_tetens_kelvin(temp: Scalar) -> Scalar: ...
 def sat_vap_press_tetens_kelvin(temp: ArrayLike) -> ArrayLike:
     """Saturation vapor pressure using Tetens equation.
 
@@ -147,6 +212,22 @@ def relative_humidity(
     return vapor_pressure / sat_vap_press
 
 
+@overload
+def rel_hum_from_temp_dewpoint(
+    temp: xr.DataArray, temp_dew: ArrayLike
+) -> xr.DataArray: ...
+@overload
+def rel_hum_from_temp_dewpoint(
+    temp: ArrayLike, temp_dew: xr.DataArray
+) -> xr.DataArray: ...
+@overload
+def rel_hum_from_temp_dewpoint(
+    temp: np.ndarray, temp_dew: np.ndarray | Scalar
+) -> np.ndarray: ...
+@overload
+def rel_hum_from_temp_dewpoint(temp: Scalar, temp_dew: np.ndarray) -> np.ndarray: ...
+@overload
+def rel_hum_from_temp_dewpoint(temp: Scalar, temp_dew: Scalar) -> Scalar: ...
 def rel_hum_from_temp_dewpoint(
     temp: ArrayLike,
     temp_dew: ArrayLike,
@@ -233,6 +314,30 @@ def saturation_entropy(
     )
 
 
+@overload
+def dsat_entrop_dtemp_approx(
+    temp: xr.DataArray,
+    pressure: float = ...,
+    c_p: float = ...,
+    r_v: float = ...,
+    l_v: float = ...,
+) -> xr.DataArray: ...
+@overload
+def dsat_entrop_dtemp_approx(
+    temp: np.ndarray,
+    pressure: float = ...,
+    c_p: float = ...,
+    r_v: float = ...,
+    l_v: float = ...,
+) -> np.ndarray: ...
+@overload
+def dsat_entrop_dtemp_approx(
+    temp: Scalar,
+    pressure: float = ...,
+    c_p: float = ...,
+    r_v: float = ...,
+    l_v: float = ...,
+) -> Scalar: ...
 def dsat_entrop_dtemp_approx(
     temp: ArrayLike,
     pressure: float = P0,
@@ -400,6 +505,66 @@ def moist_entropy(
     )
 
 
+@overload
+def pseudoadiabatic_lapse_rate(
+    temp: xr.DataArray,
+    pressure: ArrayLike,
+    rel_hum: float = ...,
+    grav: float = ...,
+    c_p: float = ...,
+    r_d: float = ...,
+    l_v: float = ...,
+    r_v: float = ...,
+    c_pv: float = ...,
+) -> xr.DataArray: ...
+@overload
+def pseudoadiabatic_lapse_rate(
+    temp: ArrayLike,
+    pressure: xr.DataArray,
+    rel_hum: float = ...,
+    grav: float = ...,
+    c_p: float = ...,
+    r_d: float = ...,
+    l_v: float = ...,
+    r_v: float = ...,
+    c_pv: float = ...,
+) -> xr.DataArray: ...
+@overload
+def pseudoadiabatic_lapse_rate(
+    temp: np.ndarray,
+    pressure: np.ndarray | Scalar,
+    rel_hum: float = ...,
+    grav: float = ...,
+    c_p: float = ...,
+    r_d: float = ...,
+    l_v: float = ...,
+    r_v: float = ...,
+    c_pv: float = ...,
+) -> np.ndarray: ...
+@overload
+def pseudoadiabatic_lapse_rate(
+    temp: Scalar,
+    pressure: np.ndarray,
+    rel_hum: float = ...,
+    grav: float = ...,
+    c_p: float = ...,
+    r_d: float = ...,
+    l_v: float = ...,
+    r_v: float = ...,
+    c_pv: float = ...,
+) -> np.ndarray: ...
+@overload
+def pseudoadiabatic_lapse_rate(
+    temp: Scalar,
+    pressure: Scalar,
+    rel_hum: float = ...,
+    grav: float = ...,
+    c_p: float = ...,
+    r_d: float = ...,
+    l_v: float = ...,
+    r_v: float = ...,
+    c_pv: float = ...,
+) -> Scalar: ...
 def pseudoadiabatic_lapse_rate(
     temp: ArrayLike,
     pressure: ArrayLike,

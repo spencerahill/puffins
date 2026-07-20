@@ -177,21 +177,21 @@ class TestInferBounds:
     def test_wrong_arr_type_raises(self) -> None:
         """Passing a non-DataArray for arr should raise."""
         with pytest.raises(AttributeError):
-            infer_bounds(np.array([1.0, 2.0, 3.0]), "x")
+            infer_bounds(np.array([1.0, 2.0, 3.0]), "x")  # type: ignore[arg-type]
 
     def test_wrong_dim_type_raises(self) -> None:
         """Passing a non-string for dim should raise."""
         vals = np.array([0.0, 1.0, 2.0])
         arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
         with pytest.raises(TypeError):
-            infer_bounds(arr, 123)
+            infer_bounds(arr, 123)  # type: ignore[arg-type]
 
     def test_wrong_spacing_tol_type_raises(self) -> None:
         """Passing a non-numeric spacing_tol should raise."""
         vals = np.array([0.0, 1.0, 2.0])
         arr = xr.DataArray(vals, dims=["x"], coords={"x": vals})
         with pytest.raises(TypeError):
-            infer_bounds(arr, "x", spacing_tol="strict")
+            infer_bounds(arr, "x", spacing_tol="strict")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
