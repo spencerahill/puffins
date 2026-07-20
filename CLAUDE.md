@@ -115,6 +115,9 @@ The mutation-check applies beyond closed-form formulas. Any function with nontri
 
 Before considering a module's tests complete, enumerate every parameter that affects the output and confirm each is exercised with a non-default value in at least one test whose assertion would fail if that parameter's handling were broken (mutation-checked). A parameter used only at its default in every test has no teeth: `polar_amp`'s `denom_bounds` shipped that way in the first draft (every test used the global `(-90, 90)` default), and hardcoding the denominator to the global range passed all 12 tests until an independent review caught it. Applying the mutation-check to the headline formula alone is not enough; sweep it across the full parameter surface.
 
+### Status Documents
+The four roadmaps (`docs/roadmaps/001-004`) and the `README` cite shared status metrics: total test count, test-file count, line-coverage percentage, module-annotation count, mypy CI-blocking status, and module count. When a change moves any such metric, update every occurrence across all of these documents in the same PR, not only the document most on-topic. Scope the doc edits by which metric moved, not by which document is nearest the change. (Promoting mypy to blocking in PR #64 moved metrics in all four roadmaps, but the first pass updated only roadmaps 001 and 003.)
+
 ## Important Notes
 
 - This is a personal research tool with no official support
