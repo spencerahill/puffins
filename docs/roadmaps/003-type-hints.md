@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-19 |
+| **Last updated** | 2026-07-20 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -40,6 +40,14 @@ overload could start lying after a body change or a numpy/xarray upgrade and
 mypy would propagate the wrong type to every caller. The file is checked by
 the same `mypy puffins/` run and costs nothing at runtime (everything sits
 under `TYPE_CHECKING`).
+
+The blocking-mypy PR also fixed two pre-existing bugs surfaced by its
+independent review, each with a mutation-checked regression test:
+`grad_bal.grad_wind_cqe` was passing `pressure=p0` instead of `pressure=pressure`
+to `temp_from_equiv_pot_temp`, silently ignoring its own `pressure` argument;
+and `dynamics.brunt_vaisala_freq` used `** 0.5`, which returns a `complex` for
+a negative Python float while giving `nan` for a numpy scalar or array. It now
+uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 
 > **Note (what the "0 errors" figure depends on):** it holds for the exact
 > combination CI uses, namely `python_version = "3.10"` in `[tool.mypy]`

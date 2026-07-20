@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-19 |
+| **Last updated** | 2026-07-20 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -13,10 +13,12 @@ Take puffins from near-zero test coverage to near-comprehensive coverage
 with best-practice infrastructure, targeting at least one test per public
 function and enforced coverage thresholds in CI.
 
-## Current State (as of 2026-07-19)
+## Current State (as of 2026-07-20)
 
-- **23 test files**, covering 23 of 30 modules
-- **781 tests passing** (1 skipped, 10 xfailed)
+- **24 test files** (23 module test files plus `test_typing_overloads.py`, a
+  compile-time type-contract file that yields no runtime tests), covering 23
+  of 30 modules
+- **783 tests passing** (1 skipped, 10 xfailed)
 - **88% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
@@ -85,7 +87,7 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 |--------|-------------|----------------|--------|
 | `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write | — (no functions) |
 | `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent | — (no functions) |
-| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (58 tests, 99% cov) |
+| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (59 tests, 99% cov) |
 | `thermodynamics.py` | 24 | Pure math; heavily used downstream | **Done** (60 tests, 96% cov) |
 | `calculus.py` | 14 | Differentiation/integration — easy to validate against analytical solutions | **Done** (98% cov) |
 | `num_solver.py` | 5 | Small module, testable against known roots | **Done** (25 tests, 98% cov) |

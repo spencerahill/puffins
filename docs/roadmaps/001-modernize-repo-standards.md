@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-19 |
+| **Last updated** | 2026-07-20 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -81,7 +81,7 @@ mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
 **Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
 The per-module checklist and testing strategies live there.
 
-Status (2026-07-19): from effectively 0% to **781 tests passing across 23 test
+Status (2026-07-20): from effectively 0% to **783 tests passing across 24 test
 files, 88% total line coverage** (1 skipped, 10 xfailed). 22 modules meet the
 ≥80% target. The remaining gap is the theoretical-model cluster
 (`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
