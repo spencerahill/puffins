@@ -428,7 +428,7 @@ def grad_wind_cqe(
             temp_sfc = temp_from_equiv_pot_temp(
                 theta_b,
                 rel_hum=rel_hum,
-                pressure=p0,
+                pressure=pressure,
                 tot_wat_mix_ratio=tot_wat_mix_ratio,
                 p0=p0,
                 c_p=c_p,
