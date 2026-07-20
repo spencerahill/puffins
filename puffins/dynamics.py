@@ -217,8 +217,14 @@ def brunt_vaisala_freq(
     theta_ref: float = THETA_REF,
     grav: float = GRAV_EARTH,
 ) -> ArrayLike:
-    """Brunt Vaisala frequency."""
-    return cast(ArrayLike, (grav * dtheta_dz / theta_ref) ** 0.5)
+    """Brunt Vaisala frequency.
+
+    A statically unstable layer (negative ``dtheta_dz``) has no real frequency;
+    ``np.sqrt`` returns ``nan`` for it regardless of input kind. Plain ``** 0.5``
+    would instead return a ``complex`` for a negative Python float while giving
+    ``nan`` for a numpy scalar or array.
+    """
+    return cast(ArrayLike, np.sqrt(grav * dtheta_dz / theta_ref))
 
 
 def rossby_radius(
