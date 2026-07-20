@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-19 |
+| **Last updated** | 2026-07-20 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -23,21 +23,63 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**23 of 30 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-19. Remaining (7): `kuo_el`, `held_hou_1980`,
-`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `plotting`,
-`nb_utils` — all in the theoretical-model / visualization cluster. mypy is
-still non-blocking in CI; source-file errors are now **0** (the two
-`eq_area` `no-any-return` errors were resolved when it was annotated).
+**24 of 31 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-20; the count excludes `__init__.py`. Remaining (7):
+`kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
+`fixed_temp_tropo`, `plotting`, `nb_utils`, all in the theoretical-model /
+visualization cluster.
 
-> **Note (mypy-version caveat):** the "0 errors" count reflects the mypy
-> version pinned by CI. Newer mypy (≥ 2.x) additionally flags
-> `overload-cannot-match` on the `@overload` stacks in `dates.py`
-> (line ~196) and `vert_coords.py` (lines ~36, ~38, ~353) — both already
-> in the strict overrides and untouched by the `eq_area` pass. These are
-> pre-existing overload-ordering issues, not regressions, but they must be
-> resolved (reorder the overloads so the narrower signature comes first)
-> before the mypy check can be promoted to blocking.
+**mypy is now blocking in CI** (2026-07-20). It reports 0 errors across all
+57 files it checks: the 32 source files plus the 25 test modules. CI runs
+`mypy puffins/`, which includes `puffins/tests/`, so the test suite is
+type-checked and gating alongside the library source.
+
+`puffins/tests/test_typing_overloads.py` pins the `@overload` stacks with
+`assert_type`. Those declarations have no runtime effect, so without it an
+overload could start lying after a body change or a numpy/xarray upgrade and
+mypy would propagate the wrong type to every caller. The file is checked by
+the same `mypy puffins/` run and costs nothing at runtime (everything sits
+under `TYPE_CHECKING`).
+
+The blocking-mypy PR also fixed two pre-existing bugs surfaced by its
+independent review, each with a mutation-checked regression test:
+`grad_bal.grad_wind_cqe` was passing `pressure=p0` instead of `pressure=pressure`
+to `temp_from_equiv_pot_temp`, silently ignoring its own `pressure` argument;
+and `dynamics.brunt_vaisala_freq` used `** 0.5`, which returns a `complex` for
+a negative Python float while giving `nan` for a numpy scalar or array. It now
+uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
+
+> **Note (what the "0 errors" figure depends on):** it holds for the exact
+> combination CI uses, namely `python_version = "3.10"` in `[tool.mypy]`
+> analyzed against the dependency versions that `uv sync --extra dev`
+> resolves on the runner's default interpreter. Both halves matter, and
+> measurements as of 2026-07-20 are:
+>
+> - `mypy --python-version 3.12` (or `3.13`) against the same environment:
+>   **36 errors** in 5 files, mostly `arg-type` in `tropopause.py`.
+> - `uv sync --extra dev --python 3.10`, which resolves older numpy/xarray
+>   stubs (xarray 2025.6.1 rather than 2026.2.0): **41 errors** in 7 files.
+>
+> So pinning the lint job's interpreter to match `python_version` does *not*
+> reconcile the two; it was tried and reddens CI. Clear these before raising
+> `python_version`, which will be forced when Python 3.10 goes end-of-life in
+> late 2026.
+
+> **Note (overload coverage is test-driven):** the 14 functions carrying
+> `@overload` stacks are the ones the test suite exercises, not a complete
+> sweep. Siblings such as `mixing_ratio`, `saturation_specific_humidity`, and
+> `relative_humidity` still return the full `ArrayLike` union. Widening the
+> coverage is deliberately deferred.
+
+> **Note (overload ordering; claim retracted 2026-07-20):** an earlier
+> revision of this roadmap stated that mypy >= 2.x flags
+> `overload-cannot-match` on the `@overload` stacks in `dates.py` and
+> `vert_coords.py`, and that reordering them was a prerequisite for blocking
+> mypy. That claim was wrong and has been retracted. Verified against mypy
+> 2.3.0: the source tree reports 0 errors, and all three stacks already place
+> the narrower signature first, which is the correct order.
+> `overload-cannot-match` fires only when a narrower overload *follows* a
+> wider one. No reordering was needed.
 
 ---
 
@@ -46,7 +88,7 @@ still non-blocking in CI; source-file errors are now **0** (the two
 - [x] Create `puffins/_typing.py` with shared type aliases (`Scalar`, `ArrayLike`, `XarrayObj`)
 - [x] Add per-module mypy strict overrides in `pyproject.toml`
 - [x] Add mypy to CI (non-blocking, `continue-on-error: true`)
-- [ ] Promote mypy CI check to blocking (remove `continue-on-error`)
+- [x] Promote mypy CI check to blocking (remove `continue-on-error`) (completed 2026-07-20)
 - [ ] Promote global strict mode once all modules are annotated
 
 ## Group 1: Simple Values & Utilities

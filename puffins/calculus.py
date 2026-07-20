@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
 import xarray as xr
 
-from ._typing import ArrayLike, XarrayObj
+from ._typing import ArrayLike, Scalar, XarrayObj
 from .constants import RAD_EARTH
 from .names import (
     BOUNDS_STR,
@@ -343,6 +343,12 @@ def add_lat_lon_bounds(
     return ds
 
 
+@overload
+def to_radians(arr: xr.DataArray, is_delta: bool = ...) -> xr.DataArray: ...
+@overload
+def to_radians(arr: np.ndarray, is_delta: bool = ...) -> np.ndarray: ...
+@overload
+def to_radians(arr: Scalar, is_delta: bool = ...) -> Scalar: ...
 def to_radians(arr: ArrayLike, is_delta: bool = False) -> ArrayLike:
     """Force data with units either degrees or radians to be radians."""
     # Infer the units from embedded metadata, if it's there.
@@ -453,6 +459,12 @@ def sfc_area_latlon_box(
     )
 
 
+@overload
+def lat_circumf(lat: xr.DataArray, radius: float = ...) -> xr.DataArray: ...
+@overload
+def lat_circumf(lat: np.ndarray, radius: float = ...) -> np.ndarray: ...
+@overload
+def lat_circumf(lat: Scalar, radius: float = ...) -> Scalar: ...
 def lat_circumf(lat: ArrayLike, radius: float = RAD_EARTH) -> ArrayLike:
     """Circumference of a latitude circle."""
     return cast(ArrayLike, 2 * np.pi * radius * cosdeg(lat))

@@ -13,6 +13,7 @@ import pytest
 import xarray as xr
 
 from puffins.calculus import lat_deriv
+from puffins.constants import P0
 from puffins.grad_bal import (
     abs_ang_mom_unif_ro,
     abs_vort_zero_cross_cqe,
@@ -520,6 +521,20 @@ class TestGradWindCqe:
         assert isinstance(derived, xr.DataArray)
         assert np.isfinite(derived.values).all()
         assert not np.allclose(derived.values, direct.values)
+
+    def test_pressure_changes_result(self) -> None:
+        """`pressure` feeds temp_from_equiv_pot_temp, so a non-default value
+        must change the derived surface temperature and hence the wind. This
+        gives `pressure` teeth: it was previously overwritten by `p0` inside
+        the compute_temp_sfc branch, so the two calls returned identically."""
+        theta_b = self._theta_b()
+        at_p0 = grad_wind_cqe(theta_b, temp_tropo=200.0, compute_temp_sfc=True)
+        lower_p = grad_wind_cqe(
+            theta_b, temp_tropo=200.0, compute_temp_sfc=True, pressure=0.7 * P0
+        )
+        assert isinstance(lower_p, xr.DataArray)
+        assert np.isfinite(lower_p.values).all()
+        assert not np.allclose(at_p0.values, lower_p.values)
 
 
 class TestURceMinusUAmcCqe:

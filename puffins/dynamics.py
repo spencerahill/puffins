@@ -1,12 +1,12 @@
 #! /usr/bin/env python
 """Fundamental atmospheric dynamical quantities."""
 
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
 import xarray as xr
 
-from ._typing import ArrayLike
+from ._typing import ArrayLike, Scalar
 from .calculus import lat_deriv
 from .constants import (
     DELTA_V,
@@ -22,6 +22,12 @@ from .names import LAT_STR, LEV_STR
 from .nb_utils import cosdeg, sindeg, tandeg
 
 
+@overload
+def coriolis_param(lat: xr.DataArray, rot_rate: float = ...) -> xr.DataArray: ...
+@overload
+def coriolis_param(lat: np.ndarray, rot_rate: float = ...) -> np.ndarray: ...
+@overload
+def coriolis_param(lat: Scalar, rot_rate: float = ...) -> Scalar: ...
 def coriolis_param(lat: ArrayLike, rot_rate: float = ROT_RATE_EARTH) -> ArrayLike:
     """Coriolis parameter, i.e. 'f'."""
     return cast(ArrayLike, 2.0 * rot_rate * sindeg(lat))
@@ -37,6 +43,33 @@ def plan_burg_num(
     return height * grav / (rot_rate * radius) ** 2
 
 
+@overload
+def therm_ross_num(
+    delta_h: xr.DataArray,
+    height: float = ...,
+    lat_max: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
+def therm_ross_num(
+    delta_h: np.ndarray,
+    height: float = ...,
+    lat_max: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def therm_ross_num(
+    delta_h: Scalar,
+    height: float = ...,
+    lat_max: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> Scalar: ...
 def therm_ross_num(
     delta_h: ArrayLike,
     height: float = HEIGHT_TROPO,
@@ -167,13 +200,31 @@ def ross_num_gen(
     )
 
 
+@overload
+def brunt_vaisala_freq(
+    dtheta_dz: xr.DataArray, theta_ref: float = ..., grav: float = ...
+) -> xr.DataArray: ...
+@overload
+def brunt_vaisala_freq(
+    dtheta_dz: np.ndarray, theta_ref: float = ..., grav: float = ...
+) -> np.ndarray: ...
+@overload
+def brunt_vaisala_freq(
+    dtheta_dz: Scalar, theta_ref: float = ..., grav: float = ...
+) -> Scalar: ...
 def brunt_vaisala_freq(
     dtheta_dz: ArrayLike,
     theta_ref: float = THETA_REF,
     grav: float = GRAV_EARTH,
 ) -> ArrayLike:
-    """Brunt Vaisala frequency."""
-    return cast(ArrayLike, (grav * dtheta_dz / theta_ref) ** 0.5)
+    """Brunt Vaisala frequency.
+
+    A statically unstable layer (negative ``dtheta_dz``) has no real frequency;
+    ``np.sqrt`` returns ``nan`` for it regardless of input kind. Plain ``** 0.5``
+    would instead return a ``complex`` for a negative Python float while giving
+    ``nan`` for a numpy scalar or array.
+    """
+    return cast(ArrayLike, np.sqrt(grav * dtheta_dz / theta_ref))
 
 
 def rossby_radius(
@@ -266,6 +317,33 @@ def z_from_hypso(
     )
 
 
+@overload
+def u_bci_2layer_qg(
+    lat: xr.DataArray,
+    height: float = ...,
+    delta_v: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
+def u_bci_2layer_qg(
+    lat: np.ndarray,
+    height: float = ...,
+    delta_v: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def u_bci_2layer_qg(
+    lat: Scalar,
+    height: float = ...,
+    delta_v: float = ...,
+    grav: float = ...,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> Scalar: ...
 def u_bci_2layer_qg(
     lat: ArrayLike,
     height: float = HEIGHT_TROPO,

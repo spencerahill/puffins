@@ -435,6 +435,18 @@ class TestBruntVaisalaFreq:
         n4 = brunt_vaisala_freq(4e-3)
         np.testing.assert_allclose(n4 / n1, 2.0)
 
+    @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+    def test_negative_returns_nan_for_every_input_kind(self) -> None:
+        """A statically unstable layer (negative dtheta_dz) has no real
+        frequency and must give nan uniformly. A plain ``** 0.5`` returns a
+        complex for a Python float while giving nan for a numpy scalar/array;
+        the Python-float case (checked first) is what this pins.
+        """
+        val = -1e-3
+        for x in (val, np.float64(val), np.array([val, 2 * val])):
+            result = brunt_vaisala_freq(x)
+            assert np.isnan(result).all()
+
 
 # ---------------------------------------------------------------------------
 # TestRossbyRadius

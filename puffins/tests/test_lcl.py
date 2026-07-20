@@ -57,7 +57,7 @@ def _ref_sat_vap_press(
     `p_trip` and `e_0v` are overridable so the forwarding tests can probe that
     non-default constants actually reach this expression.
     """
-    return (
+    return float(
         p_trip
         * (temp / T_TRIP) ** ((C_PV - C_VL) / R_V)
         * np.exp((e_0v - (C_VV - C_VL) * T_TRIP) / R_V * (1.0 / T_TRIP - 1.0 / temp))
@@ -122,7 +122,7 @@ def _ref_pres_lcl(
     r_m = _ref_r_m(press, vap_press)
     c_pm = _ref_c_pm(press, vap_press)
     temp_lcl = _ref_temp_lcl(press, temp, rel_hum, p_trip=p_trip, e_0v=e_0v)
-    return press * (temp_lcl / temp) ** (c_pm / r_m)
+    return float(press * (temp_lcl / temp) ** (c_pm / r_m))
 
 
 # Representative (press, temp) points spanning the lower troposphere, used to

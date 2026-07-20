@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-19 |
+| **Last updated** | 2026-07-20 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -62,23 +62,26 @@ units and coordinate conventions.
 **Now tracked in detail by [Roadmap 003 — Type Hints](003-type-hints.md).**
 The per-module checklist lives there to avoid duplication.
 
-Status (2026-07-19): **23 of 30 modules fully annotated** under the
-`pyproject.toml` mypy strict overrides, with **0 source-file mypy errors** at
-the mypy version CI pins (the remaining 62 errors are all in test files).
-mypy runs in CI but is still non-blocking (`continue-on-error: true`).
-Remaining: `kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
-`fixed_temp_tropo`, `plotting`, `nb_utils`; then promote the mypy check to
-blocking and enable global strict mode. Promoting it to blocking also requires
-fixing the pre-existing `overload-cannot-match` ordering in `dates.py` and
-`vert_coords.py`, which newer mypy flags; see
-[Roadmap 003](003-type-hints.md).
+Status (2026-07-20): **24 of 31 modules fully annotated** under the
+`pyproject.toml` mypy strict overrides (the count excludes `__init__.py`).
+**mypy is now blocking in CI**, with 0 errors across all 57 files it checks:
+the 32 source files plus the 25 test modules. The 62 test-file errors that
+previously blocked the promotion were cleared by adding `@overload` stacks to
+the `ArrayLike`-returning functions the tests exercise (51 errors) plus
+narrowing on the test side (11). That figure is specific to the mypy target
+and dependency versions CI uses; see [Roadmap 003](003-type-hints.md) for the
+measured counts under other combinations. Remaining: `kuo_el`,
+`held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`,
+`plotting`, `nb_utils`; then enable global strict mode. The
+`overload-cannot-match` prerequisite noted here previously was checked against
+mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
 
 ## Phase 5: Test Coverage
 
 **Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
 The per-module checklist and testing strategies live there.
 
-Status (2026-07-19): from effectively 0% to **781 tests passing across 23 test
+Status (2026-07-20): from effectively 0% to **783 tests passing across 24 test
 files, 88% total line coverage** (1 skipped, 10 xfailed). 22 modules meet the
 ≥80% target. The remaining gap is the theoretical-model cluster
 (`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
