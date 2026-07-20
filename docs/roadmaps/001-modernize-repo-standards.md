@@ -64,10 +64,13 @@ The per-module checklist lives there to avoid duplication.
 
 Status (2026-07-20): **24 of 31 modules fully annotated** under the
 `pyproject.toml` mypy strict overrides (the count excludes `__init__.py`).
-**mypy is now blocking in CI**, with 0 errors across all 56 files it checks:
-the 32 source files plus the 24 test modules. The 62 test-file errors that
+**mypy is now blocking in CI**, with 0 errors across all 57 files it checks:
+the 32 source files plus the 25 test modules. The 62 test-file errors that
 previously blocked the promotion were cleared by adding `@overload` stacks to
-the `ArrayLike`-returning functions the tests exercise. Remaining: `kuo_el`,
+the `ArrayLike`-returning functions the tests exercise (51 errors) plus
+narrowing on the test side (11). That figure is specific to the mypy target
+and dependency versions CI uses; see [Roadmap 003](003-type-hints.md) for the
+measured counts under other combinations. Remaining: `kuo_el`,
 `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`,
 `plotting`, `nb_utils`; then enable global strict mode. The
 `overload-cannot-match` prerequisite noted here previously was checked against

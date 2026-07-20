@@ -48,7 +48,10 @@ class TestAnnSubsets:
     def test_contains_ann(self) -> None:
         assert "ann" in ann_subsets
         ann_months = ann_subsets["ann"]
-        assert isinstance(ann_months, range)
+        # Narrow away the non-iterable `int` member of the value union; the
+        # concrete container type is deliberately not pinned, since storing
+        # the same months as a list would be an equivalent representation.
+        assert not isinstance(ann_months, int)
         assert list(ann_months) == list(range(1, 13))
 
 
