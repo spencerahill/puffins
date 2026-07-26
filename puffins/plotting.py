@@ -428,6 +428,49 @@ def panel_label(
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 
+# Contour levels.
+def tight_levels(arrs, step):
+    """Contour levels bracketing the data, with no unused band at either end.
+
+    The levels are the multiples of ``step`` from the largest one at or below
+    the data minimum through the smallest one at or above the data maximum.
+    Every resulting band therefore contains plotted values, so a colorbar drawn
+    from these levels has no empty box on the low or the high end.  A field
+    spanning zero gets zero as one of its levels, the grid being anchored
+    there, which keeps the levels usable for a diverging colormap centered on
+    zero via ``trunc_cmap_about_center``.
+
+    The bracketing is asymmetric about zero whenever the data are: a field
+    running -0.054 to +0.029 with ``step=0.01`` yields levels -0.06 to +0.03.
+
+    Parameters
+    ----------
+    arrs : array-like or sequence of array-like
+        Field to be contoured, restricted beforehand to the domain that will
+        actually be displayed.  Pass a list or tuple of fields to pool them,
+        as for multiple panels sharing one colorbar.
+    step : float
+        Spacing between adjacent levels.
+
+    Returns
+    -------
+    numpy.ndarray
+        The contour levels, in increasing order.
+
+    """
+    if step <= 0:
+        raise ValueError(f"step must be positive; got {step}")
+    if isinstance(arrs, list | tuple):
+        min_val = min(float(np.nanmin(arr)) for arr in arrs)
+        max_val = max(float(np.nanmax(arr)) for arr in arrs)
+    else:
+        min_val = float(np.nanmin(arrs))
+        max_val = float(np.nanmax(arrs))
+    start = np.floor(min_val / step) * step
+    num_bands = int(np.round((np.ceil(max_val / step) * step - start) / step))
+    return start + step * np.arange(num_bands + 1)
+
+
 # Colormaps.
 def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
     """Truncate a colormap.
@@ -469,6 +512,48 @@ def trunc_cmap_about_center(
         cmap_min = 1.0 - 0.5 * (max_val - min_val) / max_central_diff
         cmap_max = 1.0
     return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max, n_colors=n_colors)
+
+
+def band_colors_about_center(cmap, levels, central_val=0.0):
+    """Colors for filled contour bands diverging about a central value.
+
+    Discrete-band counterpart to ``trunc_cmap_about_center``, for a filled
+    contour plot whose levels are asymmetric about ``central_val``.  Each band
+    takes the color at its own center, with the color increment per band set by
+    the longer of the two sides, so the shorter side stops short of that end of
+    the colormap: a given increment in the field is a given increment in color
+    on both sides of the center.
+
+    The contour at ``central_val`` lands exactly on the colormap's midpoint
+    color.  Handing the truncated colormap to ``contourf`` instead leaves that
+    contour up to half a band off the midpoint, because matplotlib samples a
+    discretized colormap at the band edges rather than their centers.
+
+    Parameters
+    ----------
+    cmap : matplotlib.colors.Colormap
+        Diverging colormap, whose midpoint color marks ``central_val``.
+    levels : array-like
+        Contour levels, increasing.  ``pplt.tight_levels`` generates ones that
+        bracket the data and include ``central_val`` when the data span it.
+    central_val : float
+        Field value to place at the colormap's midpoint color.
+
+    Returns
+    -------
+    list
+        One RGBA tuple per band, i.e. ``len(levels) - 1`` of them, to pass to
+        ``contourf`` as ``colors``.
+
+    """
+    levels = np.asarray(levels, dtype=float)
+    if levels.size < 2:
+        raise ValueError(f"need at least 2 levels; got {levels.size}")
+    ind_center = int(np.argmin(np.abs(levels - central_val)))
+    num_below, num_above = ind_center, levels.size - 1 - ind_center
+    num_long = max(num_below, num_above)
+    band_centers = np.arange(-num_below, num_above) + 0.5
+    return [cmap(0.5 + center / (2 * num_long)) for center in band_centers]
 
 
 # Plot horizontal, vertical, diagonal lines.
