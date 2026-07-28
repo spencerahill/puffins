@@ -13,8 +13,15 @@ References
    515-533.
 """
 
-import numpy as np
+from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import cast
+
+import numpy as np
+import xarray as xr
+
+from ._typing import ArrayLike, Scalar
 from .constants import (
     DELTA_H,
     DELTA_V,
@@ -27,7 +34,14 @@ from .nb_utils import cosdeg, sindeg
 from .num_solver import brentq_solver_sweep_param
 
 
-def pot_temp_rce_hh80(lats, z, theta_ref, height, delta_h, delta_v):
+def pot_temp_rce_hh80(
+    lats: ArrayLike,
+    z: ArrayLike,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> ArrayLike:
     """Radiative-convective equilibrium potential temperature (Eq. 2 of HH80).
 
     Parameters
@@ -50,19 +64,21 @@ def pot_temp_rce_hh80(lats, z, theta_ref, height, delta_h, delta_v):
     array-like
         RCE potential temperature (K).
     """
-    return theta_ref * (
-        1 + delta_h * (cosdeg(lats) ** 2 - 2 / 3) + (z / height - 0.5) * delta_v
+    return cast(
+        ArrayLike,
+        theta_ref
+        * (1 + delta_h * (cosdeg(lats) ** 2 - 2 / 3) + (z / height - 0.5) * delta_v),
     )
 
 
 def pot_temp_rce_hh80_small_ang(
-    lats,
-    z=0.5 * HEIGHT_TROPO,
-    theta_ref=THETA_REF,
-    height=HEIGHT_TROPO,
-    delta_h=DELTA_H,
-    delta_v=DELTA_V,
-):
+    lats: ArrayLike,
+    z: float = 0.5 * HEIGHT_TROPO,
+    theta_ref: float = THETA_REF,
+    height: float = HEIGHT_TROPO,
+    delta_h: float = DELTA_H,
+    delta_v: float = DELTA_V,
+) -> ArrayLike:
     """RCE potential temperature in the small-angle limit (Eq. 2 of HH80).
 
     Parameters
@@ -85,12 +101,23 @@ def pot_temp_rce_hh80_small_ang(
     array-like
         RCE potential temperature in the small-angle limit (K).
     """
-    return theta_ref * (
-        1 + delta_h * (1 - np.deg2rad(lats) ** 2 - 2 / 3) + delta_v * (z / height - 0.5)
+    return cast(
+        ArrayLike,
+        theta_ref
+        * (
+            1
+            + delta_h * (1 - np.deg2rad(lats) ** 2 - 2 / 3)
+            + delta_v * (z / height - 0.5)
+        ),
     )
 
 
-def u_rce_hh80(lats, therm_ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_rce_hh80(
+    lats: ArrayLike,
+    therm_ross_num: float,
+    rot_rate: float = ROT_RATE_EARTH,
+    radius: float = RAD_EARTH,
+) -> ArrayLike:
     """Zonal wind in gradient balance with RCE temperatures.
 
     Parameters
@@ -109,10 +136,13 @@ def u_rce_hh80(lats, therm_ross_num, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     array-like
         Zonal wind (m/s).
     """
-    return rot_rate * radius * cosdeg(lats) * ((1 + 2 * therm_ross_num) ** 0.5 - 1)
+    return cast(
+        ArrayLike,
+        rot_rate * radius * cosdeg(lats) * ((1 + 2 * therm_ross_num) ** 0.5 - 1),
+    )
 
 
-def dpot_temp_rce_hh80_dlat(lats, delta_h):
+def dpot_temp_rce_hh80_dlat(lats: ArrayLike, delta_h: float) -> ArrayLike:
     """Meridional derivative of RCE potential temperature with respect to latitude.
 
     Parameters
@@ -127,10 +157,10 @@ def dpot_temp_rce_hh80_dlat(lats, delta_h):
     array-like
         d(theta_RCE)/d(lat), normalized by theta_ref.
     """
-    return -2 * delta_h * sindeg(lats) * cosdeg(lats)
+    return cast(ArrayLike, -2 * delta_h * sindeg(lats) * cosdeg(lats))
 
 
-def u_crit_switch_lat_hh80(therm_ross_num):
+def u_crit_switch_lat_hh80(therm_ross_num: ArrayLike) -> ArrayLike:
     """Latitude where RCE and AMC winds are equal in the Held-Hou 1980 model.
 
     This is the supercriticality boundary: equatorward of this latitude,
@@ -146,10 +176,10 @@ def u_crit_switch_lat_hh80(therm_ross_num):
     float or array-like
         Critical latitude (degrees).
     """
-    return np.rad2deg(np.arccos((1 + 2 * therm_ross_num) ** -0.25))
+    return cast(ArrayLike, np.rad2deg(np.arccos((1 + 2 * therm_ross_num) ** -0.25)))
 
 
-def u_crit_switch_lat_hh80_small_angle(therm_ross_num):
+def u_crit_switch_lat_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     """Critical latitude in the small-angle limit of the HH80 model.
 
     Parameters
@@ -166,10 +196,10 @@ def u_crit_switch_lat_hh80_small_angle(therm_ross_num):
     --------
     u_crit_switch_lat_hh80 : Full (non-small-angle) version.
     """
-    return np.rad2deg(therm_ross_num**0.5)
+    return cast(ArrayLike, np.rad2deg(therm_ross_num**0.5))
 
 
-def hc_edge_hh80_small_angle(therm_ross_num):
+def hc_edge_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     """Hadley cell edge in the small-angle limit (Eq. 16 of HH80).
 
     Parameters
@@ -186,16 +216,16 @@ def hc_edge_hh80_small_angle(therm_ross_num):
     --------
     hc_edge_hh80 : Numerical solution of the full (non-small-angle) Eq. 17.
     """
-    return np.rad2deg((5 * therm_ross_num / 3) ** 0.5)
+    return cast(ArrayLike, np.rad2deg((5 * therm_ross_num / 3) ** 0.5))
 
 
 _DEFAULT_BOUND_GUESS_RANGE = np.arange(0.1, 90.1, 10)
 
 
-def _hc_edge_hh80_lhs(lat, therm_ross_num):
+def _hc_edge_hh80_lhs(lat: float, therm_ross_num: float) -> float:
     """Left hand side of Eq. 17 of Held Hou 1980 (right hand side is zero)."""
     y = sindeg(lat)
-    return (
+    return float(
         (1 / 3) * (4 * therm_ross_num - 1) * y**3
         - y**5 / (1 - y**2)
         - y
@@ -203,7 +233,11 @@ def _hc_edge_hh80_lhs(lat, therm_ross_num):
     )
 
 
-def hc_edge_hh80(therm_ross_num, init_guess=0.1, bound_guess_range=None):
+def hc_edge_hh80(
+    therm_ross_num: Scalar | Sequence[float] | np.ndarray | xr.DataArray,
+    init_guess: float = 0.1,
+    bound_guess_range: Sequence[float] | np.ndarray | None = None,
+) -> xr.DataArray:
     """Hadley cell edge according to Held and Hou 1980, Eq. 17.
 
     Solved numerically using the Brent (1973) root finding algorithm, as

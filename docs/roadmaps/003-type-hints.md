@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-20 |
+| **Last updated** | 2026-07-28 |
 | **Author** | Claude |
 | **Parent** | [001 — Modernize Repository Standards](001-modernize-repo-standards.md), Phase 4 |
 
@@ -23,14 +23,14 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**24 of 31 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-20; the count excludes `__init__.py`. Remaining (7):
-`kuo_el`, `held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`,
+**25 of 31 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-07-28; the count excludes `__init__.py`. Remaining (6):
+`kuo_el`, `lindzen_hou_1988`, `plumb_hou_1992`,
 `fixed_temp_tropo`, `plotting`, `nb_utils`, all in the theoretical-model /
 visualization cluster.
 
 **mypy is now blocking in CI** (2026-07-20). It reports 0 errors across all
-57 files it checks: the 32 source files plus the 25 test modules. CI runs
+58 files it checks: the 32 source files plus the 26 test modules. CI runs
 `mypy puffins/`, which includes `puffins/tests/`, so the test suite is
 type-checked and gating alongside the library source.
 
@@ -122,7 +122,14 @@ uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 
 ## Group 5: Theoretical Models
 
-- [ ] `held_hou_1980.py` — Held-Hou 1980 model
+- [x] `held_hou_1980.py` — Held-Hou 1980 model; type hints + 27 tests added
+      (raw-numpy known-value reconstructions for Eq. 2, the AMC/RCE wind, the
+      meridional temperature gradient, the supercriticality latitude, and both
+      the small-angle Eq. 16 and full transcendental Eq. 17 cell edges, each
+      mutation-checked; small-angle functions cross-checked against their full
+      counterparts in the limit where they must agree). Fixed a broken
+      `hc_edge_hh80` usage example in the README that passed a nonexistent
+      `delta_h` kwarg (completed 2026-07-28)
 - [ ] `lindzen_hou_1988.py` — Lindzen-Hou 1988 model
 - [ ] `plumb_hou_1992.py` — Plumb-Hou 1992 model
 - [ ] `kuo_el.py` — Kuo-Eliassen equation solver

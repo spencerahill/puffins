@@ -66,7 +66,7 @@ f_mars = puffins.dynamics.coriolis_param(
 psi = puffins.had_cell.merid_streamfunc(v, dp)
 
 # Held-Hou 1980 Hadley cell edge latitude
-phi_h = puffins.held_hou_1980.hc_edge_hh80(delta_h=1/6)
+phi_h = puffins.held_hou_1980.hc_edge_hh80(therm_ross_num=0.1)
 ```
 
 Functions accept planet-specific parameters (gravity, radius, rotation
