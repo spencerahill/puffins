@@ -47,7 +47,10 @@ rise without that dependency — a packaging limitation, not missing tests.
 #60 alongside the fix of a latent crash in `u_ph92_rce` (it forwarded an
 unsupported `plus_solution` kwarg to `grad_wind_bouss`), lifting it to 78%.
 `held_hou_1980` was brought to full type annotation and 97% coverage (28
-tests) on 2026-07-28. The remaining theoretical-model cluster
+tests) on 2026-07-28. No test pins a value published in HH80 itself, so its
+coefficients are anchored to the code's own reading of the paper. Adding one
+published-value test, against the paper's worked Earth case, is deferred
+future work. The remaining theoretical-model cluster
 (`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `kuo_el`) is the
 main untested frontier and overlaps with the untyped modules in
 [Roadmap 003](003-type-hints.md).
