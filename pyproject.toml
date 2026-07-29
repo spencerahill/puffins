@@ -139,6 +139,7 @@ module = [
     "puffins.eq_area",
     "puffins.grad_bal",
     "puffins.had_cell",
+    "puffins.held_hou_1980",
     "puffins.hides",
     "puffins.interp",
     "puffins.lcl",

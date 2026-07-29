@@ -8,14 +8,14 @@ import numpy as np
 import scipy
 import xarray as xr
 
-from puffins._typing import Scalar
+from puffins._typing import SolverGuessRange, SolverParamRange
 
 
 def brentq_solver_sweep_param(
     func: Callable[..., float],
-    param_range: Scalar | Sequence[float] | np.ndarray | xr.DataArray,
+    param_range: SolverParamRange,
     init_guess: float,
-    bound_guess_range: Sequence[float] | np.ndarray,
+    bound_guess_range: SolverGuessRange,
     funcargs: tuple[Any, ...] | None = None,
 ) -> xr.DataArray:
     """Numerical solutions to a given function over a given parameter range.

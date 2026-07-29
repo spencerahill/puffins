@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-20 |
+| **Last updated** | 2026-07-28 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -27,7 +27,7 @@ API reference, narrative tutorials, theory pages, and sustainable hosting.
   type-hint work; only `longitude` (67%), `dates` (75%), and `vert_coords`
   (77%) sit below 80%. (Was ~71% at the March assessment.)
 - **Docstring style**: NumPy-style where present, but quality varies from one-liners to full Parameters/Returns sections
-- **Type hints**: 24 of 31 modules fully annotated, and mypy is now blocking in
+- **Type hints**: 25 of 31 modules fully annotated, and mypy is now blocking in
   CI (0 errors on source and tests); see [Roadmap 003](003-type-hints.md)
 - **Doc build system**: **Sphinx scaffold in place**, via `docs/conf.py`
   (autodoc + napoleon + intersphinx + mathjax + viewcode, pydata-sphinx-theme),
