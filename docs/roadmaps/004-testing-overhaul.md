@@ -18,7 +18,7 @@ function and enforced coverage thresholds in CI.
 - **25 test files** (24 module test files plus `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests), covering 24
   of 30 modules
-- **810 tests passing** (1 skipped, 10 xfailed)
+- **811 tests passing** (1 skipped, 10 xfailed)
 - **88% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
@@ -46,7 +46,7 @@ rise without that dependency — a packaging limitation, not missing tests.
 `plumb_hou_1992` gained an initial `test_plumb_hou_1992.py` (2 tests) in PR
 #60 alongside the fix of a latent crash in `u_ph92_rce` (it forwarded an
 unsupported `plus_solution` kwarg to `grad_wind_bouss`), lifting it to 78%.
-`held_hou_1980` was brought to full type annotation and 97% coverage (27
+`held_hou_1980` was brought to full type annotation and 97% coverage (28
 tests) on 2026-07-28. The remaining theoretical-model cluster
 (`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`, `kuo_el`) is the
 main untested frontier and overlaps with the untyped modules in

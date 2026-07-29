@@ -15,13 +15,17 @@ References
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
 import xarray as xr
 
-from ._typing import ArrayLike, Scalar
+from ._typing import (
+    ArrayLike,
+    Scalar,
+    SolverGuessRange,
+    SolverParamRange,
+)
 from .constants import (
     DELTA_H,
     DELTA_V,
@@ -34,6 +38,51 @@ from .nb_utils import cosdeg, sindeg
 from .num_solver import brentq_solver_sweep_param
 
 
+@overload
+def pot_temp_rce_hh80(
+    lats: xr.DataArray,
+    z: ArrayLike,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> xr.DataArray: ...
+@overload
+def pot_temp_rce_hh80(
+    lats: ArrayLike,
+    z: xr.DataArray,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> xr.DataArray: ...
+@overload
+def pot_temp_rce_hh80(
+    lats: np.ndarray,
+    z: np.ndarray | Scalar,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> np.ndarray: ...
+@overload
+def pot_temp_rce_hh80(
+    lats: Scalar,
+    z: np.ndarray,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> np.ndarray: ...
+@overload
+def pot_temp_rce_hh80(
+    lats: Scalar,
+    z: Scalar,
+    theta_ref: float,
+    height: float,
+    delta_h: float,
+    delta_v: float,
+) -> Scalar: ...
 def pot_temp_rce_hh80(
     lats: ArrayLike,
     z: ArrayLike,
@@ -71,9 +120,58 @@ def pot_temp_rce_hh80(
     )
 
 
+@overload
+def pot_temp_rce_hh80_small_ang(
+    lats: xr.DataArray,
+    z: ArrayLike = ...,
+    theta_ref: float = ...,
+    height: float = ...,
+    delta_h: float = ...,
+    delta_v: float = ...,
+) -> xr.DataArray: ...
+# `z` is required in the two overloads where it, rather than `lats`, drives
+# the return type. Defaulting it there would let an all-defaults call such as
+# `f(scalar_lats)` match them, yielding DataArray for a scalar call and an
+# ambiguous (hence `Any`) resolution for an ndarray one.
+@overload
 def pot_temp_rce_hh80_small_ang(
     lats: ArrayLike,
-    z: float = 0.5 * HEIGHT_TROPO,
+    z: xr.DataArray,
+    theta_ref: float = ...,
+    height: float = ...,
+    delta_h: float = ...,
+    delta_v: float = ...,
+) -> xr.DataArray: ...
+@overload
+def pot_temp_rce_hh80_small_ang(
+    lats: np.ndarray,
+    z: np.ndarray | Scalar = ...,
+    theta_ref: float = ...,
+    height: float = ...,
+    delta_h: float = ...,
+    delta_v: float = ...,
+) -> np.ndarray: ...
+@overload
+def pot_temp_rce_hh80_small_ang(
+    lats: Scalar,
+    z: np.ndarray,
+    theta_ref: float = ...,
+    height: float = ...,
+    delta_h: float = ...,
+    delta_v: float = ...,
+) -> np.ndarray: ...
+@overload
+def pot_temp_rce_hh80_small_ang(
+    lats: Scalar,
+    z: Scalar = ...,
+    theta_ref: float = ...,
+    height: float = ...,
+    delta_h: float = ...,
+    delta_v: float = ...,
+) -> Scalar: ...
+def pot_temp_rce_hh80_small_ang(
+    lats: ArrayLike,
+    z: ArrayLike = 0.5 * HEIGHT_TROPO,
     theta_ref: float = THETA_REF,
     height: float = HEIGHT_TROPO,
     delta_h: float = DELTA_H,
@@ -85,7 +183,7 @@ def pot_temp_rce_hh80_small_ang(
     ----------
     lats : array-like
         Latitude (degrees).
-    z : float, optional
+    z : array-like, optional
         Height (m). Default: mid-troposphere.
     theta_ref : float, optional
         Reference potential temperature (K). Default: THETA_REF.
@@ -112,9 +210,44 @@ def pot_temp_rce_hh80_small_ang(
     )
 
 
+@overload
+def u_rce_hh80(
+    lats: xr.DataArray,
+    therm_ross_num: ArrayLike,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
 def u_rce_hh80(
     lats: ArrayLike,
-    therm_ross_num: float,
+    therm_ross_num: xr.DataArray,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> xr.DataArray: ...
+@overload
+def u_rce_hh80(
+    lats: np.ndarray,
+    therm_ross_num: np.ndarray | Scalar,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def u_rce_hh80(
+    lats: Scalar,
+    therm_ross_num: np.ndarray,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> np.ndarray: ...
+@overload
+def u_rce_hh80(
+    lats: Scalar,
+    therm_ross_num: Scalar,
+    rot_rate: float = ...,
+    radius: float = ...,
+) -> Scalar: ...
+def u_rce_hh80(
+    lats: ArrayLike,
+    therm_ross_num: ArrayLike,
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
 ) -> ArrayLike:
@@ -124,7 +257,7 @@ def u_rce_hh80(
     ----------
     lats : array-like
         Latitude (degrees).
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
     rot_rate : float, optional
         Planetary rotation rate (rad/s). Default: Earth.
@@ -142,6 +275,12 @@ def u_rce_hh80(
     )
 
 
+@overload
+def dpot_temp_rce_hh80_dlat(lats: xr.DataArray, delta_h: float) -> xr.DataArray: ...
+@overload
+def dpot_temp_rce_hh80_dlat(lats: np.ndarray, delta_h: float) -> np.ndarray: ...
+@overload
+def dpot_temp_rce_hh80_dlat(lats: Scalar, delta_h: float) -> Scalar: ...
 def dpot_temp_rce_hh80_dlat(lats: ArrayLike, delta_h: float) -> ArrayLike:
     """Meridional derivative of RCE potential temperature with respect to latitude.
 
@@ -160,6 +299,12 @@ def dpot_temp_rce_hh80_dlat(lats: ArrayLike, delta_h: float) -> ArrayLike:
     return cast(ArrayLike, -2 * delta_h * sindeg(lats) * cosdeg(lats))
 
 
+@overload
+def u_crit_switch_lat_hh80(therm_ross_num: xr.DataArray) -> xr.DataArray: ...
+@overload
+def u_crit_switch_lat_hh80(therm_ross_num: np.ndarray) -> np.ndarray: ...
+@overload
+def u_crit_switch_lat_hh80(therm_ross_num: Scalar) -> Scalar: ...
 def u_crit_switch_lat_hh80(therm_ross_num: ArrayLike) -> ArrayLike:
     """Latitude where RCE and AMC winds are equal in the Held-Hou 1980 model.
 
@@ -179,6 +324,14 @@ def u_crit_switch_lat_hh80(therm_ross_num: ArrayLike) -> ArrayLike:
     return cast(ArrayLike, np.rad2deg(np.arccos((1 + 2 * therm_ross_num) ** -0.25)))
 
 
+@overload
+def u_crit_switch_lat_hh80_small_angle(
+    therm_ross_num: xr.DataArray,
+) -> xr.DataArray: ...
+@overload
+def u_crit_switch_lat_hh80_small_angle(therm_ross_num: np.ndarray) -> np.ndarray: ...
+@overload
+def u_crit_switch_lat_hh80_small_angle(therm_ross_num: Scalar) -> Scalar: ...
 def u_crit_switch_lat_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     """Critical latitude in the small-angle limit of the HH80 model.
 
@@ -199,6 +352,12 @@ def u_crit_switch_lat_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     return cast(ArrayLike, np.rad2deg(therm_ross_num**0.5))
 
 
+@overload
+def hc_edge_hh80_small_angle(therm_ross_num: xr.DataArray) -> xr.DataArray: ...
+@overload
+def hc_edge_hh80_small_angle(therm_ross_num: np.ndarray) -> np.ndarray: ...
+@overload
+def hc_edge_hh80_small_angle(therm_ross_num: Scalar) -> Scalar: ...
 def hc_edge_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     """Hadley cell edge in the small-angle limit (Eq. 16 of HH80).
 
@@ -234,27 +393,46 @@ def _hc_edge_hh80_lhs(lat: float, therm_ross_num: float) -> float:
 
 
 def hc_edge_hh80(
-    therm_ross_num: Scalar | Sequence[float] | np.ndarray | xr.DataArray,
+    therm_ross_num: SolverParamRange,
     init_guess: float = 0.1,
-    bound_guess_range: Sequence[float] | np.ndarray | None = None,
+    bound_guess_range: SolverGuessRange | None = None,
 ) -> xr.DataArray:
     """Hadley cell edge according to Held and Hou 1980, Eq. 17.
 
     Solved numerically using the Brent (1973) root finding algorithm, as
     implemented in scipy's ``scipy.optimize.brentq`` function.
 
+    The solver needs an interval in which ``_hc_edge_hh80_lhs`` changes sign.
+    It finds one by marching through ``bound_guess_range`` until some guess
+    gives the opposite sign to that at ``init_guess``, then brackets the root
+    between the two.
+
     Parameters
     ----------
 
     therm_ross_num : scalar or array-like
         Thermal rossby number value(s) for which to solve.
+    init_guess : float, optional
+        Latitude (degrees) marking one end of the initial bracket. Default:
+        0.1, just off the equator, where Eq. 17 is positive for any physical
+        thermal Rossby number.
+    bound_guess_range : sequence of float or numpy.ndarray, optional
+        Latitudes (degrees) to march through in search of the sign change.
+        Default: ``numpy.arange(0.1, 90.1, 10)``.
 
     Returns
     -------
 
     hc_edge : xarray.DataArray
         Array of the numerical solution for each thermal Rossby number value in
-        `therm_ross_num`
+        `therm_ross_num`. Entries for which no sign change was found anywhere
+        in `bound_guess_range` are ``nan`` rather than an error, so a sweep
+        over many thermal Rossby numbers is not derailed by one that fails to
+        bracket. Check for ``nan`` if the bracket arguments are non-default.
+
+    See Also
+    --------
+    hc_edge_hh80_small_angle : Closed-form Eq. 16, the small-angle limit.
 
     """
     if bound_guess_range is None:

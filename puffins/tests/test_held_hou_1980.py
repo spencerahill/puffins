@@ -254,7 +254,11 @@ class TestHcEdgeHH80Lhs:
         np.testing.assert_allclose(_hc_edge_hh80_lhs(lat, ro), expected)
 
     def test_returns_python_float(self) -> None:
-        assert isinstance(_hc_edge_hh80_lhs(20.0, 0.2), float)
+        # `brentq_solver_sweep_param` declares `Callable[..., float]`, and the
+        # bare expression yields np.float64. `type(...) is float` rather than
+        # `isinstance`, because np.float64 subclasses float and so would pass
+        # an isinstance check even with the conversion removed.
+        assert type(_hc_edge_hh80_lhs(20.0, 0.2)) is float
 
 
 class TestHcEdgeHH80:
@@ -294,3 +298,20 @@ class TestHcEdgeHH80:
         default = hc_edge_hh80(ro).item()
         custom = hc_edge_hh80(ro, bound_guess_range=np.arange(5.0, 60.1, 5.0)).item()
         np.testing.assert_allclose(custom, default, rtol=1e-6)
+
+    def test_init_guess_sets_one_end_of_the_bracket(self) -> None:
+        # `init_guess` supplies one end of the sign-change bracket, so it can
+        # decide whether a root is found at all. With `bound_guess_range`
+        # restricted to latitudes entirely poleward of the root (~34.9 deg for
+        # ro=0.3), Eq. 17 is negative at every one of them. An `init_guess`
+        # equatorward of the root is positive there, so a sign change is found;
+        # one that is also poleward is negative, so none is, and the solver
+        # returns nan. Pins the parameter: hardcoding it inside the function
+        # would make both calls agree.
+        ro = 0.3
+        poleward_only = np.array([40.0, 50.0])
+        found = hc_edge_hh80(ro, init_guess=0.1, bound_guess_range=poleward_only)
+        np.testing.assert_allclose(found.item(), hc_edge_hh80(ro).item(), rtol=1e-6)
+
+        not_found = hc_edge_hh80(ro, init_guess=45.0, bound_guess_range=poleward_only)
+        assert np.isnan(not_found.item())
