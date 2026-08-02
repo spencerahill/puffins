@@ -323,8 +323,14 @@ class TestPermRiskRatio:
         """One risk ratio per requested sample, on the named dimensions."""
         arr = _timeseries(np.arange(20.0))
         result = perm_risk_ratio(
-            arr, 8, "time", np.array([5.0, 10.0]), num_samples=6,
-            dim_data="rain", seed=0)
+            arr,
+            8,
+            "time",
+            np.array([5.0, 10.0]),
+            num_samples=6,
+            dim_data="rain",
+            seed=0,
+        )
         assert result.sizes == {"nperm": 6, "rain": 2}
 
     def test_denominator_takes_every_remaining_element(self) -> None:
@@ -341,7 +347,8 @@ class TestPermRiskRatio:
         num_numer = 11
         points = np.array([5.0, 15.0, 25.0])
         result = perm_risk_ratio(
-            arr, num_numer, "time", points, num_samples=1, seed=1234)
+            arr, num_numer, "time", points, num_samples=1, seed=1234
+        )
 
         shuffled = np.random.default_rng(1234).permutation(arr["time"])
         expected = risk_ratio(
@@ -372,6 +379,6 @@ class TestPermRiskRatio:
         """The ensemble dimension can be renamed."""
         arr = _timeseries(np.arange(12.0))
         result = perm_risk_ratio(
-            arr, 5, "time", np.array([4.0]), num_samples=3,
-            dim_perm="shuffle", seed=0)
+            arr, 5, "time", np.array([4.0]), num_samples=3, dim_perm="shuffle", seed=0
+        )
         assert "shuffle" in result.dims

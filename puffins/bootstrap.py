@@ -163,8 +163,7 @@ def perm_risk_ratio(
     """
     if num_numer > len(arr[dim]):
         raise ValueError(
-            f"num_numer ({num_numer}) exceeds the length of '{dim}' "
-            f"({len(arr[dim])})"
+            f"num_numer ({num_numer}) exceeds the length of '{dim}' ({len(arr[dim])})"
         )
     rng = np.random.default_rng(seed)
 

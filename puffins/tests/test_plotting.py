@@ -29,7 +29,8 @@ class TestPanelLabel:
     """Tests for panel_label."""
 
     def test_default_is_lowercase_in_parentheses(
-            self, ax: matplotlib.axes.Axes) -> None:
+        self, ax: matplotlib.axes.Axes
+    ) -> None:
         """The historical default formatting is unchanged."""
         panel_label(0, ax=ax)
         assert _texts(ax) == ["(a)"]
@@ -39,14 +40,14 @@ class TestPanelLabel:
         panel_label(3, ax=ax)
         assert _texts(ax) == ["(d)"]
 
-    def test_uppercase_gives_capital_letters(
-            self, ax: matplotlib.axes.Axes) -> None:
+    def test_uppercase_gives_capital_letters(self, ax: matplotlib.axes.Axes) -> None:
         """uppercase=True switches to A, B, C..."""
         panel_label(1, ax=ax, uppercase=True)
         assert _texts(ax) == ["(B)"]
 
     def test_brackets_false_drops_the_parentheses(
-            self, ax: matplotlib.axes.Axes) -> None:
+        self, ax: matplotlib.axes.Axes
+    ) -> None:
         """brackets=False leaves a bare letter."""
         panel_label(2, ax=ax, brackets=False)
         assert _texts(ax) == ["c"]
@@ -61,8 +62,7 @@ class TestPanelLabel:
         panel_label(0, ax=ax)
         assert ax.texts[0].get_fontweight() != "bold"
 
-    def test_explicit_fontweight_wins_over_bold(
-            self, ax: matplotlib.axes.Axes) -> None:
+    def test_explicit_fontweight_wins_over_bold(self, ax: matplotlib.axes.Axes) -> None:
         """bold only supplies a default, so a passed fontweight takes priority."""
         panel_label(0, ax=ax, bold=True, fontweight="light")
         assert ax.texts[0].get_fontweight() == "light"
@@ -93,19 +93,20 @@ class TestPanelLabel:
         plt.close(fig)
 
     def test_rejects_panel_num_past_the_alphabet(
-            self, ax: matplotlib.axes.Axes) -> None:
+        self, ax: matplotlib.axes.Axes
+    ) -> None:
         """Running off the end of the alphabet is an error, not an IndexError."""
         with pytest.raises(ValueError, match="panel_num must be between"):
             panel_label(26, ax=ax)
 
-    def test_vertical_alignment_defaults_to_top(
-            self, ax: matplotlib.axes.Axes) -> None:
+    def test_vertical_alignment_defaults_to_top(self, ax: matplotlib.axes.Axes) -> None:
         """The label anchors from its top edge unless told otherwise."""
         panel_label(0, ax=ax)
         assert ax.texts[0].get_verticalalignment() == "top"
 
     def test_vertical_alignment_can_be_overridden(
-            self, ax: matplotlib.axes.Axes) -> None:
+        self, ax: matplotlib.axes.Axes
+    ) -> None:
         """An explicit va is honored, via either spelling."""
         panel_label(0, ax=ax, va="bottom")
         assert ax.texts[0].get_verticalalignment() == "bottom"

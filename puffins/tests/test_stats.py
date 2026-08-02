@@ -791,6 +791,7 @@ class TestCdfEmpiricalDim:
         renamed = cdf_empirical(arr, cdf_points=points, dim="rain")
         np.testing.assert_allclose(default.values, renamed.values)
 
+
 class TestXcdf:
     """Tests for xcdf."""
 
@@ -807,12 +808,14 @@ class TestXcdf:
         result = xcdf(arr, "time", points)
         for i in range(rows.shape[0]):
             np.testing.assert_allclose(
-                result.isel(site=i).values, ECDF(rows[i], side="left")(points))
+                result.isel(site=i).values, ECDF(rows[i], side="left")(points)
+            )
 
     def test_differs_between_rows_with_different_distributions(self) -> None:
         """Two rows with disjoint support give different CDFs."""
         arr = xr.DataArray(
-            np.array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]), dims=["site", "time"])
+            np.array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]), dims=["site", "time"]
+        )
         result = xcdf(arr, "time", np.array([5.0]))
         assert result.isel(site=0).item() != result.isel(site=1).item()
 
@@ -829,6 +832,7 @@ class TestXcdf:
         result = xcdf(arr, "time", np.array([1.5, 2.5]))
         assert np.all(np.isnan(result.isel(site=1).values))
         assert not np.any(np.isnan(result.isel(site=0).values))
+
 
 class TestRiskRatioDim:
     """Tests for the `dim` argument of risk_ratio."""
@@ -848,6 +852,7 @@ class TestRiskRatioDim:
         default = risk_ratio(arr1, arr2, cdf_points=points)
         renamed = risk_ratio(arr1, arr2, cdf_points=points, dim="rain")
         np.testing.assert_allclose(default.values, renamed.values)
+
 
 class TestQuantileOfValue:
     """Tests for quantile_of_value."""
@@ -870,7 +875,8 @@ class TestQuantileOfValue:
     def test_drops_nans_before_ranking(self) -> None:
         """NaNs are excluded from the denominator, not counted as high values."""
         with_nans = xr.DataArray(
-            np.array([1.0, 2.0, np.nan, 3.0, 4.0, np.nan]), dims=["event"])
+            np.array([1.0, 2.0, np.nan, 3.0, 4.0, np.nan]), dims=["event"]
+        )
         without = xr.DataArray(np.array([1.0, 2.0, 3.0, 4.0]), dims=["event"])
         assert quantile_of_value(with_nans, 2.0) == quantile_of_value(without, 2.0)
 

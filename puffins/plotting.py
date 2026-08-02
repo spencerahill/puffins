@@ -447,7 +447,9 @@ def panel_label(
                 **text_kwargs,
             )
         return
-    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if uppercase else "abcdefghijklmnopqrstuvwxyz"
+    letters = (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if uppercase else "abcdefghijklmnopqrstuvwxyz"
+    )
     if panel_num >= len(letters):
         raise ValueError(
             f"panel_num must be between 0 and {len(letters) - 1}; got {panel_num}"
