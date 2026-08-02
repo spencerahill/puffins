@@ -30,7 +30,7 @@ overrides) as of 2026-07-28; the count excludes `__init__.py`. Remaining (6):
 visualization cluster.
 
 **mypy is now blocking in CI** (2026-07-20). It reports 0 errors across all
-58 files it checks: the 32 source files plus the 26 test modules. CI runs
+59 files it checks: the 32 source files plus the 27 test modules. CI runs
 `mypy puffins/`, which includes `puffins/tests/`, so the test suite is
 type-checked and gating alongside the library source.
 

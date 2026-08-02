@@ -29,6 +29,7 @@ from puffins.stats import (
     lin_regress,
     merid_centroid,
     multi_regress,
+    quantile_of_value,
     quantile_regress,
     regress_resid,
     risk_ratio,
@@ -40,6 +41,7 @@ from puffins.stats import (
     standardize,
     trend,
     welch,
+    xcdf,
     xfit,
     xhist,
     xmannken,
@@ -764,6 +766,120 @@ class TestRiskRatio:
         np.testing.assert_array_equal(result["data"].values, [1.0, 2.0, 3.0])
 
 
+class TestCdfEmpiricalDim:
+    """Tests for the `dim` argument of cdf_empirical."""
+
+    def test_defaults_to_data(self) -> None:
+        """Without `dim` the CDF coordinate keeps its historical name."""
+        arr = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["event"])
+        result = cdf_empirical(arr, cdf_points=np.array([2.0]))
+        assert result.dims == ("data",)
+
+    def test_renames_both_dim_and_coord(self) -> None:
+        """Passing `dim` names the dimension and its coordinate alike."""
+        points = np.array([1.0, 2.0])
+        arr = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["event"])
+        result = cdf_empirical(arr, cdf_points=points, dim="rain")
+        assert result.dims == ("rain",)
+        np.testing.assert_array_equal(result["rain"].values, points)
+
+    def test_values_are_unchanged_by_renaming(self) -> None:
+        """Renaming is cosmetic: the CDF values themselves do not move."""
+        arr = xr.DataArray(np.array([1.0, 2.0, 3.0, 4.0]), dims=["event"])
+        points = np.array([1.5, 2.5, 3.5])
+        default = cdf_empirical(arr, cdf_points=points)
+        renamed = cdf_empirical(arr, cdf_points=points, dim="rain")
+        np.testing.assert_allclose(default.values, renamed.values)
+
+class TestXcdf:
+    """Tests for xcdf."""
+
+    def test_reconstructs_a_per_row_ecdf(self) -> None:
+        """Each row's CDF is the raw numpy ECDF of that row alone.
+
+        Pins that the reduction is along `dim` only: pooling the whole array
+        would give both rows the same CDF.
+
+        """
+        rows = np.array([[1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]])
+        arr = xr.DataArray(rows, dims=["site", "time"])
+        points = np.array([2.5, 15.0])
+        result = xcdf(arr, "time", points)
+        for i in range(rows.shape[0]):
+            np.testing.assert_allclose(
+                result.isel(site=i).values, ECDF(rows[i], side="left")(points))
+
+    def test_differs_between_rows_with_different_distributions(self) -> None:
+        """Two rows with disjoint support give different CDFs."""
+        arr = xr.DataArray(
+            np.array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]), dims=["site", "time"])
+        result = xcdf(arr, "time", np.array([5.0]))
+        assert result.isel(site=0).item() != result.isel(site=1).item()
+
+    def test_output_shape_follows_the_cdf_points(self) -> None:
+        """The core output dimension has one entry per requested point."""
+        arr = xr.DataArray(np.arange(12.0).reshape(3, 4), dims=["site", "time"])
+        result = xcdf(arr, "time", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+        assert result.sizes == {"site": 3, "data": 5}
+
+    def test_all_nan_slice_gives_all_nan(self) -> None:
+        """An all-NaN row yields NaNs rather than raising."""
+        rows = np.array([[1.0, 2.0, 3.0], [np.nan, np.nan, np.nan]])
+        arr = xr.DataArray(rows, dims=["site", "time"])
+        result = xcdf(arr, "time", np.array([1.5, 2.5]))
+        assert np.all(np.isnan(result.isel(site=1).values))
+        assert not np.any(np.isnan(result.isel(site=0).values))
+
+class TestRiskRatioDim:
+    """Tests for the `dim` argument of risk_ratio."""
+
+    def test_propagates_dim_to_the_output(self) -> None:
+        """The risk ratio carries the requested CDF coordinate name."""
+        arr1 = xr.DataArray(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), dims=["event"])
+        arr2 = xr.DataArray(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), dims=["event"])
+        result = risk_ratio(arr1, arr2, cdf_points=np.array([2.0, 3.0]), dim="rain")
+        assert result.dims == ("rain",)
+
+    def test_values_match_the_default_dim(self) -> None:
+        """Renaming the coordinate leaves the ratio itself untouched."""
+        arr1 = xr.DataArray(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), dims=["event"])
+        arr2 = xr.DataArray(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), dims=["event"])
+        points = np.array([2.0, 3.0, 4.0])
+        default = risk_ratio(arr1, arr2, cdf_points=points)
+        renamed = risk_ratio(arr1, arr2, cdf_points=points, dim="rain")
+        np.testing.assert_allclose(default.values, renamed.values)
+
+class TestQuantileOfValue:
+    """Tests for quantile_of_value."""
+
+    def test_inverts_numpy_quantile(self) -> None:
+        """Feeding back a quantile's value recovers that quantile."""
+        rng = np.random.default_rng(0)
+        arr = xr.DataArray(rng.standard_normal(1000), dims=["event"])
+        for quantile in (0.1, 0.5, 0.9):
+            value = np.quantile(arr.values, quantile)
+            assert quantile_of_value(arr, value) == pytest.approx(quantile, abs=0.01)
+
+    def test_reconstructs_the_rank_fraction(self) -> None:
+        """Equals the fraction of values at or below, rebuilt from numpy."""
+        vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+        expected = float(np.mean(vals <= 4.0))
+        arr = xr.DataArray(vals, dims=["event"])
+        assert quantile_of_value(arr, 4.0) == pytest.approx(expected)
+
+    def test_drops_nans_before_ranking(self) -> None:
+        """NaNs are excluded from the denominator, not counted as high values."""
+        with_nans = xr.DataArray(
+            np.array([1.0, 2.0, np.nan, 3.0, 4.0, np.nan]), dims=["event"])
+        without = xr.DataArray(np.array([1.0, 2.0, 3.0, 4.0]), dims=["event"])
+        assert quantile_of_value(with_nans, 2.0) == quantile_of_value(without, 2.0)
+
+    def test_below_the_minimum_is_zero(self) -> None:
+        """A value under the whole sample sits at quantile zero."""
+        arr = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["event"])
+        assert quantile_of_value(arr, 0.0) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Distribution fits.
 # ---------------------------------------------------------------------------
@@ -842,3 +958,13 @@ class TestFalseDiscRateThreshPval:
         expected = clean[clean <= rhs].max()
         result = false_disc_rate_thresh_pval(arr, target_fdr=0.05)
         np.testing.assert_allclose(result, expected)
+
+    def test_returns_nan_when_nothing_passes(self) -> None:
+        """All p values above their rank lines gives NaN, not an error."""
+        pvals = xr.DataArray(np.array([0.9, 0.95, 0.99]), dims=["event"])
+        assert np.isnan(false_disc_rate_thresh_pval(pvals, target_fdr=0.05))
+
+    def test_still_returns_the_threshold_when_some_pass(self) -> None:
+        """The NaN guard does not disturb the normal path."""
+        pvals = xr.DataArray(np.array([0.001, 0.9, 0.95]), dims=["event"])
+        assert false_disc_rate_thresh_pval(pvals, target_fdr=0.05) == 0.001

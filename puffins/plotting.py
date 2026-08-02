@@ -405,8 +405,24 @@ def fig_ax(width: float = 3.75, aspect: float = 1.618) -> tuple[Figure, Axes]:
 
 # Panel labeling.
 def panel_label(
-    panel_num=None, ax=None, extra_text=None, x=0.01, y=0.99, **text_kwargs
+    panel_num=None,
+    ax=None,
+    extra_text=None,
+    x=0.01,
+    y=0.99,
+    uppercase=False,
+    brackets=True,
+    bold=False,
+    **text_kwargs,
 ):
+    """Annotate an Axes, or an iterable of Axes, with panel labels.
+
+    With `panel_num` of None, `ax` is treated as an iterable and each element
+    is labeled in turn.  `uppercase` gives "A, B, C..." rather than
+    "a, b, c..."; `brackets` surrounds the letter in parentheses; `bold`
+    renders the label in bold, including any `extra_text`.
+
+    """
     ax = _gca_if_ax_none(ax)
 
     if "va" in text_kwargs:
@@ -419,12 +435,29 @@ def panel_label(
 
     if panel_num is None:
         for n, ax_ in enumerate(ax):
-            panel_label(n, ax=ax_, x=x, y=y, extra_text=extra_text, **text_kwargs)
+            panel_label(
+                n,
+                ax=ax_,
+                extra_text=extra_text,
+                x=x,
+                y=y,
+                uppercase=uppercase,
+                brackets=brackets,
+                bold=bold,
+                **text_kwargs,
+            )
         return
-    letters = "abcdefghijklmnopqrstuvwxyz"
-    label = f"({letters[panel_num]})"
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if uppercase else "abcdefghijklmnopqrstuvwxyz"
+    if panel_num >= len(letters):
+        raise ValueError(
+            f"panel_num must be between 0 and {len(letters) - 1}; got {panel_num}"
+        )
+    letter = letters[panel_num]
+    label = f"({letter})" if brackets else letter
     if extra_text is not None:
         label += f" {extra_text}"
+    if bold:
+        text_kwargs.setdefault("fontweight", "bold")
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 

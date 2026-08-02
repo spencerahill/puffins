@@ -610,9 +610,19 @@ def hist(
 
 
 def cdf_empirical(
-    arr: ArrayLike, cdf_points: ArrayLike | None = None, side: str = "left"
+    arr: ArrayLike,
+    cdf_points: ArrayLike | None = None,
+    side: str = "left",
+    dim: str = "data",
 ) -> xr.DataArray:
-    """Compute empirical cumulative distribution function."""
+    """Compute empirical cumulative distribution function.
+
+    Every value in `arr` is pooled into a single distribution.  `dim` names the
+    dimension and coordinate holding the points at which the CDF is evaluated,
+    so that it can carry the name of the variable in question (e.g. "rain")
+    rather than the generic default.
+
+    """
     arr_any = cast(Any, arr)
     try:
         vals_flat_sorted = np.sort(arr_any.values.flatten())
@@ -622,7 +632,36 @@ def cdf_empirical(
     if cdf_points is None:
         cdf_points = vals
     ecdf = ECDF(vals, side=side)(cdf_points)
-    return xr.DataArray(ecdf, dims=["data"], coords={"data": cdf_points}, name="cdf")
+    return xr.DataArray(ecdf, dims=[dim], coords={dim: cdf_points}, name="cdf")
+
+
+def xcdf(arr: xr.DataArray, dim: str, cdf_points: ArrayLike) -> xr.DataArray:
+    """Empirical CDFs broadcast over all dimensions other than `dim`.
+
+    Whereas `cdf_empirical` pools the whole array into one distribution, this
+    computes a separate CDF along `dim` for each point of the remaining
+    dimensions.  All-NaN slices yield all-NaN CDFs rather than raising.
+
+    """
+    cdf_point_vals = np.asarray(cdf_points)
+
+    def _xcdf(vals: np.ndarray) -> np.ndarray:
+        """Wrapper to use in apply_ufunc."""
+        if np.all(np.isnan(vals)):
+            return np.full(cdf_point_vals.shape, np.nan)
+        return cast(np.ndarray, cdf_empirical(vals, cdf_points=cdf_point_vals).values)
+
+    return cast(
+        xr.DataArray,
+        xr.apply_ufunc(
+            _xcdf,
+            arr,
+            input_core_dims=[[dim]],
+            output_core_dims=[["data"]],
+            vectorize=True,
+            dask="parallelized",
+        ),
+    )
 
 
 def risk_ratio(
@@ -630,13 +669,24 @@ def risk_ratio(
     arr2: ArrayLike,
     cdf_points: ArrayLike | None = None,
     side: str = "left",
+    dim: str = "data",
 ) -> xr.DataArray:
     """Ratio of exceedance likelihood between two distributions."""
     if cdf_points is None:
         cdf_points = np.union1d(arr1, arr2)
-    cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side)
-    cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side)
+    cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side, dim=dim)
+    cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side, dim=dim)
     return cast(xr.DataArray, ((1.0 - cdf1) / (1.0 - cdf2)).rename("risk_ratio"))
+
+
+def quantile_of_value(arr: ArrayLike, value: ArrayLike) -> Any:
+    """Quantile, within [0, 1], of `value` in the distribution of `arr`.
+
+    The inverse of `numpy.quantile`.  NaNs are dropped before ranking.
+
+    """
+    vals = np.sort(flat_dropna(cast(Any, arr)))
+    return scipy.stats.percentileofscore(vals, value) / 100.0
 
 
 # Statistical fits
@@ -672,6 +722,16 @@ def xfit(
 def false_disc_rate_thresh_pval(pvals: xr.DataArray, target_fdr: float = 0.05) -> float:
     """Threshold p value for significance based on False Discovery Rate.
 
+    For data with zero autocorrelation, `target_fdr` also amounts to the size
+    of a global significance test, i.e. the probability of rejecting a global
+    null hypothesis if it is true.  For highly autocorrelated data it can be
+    thought of as approximately twice that global test size.  So for example
+    `target_fdr=0.1` gives a 10% global test for uncorrelated data, or 5% for
+    highly correlated data.
+
+    Returns NaN if no p value passes, in which case nothing is significant at
+    the given rate.
+
     From Wilks 2016, BAMS, Eq. 3.
 
     """
@@ -681,4 +741,6 @@ def false_disc_rate_thresh_pval(pvals: xr.DataArray, target_fdr: float = 0.05) -
     num_pvals = len(pvals_sorted)
     rhs = np.arange(1, num_pvals + 1) / num_pvals * target_fdr
     accepted_inds = pvals_sorted <= rhs
+    if not np.any(accepted_inds):
+        return float("nan")
     return float(pvals_sorted[accepted_inds].max())

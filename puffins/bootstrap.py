@@ -129,3 +129,59 @@ def boot_risk_ratio(
 
     boot_rr_vals = [_rr_one_sample() for _ in range(num_bootstraps)]
     return xr.concat(boot_rr_vals, dim="nboot")
+
+
+def perm_risk_ratio(
+    arr: xr.DataArray,
+    num_numer: int,
+    dim: str,
+    cdf_points: ArrayLike,
+    num_samples: int = 1000,
+    side: str = "left",
+    dim_data: str = "data",
+    dim_perm: str = "nperm",
+    seed: int | None = None,
+) -> xr.DataArray:
+    """Permutation test on a risk ratio.
+
+    Each sample randomly partitions `arr` along `dim` into a numerator group of
+    `num_numer` elements and a denominator group holding *all* of the rest, then
+    computes the resulting risk ratio.  This differs from `boot_risk_ratio`,
+    which draws a denominator of a separately specified size and so can leave
+    some elements in neither group.  Under the null hypothesis that group
+    membership is unrelated to the distribution, the returned ensemble is the
+    sampling distribution against which an observed risk ratio is tested.
+
+    `dim_data` names the CDF coordinate, as in `stats.risk_ratio`.
+
+    Note that this is slow: each risk ratio calculation can itself be slow,
+    especially with many points sampled along the CDF, and it is then repeated
+    a large number of times.
+
+    Pass ``seed`` to make the permutation resampling reproducible.
+
+    """
+    if num_numer > len(arr[dim]):
+        raise ValueError(
+            f"num_numer ({num_numer}) exceeds the length of '{dim}' "
+            f"({len(arr[dim])})"
+        )
+    rng = np.random.default_rng(seed)
+
+    def _rr_one_sample() -> xr.DataArray:
+        dim_randomized = rng.permutation(arr[dim])
+        rand_numer = dim_randomized[:num_numer]
+        rand_denom = dim_randomized[num_numer:]
+        return cast(
+            xr.DataArray,
+            risk_ratio(
+                arr.sel({dim: rand_numer}),
+                arr.sel({dim: rand_denom}),
+                cdf_points=cdf_points,
+                side=side,
+                dim=dim_data,
+            ),
+        )
+
+    perm_rr_vals = [_rr_one_sample() for _ in range(num_samples)]
+    return xr.concat(perm_rr_vals, dim=dim_perm)

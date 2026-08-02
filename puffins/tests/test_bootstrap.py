@@ -10,6 +10,7 @@ from puffins.bootstrap import (
     corr_bootstrap,
     corr_sig_nonzero_bootstrap,
     corr_sig_nonzero_from_full_and_boot,
+    perm_risk_ratio,
 )
 from puffins.stats import risk_ratio
 
@@ -313,3 +314,64 @@ class TestBootRiskRatio:
             boot_risk_ratio(
                 arr, 6, 6, "time", cdf_points=np.array([1.0]), num_bootstraps=2
             )
+
+
+class TestPermRiskRatio:
+    """Tests for perm_risk_ratio."""
+
+    def test_sample_count_and_dim_names(self) -> None:
+        """One risk ratio per requested sample, on the named dimensions."""
+        arr = _timeseries(np.arange(20.0))
+        result = perm_risk_ratio(
+            arr, 8, "time", np.array([5.0, 10.0]), num_samples=6,
+            dim_data="rain", seed=0)
+        assert result.sizes == {"nperm": 6, "rain": 2}
+
+    def test_denominator_takes_every_remaining_element(self) -> None:
+        """The two groups partition the dimension with nothing left over.
+
+        Reconstructs one draw from the same seeded generator and compares
+        against `risk_ratio` computed on the complementary split.  This is what
+        distinguishes the permutation test from `boot_risk_ratio`, which draws
+        a denominator of a separately specified size; the assertion fails if
+        the denominator slice is truncated to any fixed count.
+
+        """
+        arr = _timeseries(np.arange(30.0))
+        num_numer = 11
+        points = np.array([5.0, 15.0, 25.0])
+        result = perm_risk_ratio(
+            arr, num_numer, "time", points, num_samples=1, seed=1234)
+
+        shuffled = np.random.default_rng(1234).permutation(arr["time"])
+        expected = risk_ratio(
+            arr.sel(time=shuffled[:num_numer]),
+            arr.sel(time=shuffled[num_numer:]),
+            cdf_points=points,
+        )
+        np.testing.assert_allclose(result.isel(nperm=0).values, expected.values)
+        assert shuffled[num_numer:].size == arr.sizes["time"] - num_numer
+
+    def test_seed_makes_the_draw_reproducible(self) -> None:
+        """The same seed gives identical ensembles, a different one does not."""
+        arr = _timeseries(np.arange(25.0))
+        points = np.array([5.0, 12.0])
+        first = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=7)
+        same = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=7)
+        other = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=8)
+        np.testing.assert_array_equal(first.values, same.values)
+        assert not np.array_equal(first.values, other.values)
+
+    def test_rejects_a_numerator_larger_than_the_dimension(self) -> None:
+        """Asking for more numerator elements than exist is an error."""
+        arr = _timeseries(np.arange(10.0))
+        with pytest.raises(ValueError, match="exceeds the length"):
+            perm_risk_ratio(arr, 11, "time", np.array([5.0]), num_samples=1)
+
+    def test_honors_nondefault_perm_dim_name(self) -> None:
+        """The ensemble dimension can be renamed."""
+        arr = _timeseries(np.arange(12.0))
+        result = perm_risk_ratio(
+            arr, 5, "time", np.array([4.0]), num_samples=3,
+            dim_perm="shuffle", seed=0)
+        assert "shuffle" in result.dims
