@@ -10,6 +10,7 @@ from puffins.bootstrap import (
     corr_bootstrap,
     corr_sig_nonzero_bootstrap,
     corr_sig_nonzero_from_full_and_boot,
+    perm_risk_ratio,
 )
 from puffins.stats import risk_ratio
 
@@ -309,7 +310,129 @@ class TestBootRiskRatio:
     def test_raises_when_groups_exceed_sample_size(self) -> None:
         """Requesting more numerator+denominator members than exist is rejected."""
         arr = _timeseries(np.arange(10.0))
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="must each be"):
             boot_risk_ratio(
                 arr, 6, 6, "time", cdf_points=np.array([1.0]), num_bootstraps=2
             )
+
+    @pytest.mark.parametrize(("num_numer", "num_denom"), [(0, 4), (4, 0), (-2, 4)])
+    def test_rejects_an_empty_group(self, num_numer: int, num_denom: int) -> None:
+        """Either group being empty is rejected up front.
+
+        An empty group otherwise reaches `cdf_empirical` as a zero-length
+        sample, which is a NaN column rather than an error, so nothing
+        downstream would flag it.
+
+        """
+        arr = _timeseries(np.arange(10.0))
+        with pytest.raises(ValueError, match="must each be"):
+            boot_risk_ratio(
+                arr,
+                num_numer,
+                num_denom,
+                "time",
+                cdf_points=np.array([1.0]),
+                num_bootstraps=2,
+            )
+
+    def test_honors_nondefault_dim_names(self) -> None:
+        """dim_data and dim_boot rename the CDF and ensemble dimensions."""
+        arr = _timeseries(np.arange(20.0))
+        result = boot_risk_ratio(
+            arr,
+            5,
+            6,
+            "time",
+            cdf_points=np.array([4.0, 12.0]),
+            num_bootstraps=3,
+            dim_data="rain",
+            dim_boot="draw",
+            seed=0,
+        )
+        assert result.sizes == {"draw": 3, "rain": 2}
+
+
+class TestPermRiskRatio:
+    """Tests for perm_risk_ratio."""
+
+    def test_sample_count_and_dim_names(self) -> None:
+        """One risk ratio per requested sample, on the named dimensions."""
+        arr = _timeseries(np.arange(20.0))
+        result = perm_risk_ratio(
+            arr,
+            8,
+            "time",
+            np.array([5.0, 10.0]),
+            num_samples=6,
+            dim_data="rain",
+            seed=0,
+        )
+        assert result.sizes == {"nperm": 6, "rain": 2}
+
+    def test_denominator_takes_every_remaining_element(self) -> None:
+        """The two groups partition the dimension with nothing left over.
+
+        Reconstructs one draw from the same seeded generator and compares
+        against `risk_ratio` computed on the complementary split.  This is what
+        distinguishes the permutation test from `boot_risk_ratio`, which draws
+        a denominator of a separately specified size; the assertion fails if
+        the denominator slice is truncated to any fixed count.
+
+        """
+        arr = _timeseries(np.arange(30.0))
+        num_numer = 11
+        points = np.array([5.0, 15.0, 25.0])
+        result = perm_risk_ratio(
+            arr, num_numer, "time", points, num_samples=1, seed=1234
+        )
+
+        shuffled = np.random.default_rng(1234).permutation(arr["time"])
+        expected = risk_ratio(
+            arr.sel(time=shuffled[:num_numer]),
+            arr.sel(time=shuffled[num_numer:]),
+            cdf_points=points,
+        )
+        np.testing.assert_allclose(result.isel(nperm=0).values, expected.values)
+        assert shuffled[num_numer:].size == arr.sizes["time"] - num_numer
+
+    def test_seed_makes_the_draw_reproducible(self) -> None:
+        """The same seed gives identical ensembles, a different one does not."""
+        arr = _timeseries(np.arange(25.0))
+        points = np.array([5.0, 12.0])
+        first = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=7)
+        same = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=7)
+        other = perm_risk_ratio(arr, 9, "time", points, num_samples=4, seed=8)
+        np.testing.assert_array_equal(first.values, same.values)
+        assert not np.array_equal(first.values, other.values)
+
+    @pytest.mark.parametrize("num_numer", [11, 10, 0, -3])
+    def test_rejects_a_numerator_that_empties_either_group(
+        self, num_numer: int
+    ) -> None:
+        """Both ends of the range are rejected, not just the top.
+
+        Because the denominator takes everything the numerator leaves,
+        `num_numer` equal to the dimension's own length empties it, and zero
+        empties the numerator; both then reach `cdf_empirical` as a
+        zero-length sample.  A negative value is worse still: slicing wraps,
+        so the two groups silently come out with the wrong sizes rather than
+        failing.
+
+        """
+        arr = _timeseries(np.arange(10.0))
+        with pytest.raises(ValueError, match="must be at least 1"):
+            perm_risk_ratio(arr, num_numer, "time", np.array([5.0]), num_samples=1)
+
+    def test_accepts_the_largest_valid_numerator(self) -> None:
+        """One less than the full length is allowed, leaving a single element."""
+        arr = _timeseries(np.arange(10.0))
+        result = perm_risk_ratio(arr, 9, "time", np.array([5.0]), num_samples=1, seed=0)
+        assert result.sizes == {"nperm": 1, "data": 1}
+
+    def test_honors_nondefault_perm_dim_name(self) -> None:
+        """The ensemble dimension can be renamed."""
+        arr = _timeseries(np.arange(12.0))
+        result = perm_risk_ratio(
+            arr, 5, "time", np.array([4.0]), num_samples=3, dim_perm="shuffle", seed=0
+        )
+        assert "shuffle" in result.dims

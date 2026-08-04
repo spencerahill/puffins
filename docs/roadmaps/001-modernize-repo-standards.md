@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | In Progress |
 | **Created** | 2026-03-16 |
-| **Last updated** | 2026-07-20 |
+| **Last updated** | 2026-07-28 |
 | **Author** | Spencer A. Hill |
 
 ## Objective
@@ -62,16 +62,16 @@ units and coordinate conventions.
 **Now tracked in detail by [Roadmap 003 — Type Hints](003-type-hints.md).**
 The per-module checklist lives there to avoid duplication.
 
-Status (2026-07-20): **24 of 31 modules fully annotated** under the
+Status (2026-07-28): **25 of 31 modules fully annotated** under the
 `pyproject.toml` mypy strict overrides (the count excludes `__init__.py`).
-**mypy is now blocking in CI**, with 0 errors across all 57 files it checks:
-the 32 source files plus the 25 test modules. The 62 test-file errors that
+**mypy is now blocking in CI**, with 0 errors across all 58 files it checks:
+the 32 source files plus the 26 test modules. The 62 test-file errors that
 previously blocked the promotion were cleared by adding `@overload` stacks to
 the `ArrayLike`-returning functions the tests exercise (51 errors) plus
 narrowing on the test side (11). That figure is specific to the mypy target
 and dependency versions CI uses; see [Roadmap 003](003-type-hints.md) for the
 measured counts under other combinations. Remaining: `kuo_el`,
-`held_hou_1980`, `lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`,
+`lindzen_hou_1988`, `plumb_hou_1992`, `fixed_temp_tropo`,
 `plotting`, `nb_utils`; then enable global strict mode. The
 `overload-cannot-match` prerequisite noted here previously was checked against
 mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
@@ -81,11 +81,11 @@ mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
 **Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
 The per-module checklist and testing strategies live there.
 
-Status (2026-07-20): from effectively 0% to **783 tests passing across 24 test
-files, 88% total line coverage** (1 skipped, 10 xfailed). 22 modules meet the
+Status (2026-08-02): from effectively 0% to **868 tests passing across 26 test
+files, 90% total line coverage** (1 skipped, 10 xfailed). 23 modules meet the
 ≥80% target. The remaining gap is the theoretical-model cluster
 (`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
-`held_hou_1980` 54%, `plumb_hou_1992` 78%), plus `budget_adj` at 16%.
+`plumb_hou_1992` 78%), plus `budget_adj` at 16%.
 `budget_adj` has a full test file, but its numerical tests need
 `windspharm`/`pyspharm`, which will not install in CI, so they skip there and
 its measured coverage understates what is actually tested. A CI coverage gate
