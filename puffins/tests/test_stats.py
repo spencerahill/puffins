@@ -475,8 +475,19 @@ class TestHalfYearSymmetry:
 
     def test_wrong_length_raises(self) -> None:
         """A month axis not of length 12 raises ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="must have length 12"):
             half_year_symmetry(np.ones(10))
+
+    def test_missing_dim_raises_clearly(self) -> None:
+        """A DataArray lacking `dim` names the problem rather than failing inside.
+
+        Unguarded, apply_ufunc raises `tuple.index(x): x not in tuple`, which
+        names neither the argument nor the fix.
+
+        """
+        arr = xr.DataArray(np.ones(12), dims=["time"])
+        with pytest.raises(ValueError, match="not among the array's dims"):
+            half_year_symmetry(arr)
 
     def test_vectorized_over_axis(self) -> None:
         """Stacking a flip and a repeat cycle along axis 1 gives [-1, +1]."""

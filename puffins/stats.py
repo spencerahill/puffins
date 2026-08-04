@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import numpy as np
 import pymannkendall as mk
@@ -289,8 +289,20 @@ def autocorr(
     )
 
 
+@overload
 def half_year_symmetry(
-    arr: xr.DataArray | ArrayLike,
+    arr: xr.DataArray, dim: str = ..., axis: int = ...
+) -> xr.DataArray: ...
+
+
+@overload
+def half_year_symmetry(
+    arr: np.ndarray, dim: str = ..., axis: int = ...
+) -> np.ndarray: ...
+
+
+def half_year_symmetry(
+    arr: xr.DataArray | np.ndarray,
     dim: str = "month",
     axis: int = 0,
 ) -> xr.DataArray | np.ndarray:
@@ -334,9 +346,15 @@ def half_year_symmetry(
         vals = vals - vals.mean(axis=0, keepdims=True)
         shifted = np.roll(vals, 6, axis=0)
         with np.errstate(invalid="ignore", divide="ignore"):
-            return np.sum(vals * shifted, axis=0) / np.sum(vals * vals, axis=0)
+            rho6 = np.sum(vals * shifted, axis=0) / np.sum(vals * vals, axis=0)
+        return cast(np.ndarray, rho6)
 
     if isinstance(arr, xr.DataArray):
+        if dim not in arr.dims:
+            raise ValueError(
+                f"month dimension '{dim}' not among the array's dims {arr.dims}; "
+                "pass the name of the month dimension as `dim`"
+            )
         return cast(
             xr.DataArray,
             xr.apply_ufunc(_rho6, arr, input_core_dims=[[dim]], kwargs={"ax": -1}),

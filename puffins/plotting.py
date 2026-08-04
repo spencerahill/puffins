@@ -3,6 +3,8 @@
 
 import os.path
 from collections import namedtuple
+from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import xarray as xr
@@ -11,8 +13,10 @@ from faceted import faceted_ax as fac_ax
 from matplotlib import colors, gridspec, ticker
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 
+from ._typing import ArrayLike
 from .names import LAT_STR
 from .nb_utils import sindeg
 from .stats import detrend, dt_std_anom, lin_regress, trend
@@ -466,7 +470,16 @@ def panel_label(
 
 
 # Contour levels.
-def tight_levels(arrs, step):
+# Tolerance, in units of `step`, for treating a data extremum as sitting
+# exactly on a grid multiple.  Without it, floor and ceil step a whole band
+# too far whenever the quotient is an exact integer mathematically but not in
+# binary floating point (0.3 / 0.1 is 2.9999999999999996; 0.07 / 0.01 is
+# 7.000000000000001), producing the empty end band this function exists to
+# avoid.
+_GRID_SNAP_TOL = 1e-9
+
+
+def tight_levels(arrs: ArrayLike | Sequence[ArrayLike], step: float) -> np.ndarray:
     """Contour levels bracketing the data, with no unused band at either end.
 
     The levels are the multiples of ``step`` from the largest one at or below
@@ -479,6 +492,14 @@ def tight_levels(arrs, step):
 
     The bracketing is asymmetric about zero whenever the data are: a field
     running -0.054 to +0.029 with ``step=0.01`` yields levels -0.06 to +0.03.
+
+    A data extremum landing exactly on a multiple of ``step`` is treated as
+    being on the grid rather than a hair outside it, so it adds no empty band.
+    Constant data yield two levels rather than one, since a single level is
+    zero bands and no contour routine can use it.
+
+    NaNs and infinities are ignored.  A field with no finite values at all
+    raises, having nothing to bracket.
 
     Parameters
     ----------
@@ -497,15 +518,21 @@ def tight_levels(arrs, step):
     """
     if step <= 0:
         raise ValueError(f"step must be positive; got {step}")
-    if isinstance(arrs, list | tuple):
-        min_val = min(float(np.nanmin(arr)) for arr in arrs)
-        max_val = max(float(np.nanmax(arr)) for arr in arrs)
-    else:
-        min_val = float(np.nanmin(arrs))
-        max_val = float(np.nanmax(arrs))
-    start = np.floor(min_val / step) * step
-    num_bands = int(np.round((np.ceil(max_val / step) * step - start) / step))
-    return start + step * np.arange(num_bands + 1)
+    arr_seq = arrs if isinstance(arrs, list | tuple) else [arrs]
+    mins, maxs = [], []
+    for arr in arr_seq:
+        vals = np.asarray(arr, dtype=float)
+        finite = vals[np.isfinite(vals)]
+        if finite.size:
+            mins.append(float(finite.min()))
+            maxs.append(float(finite.max()))
+    if not mins:
+        raise ValueError("no finite values in `arrs`; nothing to bracket")
+    min_val, max_val = min(mins), max(maxs)
+    start = np.floor(min_val / step + _GRID_SNAP_TOL) * step
+    stop = np.ceil(max_val / step - _GRID_SNAP_TOL) * step
+    num_bands = max(int(np.round((stop - start) / step)), 1)
+    return cast(np.ndarray, start + step * np.arange(num_bands + 1))
 
 
 # Colormaps.
@@ -551,7 +578,11 @@ def trunc_cmap_about_center(
     return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max, n_colors=n_colors)
 
 
-def band_colors_about_center(cmap, levels, central_val=0.0):
+def band_colors_about_center(
+    cmap: Colormap,
+    levels: ArrayLike | Sequence[float],
+    central_val: float = 0.0,
+) -> list[tuple[float, float, float, float]]:
     """Colors for filled contour bands diverging about a central value.
 
     Discrete-band counterpart to ``trunc_cmap_about_center``, for a filled
@@ -583,11 +614,16 @@ def band_colors_about_center(cmap, levels, central_val=0.0):
         ``contourf`` as ``colors``.
 
     """
-    levels = np.asarray(levels, dtype=float)
-    if levels.size < 2:
-        raise ValueError(f"need at least 2 levels; got {levels.size}")
-    ind_center = int(np.argmin(np.abs(levels - central_val)))
-    num_below, num_above = ind_center, levels.size - 1 - ind_center
+    level_vals = np.asarray(levels, dtype=float)
+    if level_vals.size < 2:
+        raise ValueError(f"need at least 2 levels; got {level_vals.size}")
+    if not np.all(np.diff(level_vals) > 0):
+        raise ValueError(
+            "levels must increase and contain no NaNs; otherwise the band "
+            f"nearest `central_val` is not well defined.  Got {level_vals}"
+        )
+    ind_center = int(np.argmin(np.abs(level_vals - central_val)))
+    num_below, num_above = ind_center, level_vals.size - 1 - ind_center
     num_long = max(num_below, num_above)
     band_centers = np.arange(-num_below, num_above) + 0.5
     return [cmap(0.5 + center / (2 * num_long)) for center in band_centers]

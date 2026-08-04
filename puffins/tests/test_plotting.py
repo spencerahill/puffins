@@ -153,6 +153,30 @@ class TestTightLevels:
         assert levels[0] <= arr.min() < levels[0] + step
         assert levels[-1] - step < arr.max() <= levels[-1]
 
+    @pytest.mark.parametrize(
+        ("low", "high", "step", "expected"),
+        [
+            (0.3, 0.7, 0.1, [0.3, 0.4, 0.5, 0.6, 0.7]),
+            (0.7, 1.1, 0.1, [0.7, 0.8, 0.9, 1.0, 1.1]),
+            (2.9, 3.1, 0.1, [2.9, 3.0, 3.1]),
+            (0.03, 0.07, 0.01, [0.03, 0.04, 0.05, 0.06, 0.07]),
+            (1.2, 2.4, 0.4, [1.2, 1.6, 2.0, 2.4]),
+        ],
+    )
+    def test_data_flush_with_a_decimal_grid(
+        self, low: float, high: float, step: float, expected: list[float]
+    ) -> None:
+        """An extremum exactly on a grid multiple adds no empty end band.
+
+        ``low / step`` is an integer mathematically but not in binary floating
+        point: 0.3 / 0.1 is 2.9999999999999996 and 0.07 / 0.01 is
+        7.000000000000001, so a bare floor or ceil steps one band too far and
+        produces exactly the empty end box this function exists to avoid.
+
+        """
+        levels = tight_levels(np.array([low, high]), step)
+        np.testing.assert_allclose(levels, expected, atol=1e-12)
+
     def test_zero_is_a_level_when_data_span_zero(self) -> None:
         """Zero lands on a level, so a diverging cmap can center there."""
         levels = tight_levels(np.array([-3.9, 5.8]), 1.0)
@@ -173,12 +197,22 @@ class TestTightLevels:
         arr = np.array([np.nan, 6.708, 28.88, np.nan])
         np.testing.assert_allclose(tight_levels(arr, 2.0), np.arange(6, 31, 2))
 
+    def test_infinities_ignored(self) -> None:
+        """Infinities drop out alongside NaNs rather than blowing up the grid."""
+        arr = np.array([-np.inf, 6.708, 28.88, np.inf])
+        np.testing.assert_allclose(tight_levels(arr, 2.0), np.arange(6, 31, 2))
+
     def test_pooled_arrays(self) -> None:
-        """A sequence of fields is pooled, as for a shared colorbar."""
+        """A sequence of fields is pooled, as for a shared colorbar.
+
+        The minimum and the maximum live in different, non-leading arrays, so
+        the assertion fails if any one field is dropped from the pool.
+
+        """
         arrs = [
-            np.array([-5.39, 7.592]),
             np.array([-3.066, 2.973]),
-            np.array([-3.636, 3.389]),
+            np.array([-5.39, 3.389]),
+            np.array([-3.636, 7.592]),
         ]
         np.testing.assert_allclose(tight_levels(arrs, 1.0), np.arange(-6, 9))
 
@@ -192,6 +226,26 @@ class TestTightLevels:
         levels = tight_levels(np.array([0.0079, 3.352]), 0.4)
         np.testing.assert_allclose(np.diff(levels), 0.4)
         np.testing.assert_allclose(levels[-1], 3.6)
+
+    def test_constant_data_still_gives_a_band(self) -> None:
+        """Constant data on a grid multiple yields two levels, not one.
+
+        One level is zero bands, which ``contourf`` cannot use and which
+        ``band_colors_about_center`` rejects outright.
+
+        """
+        levels = tight_levels(np.array([5.0, 5.0]), 1.0)
+        np.testing.assert_allclose(levels, [5.0, 6.0])
+
+    def test_all_nan_raises(self) -> None:
+        """No finite values is a clear error, not a NaN-to-int crash."""
+        with pytest.raises(ValueError, match="no finite values"):
+            tight_levels(np.array([np.nan, np.nan]), 1.0)
+
+    def test_empty_raises(self) -> None:
+        """An empty field is the same clear error."""
+        with pytest.raises(ValueError, match="no finite values"):
+            tight_levels(np.array([]), 1.0)
 
     @pytest.mark.parametrize("step", [0.0, -1.0])
     def test_nonpositive_step_raises(self, step: float) -> None:
@@ -305,6 +359,16 @@ class TestBandColorsAboutCenter:
     def test_too_few_levels_raises(self) -> None:
         with pytest.raises(ValueError, match="at least 2 levels"):
             band_colors_about_center(plt.get_cmap("RdBu_r"), [0.0])
+
+    def test_decreasing_levels_raise(self) -> None:
+        """Levels must increase; reversed ones would silently reverse the colors."""
+        with pytest.raises(ValueError, match="must increase"):
+            band_colors_about_center(plt.get_cmap("RdBu_r"), [3.0, 2.0, 1.0])
+
+    def test_nan_levels_raise(self) -> None:
+        """A NaN level would otherwise select a band silently and wrongly."""
+        with pytest.raises(ValueError, match="must increase"):
+            band_colors_about_center(plt.get_cmap("RdBu_r"), [0.0, np.nan, 1.0])
 
 
 def test_truncate_cmap_endpoints() -> None:
