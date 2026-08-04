@@ -3,6 +3,8 @@
 
 import os.path
 from collections import namedtuple
+from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import xarray as xr
@@ -11,8 +13,10 @@ from faceted import faceted_ax as fac_ax
 from matplotlib import colors, gridspec, ticker
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 
+from ._typing import ArrayLike
 from .names import LAT_STR
 from .nb_utils import sindeg
 from .stats import detrend, dt_std_anom, lin_regress, trend
@@ -465,6 +469,72 @@ def panel_label(
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
 
 
+# Contour levels.
+# Tolerance, in units of `step`, for treating a data extremum as sitting
+# exactly on a grid multiple.  Without it, floor and ceil step a whole band
+# too far whenever the quotient is an exact integer mathematically but not in
+# binary floating point (0.3 / 0.1 is 2.9999999999999996; 0.07 / 0.01 is
+# 7.000000000000001), producing the empty end band this function exists to
+# avoid.
+_GRID_SNAP_TOL = 1e-9
+
+
+def tight_levels(arrs: ArrayLike | Sequence[ArrayLike], step: float) -> np.ndarray:
+    """Contour levels bracketing the data, with no unused band at either end.
+
+    The levels are the multiples of ``step`` from the largest one at or below
+    the data minimum through the smallest one at or above the data maximum.
+    Every resulting band therefore contains plotted values, so a colorbar drawn
+    from these levels has no empty box on the low or the high end.  A field
+    spanning zero gets zero as one of its levels, the grid being anchored
+    there, which keeps the levels usable for a diverging colormap centered on
+    zero via ``trunc_cmap_about_center``.
+
+    The bracketing is asymmetric about zero whenever the data are: a field
+    running -0.054 to +0.029 with ``step=0.01`` yields levels -0.06 to +0.03.
+
+    A data extremum landing exactly on a multiple of ``step`` is treated as
+    being on the grid rather than a hair outside it, so it adds no empty band.
+    Constant data yield two levels rather than one, since a single level is
+    zero bands and no contour routine can use it.
+
+    NaNs and infinities are ignored.  A field with no finite values at all
+    raises, having nothing to bracket.
+
+    Parameters
+    ----------
+    arrs : array-like or sequence of array-like
+        Field to be contoured, restricted beforehand to the domain that will
+        actually be displayed.  Pass a list or tuple of fields to pool them,
+        as for multiple panels sharing one colorbar.
+    step : float
+        Spacing between adjacent levels.
+
+    Returns
+    -------
+    numpy.ndarray
+        The contour levels, in increasing order.
+
+    """
+    if step <= 0:
+        raise ValueError(f"step must be positive; got {step}")
+    arr_seq = arrs if isinstance(arrs, list | tuple) else [arrs]
+    mins, maxs = [], []
+    for arr in arr_seq:
+        vals = np.asarray(arr, dtype=float)
+        finite = vals[np.isfinite(vals)]
+        if finite.size:
+            mins.append(float(finite.min()))
+            maxs.append(float(finite.max()))
+    if not mins:
+        raise ValueError("no finite values in `arrs`; nothing to bracket")
+    min_val, max_val = min(mins), max(maxs)
+    start = np.floor(min_val / step + _GRID_SNAP_TOL) * step
+    stop = np.ceil(max_val / step - _GRID_SNAP_TOL) * step
+    num_bands = max(int(np.round((stop - start) / step)), 1)
+    return cast(np.ndarray, start + step * np.arange(num_bands + 1))
+
+
 # Colormaps.
 def truncate_cmap(cmap, minval=0.0, maxval=1.0, n_colors=None):
     """Truncate a colormap.
@@ -506,6 +576,57 @@ def trunc_cmap_about_center(
         cmap_min = 1.0 - 0.5 * (max_val - min_val) / max_central_diff
         cmap_max = 1.0
     return truncate_cmap(cmap, minval=cmap_min, maxval=cmap_max, n_colors=n_colors)
+
+
+def band_colors_about_center(
+    cmap: Colormap,
+    levels: ArrayLike | Sequence[float],
+    central_val: float = 0.0,
+) -> list[tuple[float, float, float, float]]:
+    """Colors for filled contour bands diverging about a central value.
+
+    Discrete-band counterpart to ``trunc_cmap_about_center``, for a filled
+    contour plot whose levels are asymmetric about ``central_val``.  Each band
+    takes the color at its own center, with the color increment per band set by
+    the longer of the two sides, so the shorter side stops short of that end of
+    the colormap: a given increment in the field is a given increment in color
+    on both sides of the center.
+
+    The contour at ``central_val`` lands exactly on the colormap's midpoint
+    color.  Handing the truncated colormap to ``contourf`` instead leaves that
+    contour up to half a band off the midpoint, because matplotlib samples a
+    discretized colormap at the band edges rather than their centers.
+
+    Parameters
+    ----------
+    cmap : matplotlib.colors.Colormap
+        Diverging colormap, whose midpoint color marks ``central_val``.
+    levels : array-like
+        Contour levels, increasing.  ``pplt.tight_levels`` generates ones that
+        bracket the data and include ``central_val`` when the data span it.
+    central_val : float
+        Field value to place at the colormap's midpoint color.
+
+    Returns
+    -------
+    list
+        One RGBA tuple per band, i.e. ``len(levels) - 1`` of them, to pass to
+        ``contourf`` as ``colors``.
+
+    """
+    level_vals = np.asarray(levels, dtype=float)
+    if level_vals.size < 2:
+        raise ValueError(f"need at least 2 levels; got {level_vals.size}")
+    if not np.all(np.diff(level_vals) > 0):
+        raise ValueError(
+            "levels must increase and contain no NaNs; otherwise the band "
+            f"nearest `central_val` is not well defined.  Got {level_vals}"
+        )
+    ind_center = int(np.argmin(np.abs(level_vals - central_val)))
+    num_below, num_above = ind_center, level_vals.size - 1 - ind_center
+    num_long = max(num_below, num_above)
+    band_centers = np.arange(-num_below, num_above) + 0.5
+    return [cmap(0.5 + center / (2 * num_long)) for center in band_centers]
 
 
 # Plot horizontal, vertical, diagonal lines.

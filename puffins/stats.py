@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import numpy as np
 import pymannkendall as mk
@@ -287,6 +287,79 @@ def autocorr(
     return xr.DataArray(
         values, dims=["lag"], coords={"lag": lag}, name="autocorrelation"
     )
+
+
+@overload
+def half_year_symmetry(
+    arr: xr.DataArray, dim: str = ..., axis: int = ...
+) -> xr.DataArray: ...
+
+
+@overload
+def half_year_symmetry(
+    arr: np.ndarray, dim: str = ..., axis: int = ...
+) -> np.ndarray: ...
+
+
+def half_year_symmetry(
+    arr: xr.DataArray | np.ndarray,
+    dim: str = "month",
+    axis: int = 0,
+) -> xr.DataArray | np.ndarray:
+    """Lag-6 autocorrelation rho_6 of a 12-month climatological cycle, in [-1, 1].
+
+    A waveform-independent measure of how a 12-month annual cycle splits between
+    its half-year-repeating and half-year-flipping parts.  Shifting the cycle by
+    six months multiplies harmonic ``k`` by ``(-1)**k``, so ``rho_6`` is the
+    correlation of the de-meaned cycle with that six-month shift:
+
+    - ``+1``: the cycle repeats every six months (purely semi-annual, i.e. the
+      even harmonics k = 2, 4, 6);
+    - ``-1``: it flips sign every six months (purely annual, i.e. the odd
+      harmonics k = 1, 3, 5);
+    - ``0``: equal flip and repeat variance.
+
+    The flip and repeat variance fractions are ``(1 - rho_6) / 2`` and
+    ``(1 + rho_6) / 2``.  The month axis must have length 12.  The cycle is
+    de-meaned along that axis first (a constant is shift-invariant and would
+    otherwise bias ``rho_6`` toward +1); a zero-variance (constant) cycle returns
+    NaN rather than raising, and any NaN among the twelve values propagates (the
+    six-month pairing needs every position, so months are not dropped).
+
+    Parameters
+    ----------
+    arr : xr.DataArray or array_like
+        The 12-month climatological cycle.  For a DataArray the calculation runs
+        along ``dim`` (via ``apply_ufunc``, broadcasting over any other dims);
+        for a plain array it runs along ``axis``.
+    dim : str
+        Name of the month dimension; used only for a DataArray input.
+    axis : int
+        Month axis; used only for an array input.
+
+    """
+
+    def _rho6(vals: np.ndarray, ax: int) -> np.ndarray:
+        vals = np.moveaxis(np.asarray(vals, dtype=float), ax, 0)
+        if vals.shape[0] != 12:
+            raise ValueError(f"month axis must have length 12, got {vals.shape[0]}")
+        vals = vals - vals.mean(axis=0, keepdims=True)
+        shifted = np.roll(vals, 6, axis=0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            rho6 = np.sum(vals * shifted, axis=0) / np.sum(vals * vals, axis=0)
+        return cast(np.ndarray, rho6)
+
+    if isinstance(arr, xr.DataArray):
+        if dim not in arr.dims:
+            raise ValueError(
+                f"month dimension '{dim}' not among the array's dims {arr.dims}; "
+                "pass the name of the month dimension as `dim`"
+            )
+        return cast(
+            xr.DataArray,
+            xr.apply_ufunc(_rho6, arr, input_core_dims=[[dim]], kwargs={"ax": -1}),
+        )
+    return _rho6(np.asarray(arr, dtype=float), axis)
 
 
 def spearman(

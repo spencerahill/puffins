@@ -23,6 +23,7 @@ from puffins.stats import (
     dt_std_anom,
     eof_solver,
     false_disc_rate_thresh_pval,
+    half_year_symmetry,
     hist,
     hist2d,
     lag_corr,
@@ -424,6 +425,97 @@ class TestAutocorr:
         assert isinstance(result, xr.DataArray)
         assert result.dims == ("lag",)
         np.testing.assert_allclose(result.sel(lag=0).item(), 1.0)
+
+
+class TestHalfYearSymmetry:
+    """Tests for half_year_symmetry (lag-6 autocorrelation rho_6)."""
+
+    def test_sign_flipping_cycle_is_minus_one(self) -> None:
+        """A cycle whose second half negates the first flips every six months."""
+        a = np.random.default_rng(0).standard_normal(6)
+        x = np.concatenate([a, -a])
+        np.testing.assert_allclose(half_year_symmetry(x), -1.0)
+
+    def test_repeating_cycle_is_plus_one(self) -> None:
+        """A cycle that repeats every six months has rho_6 = +1."""
+        a = np.random.default_rng(1).standard_normal(6)
+        x = np.concatenate([a, a])
+        np.testing.assert_allclose(half_year_symmetry(x), 1.0)
+
+    def test_odd_harmonics_are_minus_one(self) -> None:
+        """Pure annual and its odd harmonics (k = 1, 3) give rho_6 = -1."""
+        i = np.arange(12)
+        for k in (1, 3):
+            x = np.cos(2 * np.pi * k * i / 12)
+            np.testing.assert_allclose(half_year_symmetry(x), -1.0, atol=1e-12)
+
+    def test_even_harmonics_are_plus_one(self) -> None:
+        """Even harmonics (k = 2, 4) repeat every six months, rho_6 = +1."""
+        i = np.arange(12)
+        for k in (2, 4):
+            x = np.cos(2 * np.pi * k * i / 12)
+            np.testing.assert_allclose(half_year_symmetry(x), 1.0, atol=1e-12)
+
+    def test_nyquist_harmonic_is_plus_one(self) -> None:
+        """The k = 6 Nyquist wave (-1)**i repeats every six months."""
+        x = (-1.0) ** np.arange(12)
+        np.testing.assert_allclose(half_year_symmetry(x), 1.0, atol=1e-12)
+
+    def test_annual_plus_semiannual_mix(self) -> None:
+        """A 1:eps annual/semiannual mix gives (eps^2 - 1) / (eps^2 + 1)."""
+        i = np.arange(12)
+        eps = 0.3
+        x = np.cos(2 * np.pi * i / 12) + eps * np.cos(2 * np.pi * 2 * i / 12)
+        expected = (eps**2 - 1) / (eps**2 + 1)
+        np.testing.assert_allclose(half_year_symmetry(x), expected, atol=1e-12)
+
+    def test_constant_cycle_is_nan(self) -> None:
+        """A constant (zero-variance) cycle returns NaN, not an error."""
+        assert np.isnan(half_year_symmetry(np.ones(12)))
+
+    def test_wrong_length_raises(self) -> None:
+        """A month axis not of length 12 raises ValueError."""
+        with pytest.raises(ValueError, match="must have length 12"):
+            half_year_symmetry(np.ones(10))
+
+    def test_missing_dim_raises_clearly(self) -> None:
+        """A DataArray lacking `dim` names the problem rather than failing inside.
+
+        Unguarded, apply_ufunc raises `tuple.index(x): x not in tuple`, which
+        names neither the argument nor the fix.
+
+        """
+        arr = xr.DataArray(np.ones(12), dims=["time"])
+        with pytest.raises(ValueError, match="not among the array's dims"):
+            half_year_symmetry(arr)
+
+    def test_vectorized_over_axis(self) -> None:
+        """Stacking a flip and a repeat cycle along axis 1 gives [-1, +1]."""
+        a = np.random.default_rng(2).standard_normal(6)
+        stack = np.stack([np.concatenate([a, -a]), np.concatenate([a, a])], axis=1)
+        np.testing.assert_allclose(half_year_symmetry(stack, axis=0), [-1.0, 1.0])
+
+    def test_dataarray_matches_numpy(self) -> None:
+        """The xarray path over ``dim`` matches the numpy path (scalar)."""
+        a = np.random.default_rng(3).standard_normal(6)
+        da = xr.DataArray(
+            np.concatenate([a, -a]),
+            dims=["month"],
+            coords={"month": np.arange(1, 13)},
+        )
+        np.testing.assert_allclose(float(half_year_symmetry(da)), -1.0)
+
+    def test_dataarray_broadcasts_over_other_dims(self) -> None:
+        """A 2-D DataArray reduces the month dim and keeps the other."""
+        a = np.random.default_rng(4).standard_normal(6)
+        da = xr.DataArray(
+            np.stack([np.concatenate([a, -a]), np.concatenate([a, a])], axis=1),
+            dims=["month", "x"],
+            coords={"month": np.arange(1, 13), "x": [0, 1]},
+        )
+        result = half_year_symmetry(da, dim="month")
+        assert result.dims == ("x",)
+        np.testing.assert_allclose(result.values, [-1.0, 1.0])
 
 
 class TestSpearman:

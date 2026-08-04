@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         u_crit_switch_lat_hh80_small_angle,
         u_rce_hh80,
     )
+    from puffins.stats import half_year_symmetry
     from puffins.thermodynamics import (
         dsat_entrop_dtemp_approx,
         exner_func,
@@ -203,3 +204,12 @@ if TYPE_CHECKING:
     assert_type(grad_wind_bouss(_SC, _H, _T, _DA), xr.DataArray)
     assert_type(grad_wind_bouss(_SC, _H, _T, _ND), np.ndarray)
     assert_type(grad_wind_bouss(_SC, _H, _T, _SC), Scalar)
+
+    # ------------------------------------------------------------------
+    # Two-way split: a 12-month cycle is never a scalar, so `Scalar` is not
+    # an accepted input here and the union is DataArray-or-ndarray only.
+    # Without these overloads the declared union leaks to every caller, and
+    # `.dims` / `.values` on a DataArray result fail to type-check.
+    # ------------------------------------------------------------------
+    assert_type(half_year_symmetry(_DA), xr.DataArray)
+    assert_type(half_year_symmetry(_ND), np.ndarray)
