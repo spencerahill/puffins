@@ -605,24 +605,94 @@ def hist(
     )
     if bin_centers is None:
         return cast(xr.DataArray, arr_hist)
-    arr_hist.coords["bin"] = bin_centers.values
+    arr_hist.coords[bin_name] = bin_centers.values
     return cast(xr.DataArray, arr_hist)
 
 
-def cdf_empirical(
-    arr: ArrayLike, cdf_points: ArrayLike | None = None, side: str = "left"
-) -> xr.DataArray:
-    """Compute empirical cumulative distribution function."""
+def _flat_vals_dropna(arr: ArrayLike) -> np.ndarray:
+    """Values of `arr` as a sorted, flat, NaN-free numpy array.
+
+    Handles every member of `ArrayLike`: objects exposing `.values` (xarray)
+    go through that, arrays and scalars through `np.asarray`.
+
+    """
     arr_any = cast(Any, arr)
     try:
-        vals_flat_sorted = np.sort(arr_any.values.flatten())
+        flat = np.asarray(arr_any.values, dtype=float).flatten()
     except AttributeError:
-        vals_flat_sorted = np.sort(arr_any.flatten())
-    vals = vals_flat_sorted[~np.isnan(vals_flat_sorted)]
+        flat = np.asarray(arr_any, dtype=float).flatten()
+    flat_sorted = np.sort(flat)
+    return cast(np.ndarray, flat_sorted[~np.isnan(flat_sorted)])
+
+
+def cdf_empirical(
+    arr: ArrayLike,
+    cdf_points: ArrayLike | None = None,
+    side: str = "left",
+    dim: str = "data",
+) -> xr.DataArray:
+    """Compute empirical cumulative distribution function.
+
+    Every value in `arr` is pooled into a single distribution.  `side` is
+    passed to `statsmodels`' `ECDF`: the default "left" gives the fraction of
+    `arr` strictly less than each point, "right" the fraction less than or
+    equal to it.  The two differ only at points present in `arr` itself.
+
+    `dim` names the dimension and coordinate holding the points at which the
+    CDF is evaluated, so that it can carry the name of the variable in
+    question (e.g. "rain") rather than the generic default.
+
+    NaNs are dropped, and an `arr` left empty by that gives all-NaN rather
+    than raising.
+
+    """
+    vals = _flat_vals_dropna(arr)
     if cdf_points is None:
         cdf_points = vals
-    ecdf = ECDF(vals, side=side)(cdf_points)
-    return xr.DataArray(ecdf, dims=["data"], coords={"data": cdf_points}, name="cdf")
+    if vals.size:
+        ecdf = ECDF(vals, side=side)(cdf_points)
+    else:
+        ecdf = np.full(np.shape(cdf_points), np.nan)
+    return xr.DataArray(ecdf, dims=[dim], coords={dim: cdf_points}, name="cdf")
+
+
+def xcdf(
+    arr: xr.DataArray,
+    dim: str,
+    cdf_points: ArrayLike,
+    side: str = "left",
+    dim_out: str = "data",
+) -> xr.DataArray:
+    """Empirical CDFs broadcast over all dimensions other than `dim`.
+
+    Whereas `cdf_empirical` pools the whole array into one distribution, this
+    computes a separate CDF along `dim` for each point of the remaining
+    dimensions.  `side` is as in `cdf_empirical`, and `dim_out` plays the role
+    that `dim` does there, naming the output dimension and coordinate; `dim`
+    is taken here by the dimension being reduced over.
+
+    Slices left empty by dropping NaNs yield all-NaN CDFs rather than raising.
+
+    """
+    cdf_point_vals = np.asarray(cdf_points)
+
+    def _xcdf(vals: np.ndarray) -> np.ndarray:
+        """Wrapper to use in apply_ufunc."""
+        return cast(
+            np.ndarray,
+            cdf_empirical(vals, cdf_points=cdf_point_vals, side=side).values,
+        )
+
+    cdfs = xr.apply_ufunc(
+        _xcdf,
+        arr,
+        input_core_dims=[[dim]],
+        output_core_dims=[[dim_out]],
+        vectorize=True,
+        dask="parallelized",
+    )
+    cdfs.coords[dim_out] = cdf_point_vals
+    return cast(xr.DataArray, cdfs.rename("cdf"))
 
 
 def risk_ratio(
@@ -630,13 +700,40 @@ def risk_ratio(
     arr2: ArrayLike,
     cdf_points: ArrayLike | None = None,
     side: str = "left",
+    dim: str = "data",
 ) -> xr.DataArray:
     """Ratio of exceedance likelihood between two distributions."""
     if cdf_points is None:
         cdf_points = np.union1d(arr1, arr2)
-    cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side)
-    cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side)
+    cdf1 = cdf_empirical(arr1, cdf_points=cdf_points, side=side, dim=dim)
+    cdf2 = cdf_empirical(arr2, cdf_points=cdf_points, side=side, dim=dim)
     return cast(xr.DataArray, ((1.0 - cdf1) / (1.0 - cdf2)).rename("risk_ratio"))
+
+
+def quantile_of_value(arr: ArrayLike, value: ArrayLike, side: str = "left") -> Any:
+    """Quantile, within [0, 1], of `value` in the distribution of `arr`.
+
+    The empirical CDF of `arr` evaluated at `value`, using the same `ECDF`
+    engine and the same `side` convention as `cdf_empirical`, so that
+    ``quantile_of_value(arr, v, side=s)`` and
+    ``cdf_empirical(arr, cdf_points=[v], side=s)`` agree exactly, including
+    where `v` is itself a value of `arr`.  The default "left" gives the
+    fraction of `arr` strictly less than `value`, "right" the fraction less
+    than or equal to it.
+
+    Approximately, but not exactly, the inverse of `numpy.quantile`, which
+    interpolates between the order statistics rather than stepping between
+    them; the two differ by O(1/N), most visibly in the tails.
+
+    NaNs are dropped before ranking, and an `arr` left empty by that gives
+    NaN.  `value` may be a scalar or an array; the return matches its shape.
+
+    """
+    vals = _flat_vals_dropna(arr)
+    if vals.size:
+        return ECDF(vals, side=side)(value)
+    nans = np.full(np.shape(value), np.nan)
+    return nans if nans.ndim else float("nan")
 
 
 # Statistical fits
@@ -672,6 +769,16 @@ def xfit(
 def false_disc_rate_thresh_pval(pvals: xr.DataArray, target_fdr: float = 0.05) -> float:
     """Threshold p value for significance based on False Discovery Rate.
 
+    For data with zero autocorrelation, `target_fdr` also amounts to the size
+    of a global significance test, i.e. the probability of rejecting a global
+    null hypothesis if it is true.  For highly autocorrelated data it can be
+    thought of as approximately twice that global test size.  So for example
+    `target_fdr=0.1` gives a 10% global test for uncorrelated data, or 5% for
+    highly correlated data.
+
+    Returns NaN if no p value passes, in which case nothing is significant at
+    the given rate.
+
     From Wilks 2016, BAMS, Eq. 3.
 
     """
@@ -681,4 +788,6 @@ def false_disc_rate_thresh_pval(pvals: xr.DataArray, target_fdr: float = 0.05) -
     num_pvals = len(pvals_sorted)
     rhs = np.arange(1, num_pvals + 1) / num_pvals * target_fdr
     accepted_inds = pvals_sorted <= rhs
+    if not np.any(accepted_inds):
+        return float("nan")
     return float(pvals_sorted[accepted_inds].max())

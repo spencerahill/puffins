@@ -99,9 +99,14 @@ def boot_risk_ratio(
     cdf_points: ArrayLike,
     num_bootstraps: int = 1000,
     side: str = "left",
+    dim_data: str = "data",
+    dim_boot: str = "nboot",
     seed: int | None = None,
 ) -> xr.DataArray:
     """Bootstrap risk ratio.
+
+    `side` and `dim_data` are as in `stats.risk_ratio`; `dim_boot` names the
+    ensemble dimension, as elsewhere in this module.
 
     Note that this is slow: each risk ratio calculation can be slow, especially if
     there are a lot of points sampled along the CDF, and then you're repeating it
@@ -110,7 +115,13 @@ def boot_risk_ratio(
     Pass ``seed`` to make the permutation resampling reproducible.
 
     """
-    assert num_numer + num_denom <= len(arr[dim])
+    num_total = len(arr[dim])
+    if num_numer < 1 or num_denom < 1 or num_numer + num_denom > num_total:
+        raise ValueError(
+            f"num_numer ({num_numer}) and num_denom ({num_denom}) must each be "
+            f"at least 1 and must sum to at most the length of '{dim}' "
+            f"({num_total}); otherwise a group would be empty or overrun the array"
+        )
     rng = np.random.default_rng(seed)
 
     def _rr_one_sample() -> xr.DataArray:
@@ -124,8 +135,68 @@ def boot_risk_ratio(
                 arr.sel({dim: rand_denom}),
                 cdf_points=cdf_points,
                 side=side,
+                dim=dim_data,
             ),
         )
 
     boot_rr_vals = [_rr_one_sample() for _ in range(num_bootstraps)]
-    return xr.concat(boot_rr_vals, dim="nboot")
+    return xr.concat(boot_rr_vals, dim=dim_boot)
+
+
+def perm_risk_ratio(
+    arr: xr.DataArray,
+    num_numer: int,
+    dim: str,
+    cdf_points: ArrayLike,
+    num_samples: int = 1000,
+    side: str = "left",
+    dim_data: str = "data",
+    dim_perm: str = "nperm",
+    seed: int | None = None,
+) -> xr.DataArray:
+    """Permutation test on a risk ratio.
+
+    Each sample randomly partitions `arr` along `dim` into a numerator group of
+    `num_numer` elements and a denominator group holding *all* of the rest, then
+    computes the resulting risk ratio.  This differs from `boot_risk_ratio`,
+    which draws a denominator of a separately specified size and so can leave
+    some elements in neither group.  Under the null hypothesis that group
+    membership is unrelated to the distribution, the returned ensemble is the
+    sampling distribution against which an observed risk ratio is tested.
+
+    `side` and `dim_data` are as in `stats.risk_ratio`; `dim_perm` names the
+    ensemble dimension.
+
+    Note that this is slow: each risk ratio calculation can itself be slow,
+    especially with many points sampled along the CDF, and it is then repeated
+    a large number of times.
+
+    Pass ``seed`` to make the permutation resampling reproducible.
+
+    """
+    num_total = len(arr[dim])
+    if not 0 < num_numer < num_total:
+        raise ValueError(
+            f"num_numer ({num_numer}) must be at least 1 and at most "
+            f"{num_total - 1} for '{dim}' of length {num_total}; otherwise the "
+            "numerator or the denominator group would be empty"
+        )
+    rng = np.random.default_rng(seed)
+
+    def _rr_one_sample() -> xr.DataArray:
+        dim_randomized = rng.permutation(arr[dim])
+        rand_numer = dim_randomized[:num_numer]
+        rand_denom = dim_randomized[num_numer:]
+        return cast(
+            xr.DataArray,
+            risk_ratio(
+                arr.sel({dim: rand_numer}),
+                arr.sel({dim: rand_denom}),
+                cdf_points=cdf_points,
+                side=side,
+                dim=dim_data,
+            ),
+        )
+
+    perm_rr_vals = [_rr_one_sample() for _ in range(num_samples)]
+    return xr.concat(perm_rr_vals, dim=dim_perm)
