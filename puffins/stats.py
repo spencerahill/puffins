@@ -605,8 +605,24 @@ def hist(
     )
     if bin_centers is None:
         return cast(xr.DataArray, arr_hist)
-    arr_hist.coords["bin"] = bin_centers.values
+    arr_hist.coords[bin_name] = bin_centers.values
     return cast(xr.DataArray, arr_hist)
+
+
+def _flat_vals_dropna(arr: ArrayLike) -> np.ndarray:
+    """Values of `arr` as a sorted, flat, NaN-free numpy array.
+
+    Handles every member of `ArrayLike`: objects exposing `.values` (xarray)
+    go through that, arrays and scalars through `np.asarray`.
+
+    """
+    arr_any = cast(Any, arr)
+    try:
+        flat = np.asarray(arr_any.values, dtype=float).flatten()
+    except AttributeError:
+        flat = np.asarray(arr_any, dtype=float).flatten()
+    flat_sorted = np.sort(flat)
+    return cast(np.ndarray, flat_sorted[~np.isnan(flat_sorted)])
 
 
 def cdf_empirical(
@@ -617,51 +633,66 @@ def cdf_empirical(
 ) -> xr.DataArray:
     """Compute empirical cumulative distribution function.
 
-    Every value in `arr` is pooled into a single distribution.  `dim` names the
-    dimension and coordinate holding the points at which the CDF is evaluated,
-    so that it can carry the name of the variable in question (e.g. "rain")
-    rather than the generic default.
+    Every value in `arr` is pooled into a single distribution.  `side` is
+    passed to `statsmodels`' `ECDF`: the default "left" gives the fraction of
+    `arr` strictly less than each point, "right" the fraction less than or
+    equal to it.  The two differ only at points present in `arr` itself.
+
+    `dim` names the dimension and coordinate holding the points at which the
+    CDF is evaluated, so that it can carry the name of the variable in
+    question (e.g. "rain") rather than the generic default.
+
+    NaNs are dropped, and an `arr` left empty by that gives all-NaN rather
+    than raising.
 
     """
-    arr_any = cast(Any, arr)
-    try:
-        vals_flat_sorted = np.sort(arr_any.values.flatten())
-    except AttributeError:
-        vals_flat_sorted = np.sort(arr_any.flatten())
-    vals = vals_flat_sorted[~np.isnan(vals_flat_sorted)]
+    vals = _flat_vals_dropna(arr)
     if cdf_points is None:
         cdf_points = vals
-    ecdf = ECDF(vals, side=side)(cdf_points)
+    if vals.size:
+        ecdf = ECDF(vals, side=side)(cdf_points)
+    else:
+        ecdf = np.full(np.shape(cdf_points), np.nan)
     return xr.DataArray(ecdf, dims=[dim], coords={dim: cdf_points}, name="cdf")
 
 
-def xcdf(arr: xr.DataArray, dim: str, cdf_points: ArrayLike) -> xr.DataArray:
+def xcdf(
+    arr: xr.DataArray,
+    dim: str,
+    cdf_points: ArrayLike,
+    side: str = "left",
+    dim_out: str = "data",
+) -> xr.DataArray:
     """Empirical CDFs broadcast over all dimensions other than `dim`.
 
     Whereas `cdf_empirical` pools the whole array into one distribution, this
     computes a separate CDF along `dim` for each point of the remaining
-    dimensions.  All-NaN slices yield all-NaN CDFs rather than raising.
+    dimensions.  `side` is as in `cdf_empirical`, and `dim_out` plays the role
+    that `dim` does there, naming the output dimension and coordinate; `dim`
+    is taken here by the dimension being reduced over.
+
+    Slices left empty by dropping NaNs yield all-NaN CDFs rather than raising.
 
     """
     cdf_point_vals = np.asarray(cdf_points)
 
     def _xcdf(vals: np.ndarray) -> np.ndarray:
         """Wrapper to use in apply_ufunc."""
-        if np.all(np.isnan(vals)):
-            return np.full(cdf_point_vals.shape, np.nan)
-        return cast(np.ndarray, cdf_empirical(vals, cdf_points=cdf_point_vals).values)
+        return cast(
+            np.ndarray,
+            cdf_empirical(vals, cdf_points=cdf_point_vals, side=side).values,
+        )
 
-    return cast(
-        xr.DataArray,
-        xr.apply_ufunc(
-            _xcdf,
-            arr,
-            input_core_dims=[[dim]],
-            output_core_dims=[["data"]],
-            vectorize=True,
-            dask="parallelized",
-        ),
+    cdfs = xr.apply_ufunc(
+        _xcdf,
+        arr,
+        input_core_dims=[[dim]],
+        output_core_dims=[[dim_out]],
+        vectorize=True,
+        dask="parallelized",
     )
+    cdfs.coords[dim_out] = cdf_point_vals
+    return cast(xr.DataArray, cdfs.rename("cdf"))
 
 
 def risk_ratio(
@@ -679,14 +710,30 @@ def risk_ratio(
     return cast(xr.DataArray, ((1.0 - cdf1) / (1.0 - cdf2)).rename("risk_ratio"))
 
 
-def quantile_of_value(arr: ArrayLike, value: ArrayLike) -> Any:
+def quantile_of_value(arr: ArrayLike, value: ArrayLike, side: str = "left") -> Any:
     """Quantile, within [0, 1], of `value` in the distribution of `arr`.
 
-    The inverse of `numpy.quantile`.  NaNs are dropped before ranking.
+    The empirical CDF of `arr` evaluated at `value`, using the same `ECDF`
+    engine and the same `side` convention as `cdf_empirical`, so that
+    ``quantile_of_value(arr, v, side=s)`` and
+    ``cdf_empirical(arr, cdf_points=[v], side=s)`` agree exactly, including
+    where `v` is itself a value of `arr`.  The default "left" gives the
+    fraction of `arr` strictly less than `value`, "right" the fraction less
+    than or equal to it.
+
+    Approximately, but not exactly, the inverse of `numpy.quantile`, which
+    interpolates between the order statistics rather than stepping between
+    them; the two differ by O(1/N), most visibly in the tails.
+
+    NaNs are dropped before ranking, and an `arr` left empty by that gives
+    NaN.  `value` may be a scalar or an array; the return matches its shape.
 
     """
-    vals = np.sort(flat_dropna(cast(Any, arr)))
-    return scipy.stats.percentileofscore(vals, value) / 100.0
+    vals = _flat_vals_dropna(arr)
+    if vals.size:
+        return ECDF(vals, side=side)(value)
+    nans = np.full(np.shape(value), np.nan)
+    return nans if nans.ndim else float("nan")
 
 
 # Statistical fits

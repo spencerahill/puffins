@@ -99,6 +99,20 @@ class TestPanelLabel:
         with pytest.raises(ValueError, match="panel_num must be between"):
             panel_label(26, ax=ax)
 
+    @pytest.mark.parametrize("panel_num", [-1, -27])
+    def test_rejects_negative_panel_num(
+        self, panel_num: int, ax: matplotlib.axes.Axes
+    ) -> None:
+        """Negative indices are rejected rather than wrapping round the alphabet.
+
+        Unguarded, -1 indexes the string from the back and silently labels the
+        panel "(z)", while -27 raises the IndexError the check exists to
+        replace.
+
+        """
+        with pytest.raises(ValueError, match="panel_num must be between"):
+            panel_label(panel_num, ax=ax)
+
     def test_vertical_alignment_defaults_to_top(self, ax: matplotlib.axes.Axes) -> None:
         """The label anchors from its top edge unless told otherwise."""
         panel_label(0, ax=ax)

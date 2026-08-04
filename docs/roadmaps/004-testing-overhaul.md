@@ -18,7 +18,7 @@ function and enforced coverage thresholds in CI.
 - **26 test files** (25 module test files plus `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests), covering 25
   of 30 modules
-- **845 tests passing** (1 skipped, 10 xfailed)
+- **868 tests passing** (1 skipped, 10 xfailed)
 - **90% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
@@ -34,7 +34,7 @@ Meets the ≥80% success criterion (23 modules): `bootstrap` 100, `calculus`
 98, `constants` 100, `dates` 98, `dynamics` 99, `eofs` 100, `eq_area` 99,
 `grad_bal` 97, `had_cell` 87, `held_hou_1980` 97, `hides` 96, `interp` 99,
 `lcl` 100, `longitude` 88, `names` 100, `num_solver` 98, `polar_amp` 100,
-`radiation` 100, `stats` 93, `therm_inert` 100, `thermodynamics` 96,
+`radiation` 100, `stats` 94, `therm_inert` 100, `thermodynamics` 96,
 `tropopause` 83, `vert_coords` 99.
 
 Below the bar — the remaining work (5 modules): `budget_adj` 16, `kuo_el` 19,
@@ -55,8 +55,9 @@ future work. The remaining theoretical-model cluster
 main untested frontier and overlaps with the untyped modules in
 [Roadmap 003](003-type-hints.md).
 
-Exempt per the success criterion: `plotting` 0 (smoke tests only), `nb_utils`
-47.
+Exempt per the success criterion: `plotting` 17, `nb_utils` 47.
+`test_plotting.py` covers `panel_label` only; the rest of the plotting
+helpers still need the smoke tests described in Phase 6.
 
 ---
 

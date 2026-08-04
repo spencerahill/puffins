@@ -422,6 +422,8 @@ def panel_label(
     "a, b, c..."; `brackets` surrounds the letter in parentheses; `bold`
     renders the label in bold, including any `extra_text`.
 
+    `bold` only supplies a default, so an explicit `fontweight` overrides it.
+
     """
     ax = _gca_if_ax_none(ax)
 
@@ -450,7 +452,7 @@ def panel_label(
     letters = (
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if uppercase else "abcdefghijklmnopqrstuvwxyz"
     )
-    if panel_num >= len(letters):
+    if not 0 <= panel_num < len(letters):
         raise ValueError(
             f"panel_num must be between 0 and {len(letters) - 1}; got {panel_num}"
         )

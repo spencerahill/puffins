@@ -310,10 +310,46 @@ class TestBootRiskRatio:
     def test_raises_when_groups_exceed_sample_size(self) -> None:
         """Requesting more numerator+denominator members than exist is rejected."""
         arr = _timeseries(np.arange(10.0))
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="must each be"):
             boot_risk_ratio(
                 arr, 6, 6, "time", cdf_points=np.array([1.0]), num_bootstraps=2
             )
+
+    @pytest.mark.parametrize(("num_numer", "num_denom"), [(0, 4), (4, 0), (-2, 4)])
+    def test_rejects_an_empty_group(self, num_numer: int, num_denom: int) -> None:
+        """Either group being empty is rejected up front.
+
+        An empty group otherwise reaches `cdf_empirical` as a zero-length
+        sample, which is a NaN column rather than an error, so nothing
+        downstream would flag it.
+
+        """
+        arr = _timeseries(np.arange(10.0))
+        with pytest.raises(ValueError, match="must each be"):
+            boot_risk_ratio(
+                arr,
+                num_numer,
+                num_denom,
+                "time",
+                cdf_points=np.array([1.0]),
+                num_bootstraps=2,
+            )
+
+    def test_honors_nondefault_dim_names(self) -> None:
+        """dim_data and dim_boot rename the CDF and ensemble dimensions."""
+        arr = _timeseries(np.arange(20.0))
+        result = boot_risk_ratio(
+            arr,
+            5,
+            6,
+            "time",
+            cdf_points=np.array([4.0, 12.0]),
+            num_bootstraps=3,
+            dim_data="rain",
+            dim_boot="draw",
+            seed=0,
+        )
+        assert result.sizes == {"draw": 3, "rain": 2}
 
 
 class TestPermRiskRatio:
@@ -369,11 +405,29 @@ class TestPermRiskRatio:
         np.testing.assert_array_equal(first.values, same.values)
         assert not np.array_equal(first.values, other.values)
 
-    def test_rejects_a_numerator_larger_than_the_dimension(self) -> None:
-        """Asking for more numerator elements than exist is an error."""
+    @pytest.mark.parametrize("num_numer", [11, 10, 0, -3])
+    def test_rejects_a_numerator_that_empties_either_group(
+        self, num_numer: int
+    ) -> None:
+        """Both ends of the range are rejected, not just the top.
+
+        Because the denominator takes everything the numerator leaves,
+        `num_numer` equal to the dimension's own length empties it, and zero
+        empties the numerator; both then reach `cdf_empirical` as a
+        zero-length sample.  A negative value is worse still: slicing wraps,
+        so the two groups silently come out with the wrong sizes rather than
+        failing.
+
+        """
         arr = _timeseries(np.arange(10.0))
-        with pytest.raises(ValueError, match="exceeds the length"):
-            perm_risk_ratio(arr, 11, "time", np.array([5.0]), num_samples=1)
+        with pytest.raises(ValueError, match="must be at least 1"):
+            perm_risk_ratio(arr, num_numer, "time", np.array([5.0]), num_samples=1)
+
+    def test_accepts_the_largest_valid_numerator(self) -> None:
+        """One less than the full length is allowed, leaving a single element."""
+        arr = _timeseries(np.arange(10.0))
+        result = perm_risk_ratio(arr, 9, "time", np.array([5.0]), num_samples=1, seed=0)
+        assert result.sizes == {"nperm": 1, "data": 1}
 
     def test_honors_nondefault_perm_dim_name(self) -> None:
         """The ensemble dimension can be renamed."""
