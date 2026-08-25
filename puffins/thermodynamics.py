@@ -248,6 +248,70 @@ def rel_hum_from_temp_dewpoint(
     return sat_vap_press_tetens_kelvin(temp_dew) / sat_vap_press_tetens_kelvin(temp)
 
 
+def kinetic_energy(
+    u: ArrayLike,
+    v: ArrayLike,
+) -> ArrayLike:
+    """Kinetic energy per unit mass of the horizontal flow.
+
+    Neglects the vertical velocity contribution, which for large-scale
+    atmospheric flows is smaller than the horizontal one by several orders of
+    magnitude.
+
+    Parameters
+    ----------
+    u : ArrayLike
+        Zonal velocity (m/s).
+    v : ArrayLike
+        Meridional velocity (m/s).
+
+    Returns
+    -------
+    ArrayLike
+        Kinetic energy per unit mass (J/kg).
+
+    See Also
+    --------
+    total_energy : Moist static energy plus kinetic energy.
+    """
+    return 0.5 * (u * u + v * v)
+
+
+def dry_static_energy(
+    temp: ArrayLike,
+    height: ArrayLike,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
+    """Dry static energy.
+
+    Parameters
+    ----------
+    temp : ArrayLike
+        Temperature (K).
+    height : ArrayLike
+        Geometric height (m).  Note that reanalyses including ERA5 archive
+        *geopotential* (m^2/s^2), not height; divide such a field by ``grav``
+        before passing it in.
+    c_p : float, optional
+        Specific heat of dry air at constant pressure (J/kg/K).
+        Default: ``C_P``.
+    grav : float, optional
+        Gravitational acceleration (m/s^2).  Default: Earth's.
+
+    Returns
+    -------
+    ArrayLike
+        Dry static energy (J/kg).
+
+    See Also
+    --------
+    moist_static_energy : Adds the latent energy of water vapor.
+    total_energy : Adds latent and kinetic energy.
+    """
+    return c_p * temp + grav * height
+
+
 def moist_static_energy(
     temp: ArrayLike,
     height: ArrayLike,
@@ -258,6 +322,58 @@ def moist_static_energy(
 ) -> ArrayLike:
     """Moist static energy."""
     return c_p * temp + grav * height + l_v * spec_hum
+
+
+def total_energy(
+    u: ArrayLike,
+    v: ArrayLike,
+    temp: ArrayLike,
+    height: ArrayLike,
+    spec_hum: ArrayLike,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+    l_v: float = L_V,
+) -> ArrayLike:
+    """Total energy: moist static energy plus kinetic energy.
+
+    This is the quantity whose column integral is conserved by adiabatic,
+    frictionless motion, and thus the one whose meridional flux appears in the
+    column-integrated energy budget.
+
+    Parameters
+    ----------
+    u : ArrayLike
+        Zonal velocity (m/s).
+    v : ArrayLike
+        Meridional velocity (m/s).
+    temp : ArrayLike
+        Temperature (K).
+    height : ArrayLike
+        Geometric height (m).  See ``dry_static_energy`` for the geopotential
+        caveat.
+    spec_hum : ArrayLike
+        Specific humidity (kg/kg).
+    c_p : float, optional
+        Specific heat of dry air at constant pressure (J/kg/K).
+        Default: ``C_P``.
+    grav : float, optional
+        Gravitational acceleration (m/s^2).  Default: Earth's.
+    l_v : float, optional
+        Latent heat of vaporization (J/kg).  Default: ``L_V``.
+
+    Returns
+    -------
+    ArrayLike
+        Total energy per unit mass (J/kg).
+
+    See Also
+    --------
+    moist_static_energy : The static (non-kinetic) portion.
+    kinetic_energy : The kinetic portion.
+    """
+    return moist_static_energy(
+        temp, height, spec_hum, c_p=c_p, grav=grav, l_v=l_v
+    ) + kinetic_energy(u, v)
 
 
 def saturation_mse(

@@ -6,9 +6,11 @@ import xarray as xr
 
 from puffins.constants import C_P, EPSILON, GRAV_EARTH, L_V, P0, R_D
 from puffins.thermodynamics import (
+    dry_static_energy,
     dsat_entrop_dtemp_approx,
     equiv_pot_temp,
     exner_func,
+    kinetic_energy,
     mixing_ratio,
     moist_enthalpy,
     moist_entropy,
@@ -25,6 +27,7 @@ from puffins.thermodynamics import (
     saturation_specific_humidity,
     specific_humidity,
     temp_from_equiv_pot_temp,
+    total_energy,
     vap_press_from_mix_ratio,
     water_vapor_mixing_ratio,
 )
@@ -339,6 +342,186 @@ class TestMoistStaticEnergy:
         temp, height, q = 300.0, 5000.0, 0.015
         expected = C_P * temp + GRAV_EARTH * height + L_V * q
         np.testing.assert_allclose(moist_static_energy(temp, height, q), expected)
+
+
+# ---------------------------------------------------------------------------
+# TestKineticEnergy
+# ---------------------------------------------------------------------------
+
+
+class TestKineticEnergy:
+    """Tests for kinetic_energy."""
+
+    def test_known_value(self) -> None:
+        """Reconstruct 0.5 * (u^2 + v^2) from raw numbers."""
+        u, v = 3.0, 4.0
+        np.testing.assert_allclose(kinetic_energy(u, v), 0.5 * (9.0 + 16.0))
+
+    def test_zero_wind(self) -> None:
+        """Zero wind has zero kinetic energy."""
+        np.testing.assert_allclose(kinetic_energy(0.0, 0.0), 0.0)
+
+    def test_symmetric_in_components(self) -> None:
+        """Swapping u and v leaves the result unchanged."""
+        np.testing.assert_allclose(kinetic_energy(2.0, 7.0), kinetic_energy(7.0, 2.0))
+
+    def test_even_in_sign(self) -> None:
+        """Reversing the flow direction leaves the result unchanged."""
+        np.testing.assert_allclose(kinetic_energy(-2.0, -7.0), kinetic_energy(2.0, 7.0))
+
+    def test_quadratic_scaling(self) -> None:
+        """Doubling both components quadruples the kinetic energy."""
+        np.testing.assert_allclose(
+            kinetic_energy(4.0, 6.0), 4.0 * kinetic_energy(2.0, 3.0)
+        )
+
+    def test_dataarray_input(self) -> None:
+        """DataArray input returns a DataArray with the same coords."""
+        u = xr.DataArray([1.0, 2.0], dims="x", coords={"x": [0.0, 1.0]}, name="u")
+        v = xr.DataArray([2.0, 4.0], dims="x", coords={"x": [0.0, 1.0]}, name="v")
+        result = kinetic_energy(u, v)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_allclose(result.values, [2.5, 10.0])
+        np.testing.assert_allclose(result["x"].values, [0.0, 1.0])
+
+
+# ---------------------------------------------------------------------------
+# TestDryStaticEnergy
+# ---------------------------------------------------------------------------
+
+
+class TestDryStaticEnergy:
+    """Tests for dry_static_energy."""
+
+    def test_known_value_defaults(self) -> None:
+        """Reconstruct c_p * T + g * z from the module's constants."""
+        temp, height = 300.0, 5000.0
+        expected = C_P * temp + GRAV_EARTH * height
+        np.testing.assert_allclose(dry_static_energy(temp, height), expected)
+
+    def test_known_value_nondefault_coeffs(self) -> None:
+        """Both c_p and grav are honored, reconstructed from raw numbers.
+
+        Uses values unlike the defaults in both magnitude and ratio, so a
+        swapped or dropped coefficient cannot coincidentally pass.
+        """
+        temp, height = 250.0, 8000.0
+        c_p, grav = 800.0, 3.71  # Roughly Mars.
+        expected = 800.0 * 250.0 + 3.71 * 8000.0
+        np.testing.assert_allclose(
+            dry_static_energy(temp, height, c_p=c_p, grav=grav), expected
+        )
+
+    def test_zero_height(self) -> None:
+        """At zero height, DSE reduces to c_p * T."""
+        np.testing.assert_allclose(dry_static_energy(300.0, 0.0), C_P * 300.0)
+
+    def test_c_p_scales_temp_term_only(self) -> None:
+        """Doubling c_p adds exactly one more c_p * T, leaving g * z alone."""
+        temp, height = 280.0, 4000.0
+        base = dry_static_energy(temp, height, c_p=C_P)
+        doubled = dry_static_energy(temp, height, c_p=2 * C_P)
+        np.testing.assert_allclose(doubled - base, C_P * temp)
+
+    def test_grav_scales_height_term_only(self) -> None:
+        """Doubling grav adds exactly one more g * z, leaving c_p * T alone."""
+        temp, height = 280.0, 4000.0
+        base = dry_static_energy(temp, height, grav=GRAV_EARTH)
+        doubled = dry_static_energy(temp, height, grav=2 * GRAV_EARTH)
+        np.testing.assert_allclose(doubled - base, GRAV_EARTH * height)
+
+    def test_is_mse_minus_latent_term(self) -> None:
+        """DSE equals MSE with the latent term removed."""
+        temp, height, q = 290.0, 3000.0, 0.012
+        np.testing.assert_allclose(
+            dry_static_energy(temp, height),
+            moist_static_energy(temp, height, q) - L_V * q,
+        )
+
+    def test_dataarray_input(self) -> None:
+        """DataArray input returns a DataArray."""
+        temp = xr.DataArray([280.0, 300.0], dims="x")
+        height = xr.DataArray([0.0, 5000.0], dims="x")
+        result = dry_static_energy(temp, height)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_allclose(
+            result.values, [C_P * 280.0, C_P * 300.0 + GRAV_EARTH * 5000.0]
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestTotalEnergy
+# ---------------------------------------------------------------------------
+
+
+class TestTotalEnergy:
+    """Tests for total_energy."""
+
+    def test_known_value_defaults(self) -> None:
+        """Reconstruct c_p*T + g*z + L_v*q + 0.5*(u^2+v^2) from constants."""
+        u, v, temp, height, q = 10.0, 5.0, 290.0, 3000.0, 0.012
+        expected = C_P * temp + GRAV_EARTH * height + L_V * q + 0.5 * (10.0**2 + 5.0**2)
+        np.testing.assert_allclose(total_energy(u, v, temp, height, q), expected)
+
+    def test_known_value_nondefault_coeffs(self) -> None:
+        """All three of c_p, grav, and l_v are honored simultaneously.
+
+        Reconstructed entirely from raw numbers, so a coefficient attached to
+        the wrong term fails here.
+        """
+        u, v, temp, height, q = 8.0, 6.0, 250.0, 4000.0, 0.02
+        c_p, grav, l_v = 800.0, 3.71, 1.2e6
+        expected = (
+            800.0 * 250.0 + 3.71 * 4000.0 + 1.2e6 * 0.02 + 0.5 * (8.0**2 + 6.0**2)
+        )
+        np.testing.assert_allclose(
+            total_energy(u, v, temp, height, q, c_p=c_p, grav=grav, l_v=l_v),
+            expected,
+        )
+
+    def test_l_v_scales_moisture_term_only(self) -> None:
+        """Doubling l_v adds exactly one more L_v * q."""
+        args = (10.0, 5.0, 290.0, 3000.0, 0.012)
+        base = total_energy(*args, l_v=L_V)
+        doubled = total_energy(*args, l_v=2 * L_V)
+        np.testing.assert_allclose(doubled - base, L_V * 0.012)
+
+    def test_c_p_scales_temp_term_only(self) -> None:
+        """Doubling c_p adds exactly one more c_p * T."""
+        args = (10.0, 5.0, 290.0, 3000.0, 0.012)
+        base = total_energy(*args, c_p=C_P)
+        doubled = total_energy(*args, c_p=2 * C_P)
+        np.testing.assert_allclose(doubled - base, C_P * 290.0)
+
+    def test_grav_scales_height_term_only(self) -> None:
+        """Doubling grav adds exactly one more g * z."""
+        args = (10.0, 5.0, 290.0, 3000.0, 0.012)
+        base = total_energy(*args, grav=GRAV_EARTH)
+        doubled = total_energy(*args, grav=2 * GRAV_EARTH)
+        np.testing.assert_allclose(doubled - base, GRAV_EARTH * 3000.0)
+
+    def test_equals_mse_plus_ke(self) -> None:
+        """Total energy is the sum of its two documented pieces."""
+        u, v, temp, height, q = 12.0, -4.0, 285.0, 2500.0, 0.009
+        np.testing.assert_allclose(
+            total_energy(u, v, temp, height, q),
+            moist_static_energy(temp, height, q) + kinetic_energy(u, v),
+        )
+
+    def test_zero_wind_reduces_to_mse(self) -> None:
+        """With no wind, total energy is just moist static energy."""
+        temp, height, q = 285.0, 2500.0, 0.009
+        np.testing.assert_allclose(
+            total_energy(0.0, 0.0, temp, height, q),
+            moist_static_energy(temp, height, q),
+        )
+
+    def test_dataarray_input(self) -> None:
+        """DataArray input returns a DataArray."""
+        ones = xr.DataArray([1.0, 1.0], dims="x")
+        result = total_energy(10.0 * ones, 0.0 * ones, 290.0 * ones, 0.0 * ones, 0.0)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_allclose(result.values, C_P * 290.0 + 50.0)
 
 
 # ---------------------------------------------------------------------------
