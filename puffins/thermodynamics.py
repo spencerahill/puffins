@@ -290,9 +290,12 @@ def dry_static_energy(
     temp : ArrayLike
         Temperature (K).
     height : ArrayLike
-        Geometric height (m).  Note that reanalyses including ERA5 archive
-        *geopotential* (m^2/s^2), not height; divide such a field by ``grav``
-        before passing it in.
+        Geopotential height (m), i.e. geopotential divided by ``grav``.  Note
+        that reanalyses including ERA5 archive *geopotential* (m^2/s^2), not
+        height, so divide such a field by ``grav`` before passing it in.
+        Geopotential height and geometric height differ by roughly 0.5% at
+        30 km, but the returned energy is unaffected either way, since the
+        division by ``grav`` here is undone by the multiplication below.
     c_p : float, optional
         Specific heat of dry air at constant pressure (J/kg/K).
         Default: ``C_P``.
@@ -334,11 +337,20 @@ def total_energy(
     grav: float = GRAV_EARTH,
     l_v: float = L_V,
 ) -> ArrayLike:
-    """Total energy: moist static energy plus kinetic energy.
+    r"""Total energy: moist static energy plus kinetic energy.
 
-    This is the quantity whose column integral is conserved by adiabatic,
-    frictionless motion, and thus the one whose meridional flux appears in the
+    This is the quantity whose meridional *flux* appears in the
     column-integrated energy budget.
+
+    Its column integral is not the column's energy content, and should not be
+    used as one.  For a hydrostatic column the vertical integral of the
+    geopotential equals that of :math:`R_d T`, so integrating this quantity
+    counts the potential energy twice: the dry part comes out larger than
+    :math:`\int c_p T \, dp/g` by the factor :math:`1 + R_d/c_p`, about 1.29
+    for dry air.  The column energy content is
+    :math:`\int (c_p T + L_v q + \mathrm{KE}) \, dp/g`, with no geopotential
+    term.  The asymmetry is real rather than an inconsistency: the flux
+    carries the geopotential and the storage term does not.
 
     Parameters
     ----------
@@ -349,8 +361,8 @@ def total_energy(
     temp : ArrayLike
         Temperature (K).
     height : ArrayLike
-        Geometric height (m).  See ``dry_static_energy`` for the geopotential
-        caveat.
+        Geopotential height (m).  See ``dry_static_energy`` for the ERA5
+        geopotential caveat.
     spec_hum : ArrayLike
         Specific humidity (kg/kg).
     c_p : float, optional

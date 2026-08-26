@@ -410,6 +410,65 @@ class TestMeridIntegralPointData:
         assert LAT_STR not in result.dims
         assert LEV_STR in result.dims
 
+    def test_centered_backs_off_half_a_cell(self) -> None:
+        """centered=True subtracts half the local term from the cumsum.
+
+        The two cumulative sums are order 1 while the polar terms are order
+        1e-18, so the difference there is below the floating-point resolution
+        of the subtraction.  ``atol`` is set from that resolution rather than
+        chosen: it is 2 ULP of the largest cumulative value, which is fifteen
+        orders of magnitude below the signal at every other latitude.
+        """
+        arr = _make_1d_field(181, value=3.0)
+        plain = merid_integral_point_data(arr, do_cumsum=True)
+        cent = merid_integral_point_data(arr, do_cumsum=True, centered=True)
+        lats = arr[LAT_STR].values
+        dlat = np.deg2rad(np.mean(np.diff(lats)))
+        term = 3.0 * np.cos(np.deg2rad(lats)) * dlat
+        np.testing.assert_allclose(
+            (plain - cent).values,
+            0.5 * term,
+            rtol=1e-9,
+            atol=2.0 * np.spacing(float(np.abs(plain).max())),
+        )
+
+    def test_centered_closes_at_a_pole_terminated_grid(self) -> None:
+        """A discretely zero-mean field still closes to zero at the pole.
+
+        This is the property ``inferred_merid_flux`` relies on.  The mean is
+        removed with the same discrete quadrature the integral uses, so the
+        cancellation is exact rather than approximate, and ``cos`` vanishes at
+        the final latitude so the half-cell back-off costs nothing there.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        vals = 150.0 * np.cos(np.deg2rad(lats)) ** 2 - 100.0
+        raw = xr.DataArray(vals, dims=[LAT_STR], coords={LAT_STR: lats})
+        arr = raw - merid_avg_point_data(raw)
+        cent = merid_integral_point_data(arr, do_cumsum=True, centered=True)
+        scale = float(np.abs(cent).max())
+        assert scale > 0
+        np.testing.assert_allclose(
+            float(cent.isel({LAT_STR: -1})) / scale, 0.0, atol=1e-12
+        )
+
+    def test_centered_without_cumsum_raises(self) -> None:
+        """centered is meaningless for the total, so it raises rather than no-op."""
+        arr = _make_1d_field(91)
+        with pytest.raises(ValueError, match="only meaningful when"):
+            merid_integral_point_data(arr, centered=True)
+
+    def test_nonuniform_spacing_raises_for_descending_lats(self) -> None:
+        """The uniformity guard fires regardless of latitude direction.
+
+        A descending coordinate has negative spacings, so a guard that divides
+        the spread by the signed mean compares a negative number against the
+        threshold and never fires.
+        """
+        lats = np.array([90.0, 60.0, 0.0, -30.0, -90.0])
+        arr = xr.DataArray(np.ones(5), dims=[LAT_STR], coords={LAT_STR: lats})
+        with pytest.raises(ValueError, match="Uniform latitude spacing"):
+            merid_integral_point_data(arr)
+
 
 # ---------------------------------------------------------------------------
 # TestMeridAvgPointData
@@ -1038,8 +1097,14 @@ def _reconstruct_inferred_merid_flux(
 ) -> np.ndarray:
     """Rebuild the inferred meridional flux from raw numpy.
 
-    Mirrors the discrete rectangle rule of ``merid_integral_point_data``:
-    cumulative sum of ``Q * cos(lat) * dlat``, in radians, times 2*pi*a^2.
+    Mirrors the discrete midpoint rule of ``merid_integral_point_data``:
+    cumulative sum of ``Q * cos(lat) * dlat`` in radians, less half the local
+    term, times 2*pi*a^2.
+
+    This shares a discretization with the code under test, so it pins the
+    coefficients and the weighting but is blind to an error in the quadrature
+    itself.  ``TestInferredMeridFluxAccuracy`` covers that gap against a
+    closed form.
     """
     dlat = np.deg2rad(np.mean(np.diff(lats)))
     coslat = np.cos(np.deg2rad(lats))
@@ -1048,7 +1113,8 @@ def _reconstruct_inferred_merid_flux(
         integrand = vals - global_mean
     else:
         integrand = vals
-    return 2.0 * np.pi * radius**2 * np.cumsum(integrand * coslat * dlat)
+    term = integrand * coslat * dlat
+    return np.asarray(2.0 * np.pi * radius**2 * (np.cumsum(term) - 0.5 * term))
 
 
 def _make_boundary_fluxes(n: int = 181) -> xr.DataArray:
@@ -1146,6 +1212,107 @@ class TestInferredMeridFlux:
         arr = xr.DataArray(np.ones(5), dims=[LAT_STR], coords={LAT_STR: lats})
         with pytest.raises(ValueError, match="Uniform latitude spacing"):
             inferred_merid_flux(arr)
+
+
+# ---------------------------------------------------------------------------
+# TestInferredMeridFluxAccuracy
+# ---------------------------------------------------------------------------
+
+
+def _q_zero_global_mean(lats: np.ndarray) -> np.ndarray:
+    """Forcing whose global area-weighted mean is exactly zero.
+
+    ``<cos^2>`` over the sphere is 2/3, so ``150 * cos^2 - 100`` integrates to
+    zero and the implied flux has a closed form.
+    """
+    return np.asarray(150.0 * np.cos(np.deg2rad(lats)) ** 2 - 100.0)
+
+
+def _flux_exact(lats: np.ndarray, radius: float = RAD_EARTH) -> np.ndarray:
+    """Closed form for ``_q_zero_global_mean``.
+
+    F(phi) = 2*pi*a^2 * Integral_{-pi/2}^{phi} Q cos(phi') dphi'
+           = 2*pi*a^2 * 50 * sin(phi) * cos^2(phi),
+    using Integral cos^3 = sin - sin^3/3 and Integral cos = sin, with both
+    lower-limit terms cancelling at -pi/2.
+    """
+    p = np.deg2rad(lats)
+    return np.asarray(2.0 * np.pi * radius**2 * 50.0 * np.sin(p) * np.cos(p) ** 2)
+
+
+def _flux_err(n: int) -> float:
+    """Max error against the closed form, as a fraction of the peak flux."""
+    lats = np.linspace(-90.0, 90.0, n)
+    arr = xr.DataArray(
+        _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+    )
+    exact = _flux_exact(lats)
+    return float(np.abs(inferred_merid_flux(arr).values - exact).max()) / float(
+        np.abs(exact).max()
+    )
+
+
+class TestInferredMeridFluxAccuracy:
+    """Accuracy of inferred_merid_flux against a closed-form solution.
+
+    These tests exist because ``_reconstruct_inferred_merid_flux`` shares its
+    discretization with the code under test, so it cannot see an error in the
+    quadrature.  Everything here is measured against an analytic answer.
+    """
+
+    def test_matches_closed_form(self) -> None:
+        """At 0.25 degrees the error is a small fraction of the peak flux.
+
+        Tolerance measured, not chosen: the midpoint rule gives 1.4e-5 of peak
+        on this grid, so 3e-5 passes it and fails the one-sided rule, which
+        gives 5.7e-3.
+        """
+        assert _flux_err(721) < 3e-5
+
+    def test_second_order_convergence(self) -> None:
+        """Halving the grid spacing cuts the error by about four.
+
+        A one-sided cumulative sum is first order and would give a ratio near
+        two.  Measured ratios are 2.00 in log2 across four refinements.
+        """
+        err_coarse = _flux_err(181)
+        err_fine = _flux_err(361)
+        ratio = err_coarse / err_fine
+        assert 3.7 < ratio < 4.3, f"convergence ratio {ratio:.2f}, expected ~4"
+
+    def test_symmetric_forcing_gives_no_cross_equatorial_flux(self) -> None:
+        """A hemispherically symmetric forcing transports nothing across 0.
+
+        The one-sided rule returns +0.11 PW here at 1 degree, which is 2.3% of
+        the peak transport.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        arr = xr.DataArray(
+            _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+        )
+        result = inferred_merid_flux(arr)
+        peak = float(np.abs(result).max())
+        assert peak > 0
+        np.testing.assert_allclose(
+            float(result.sel({LAT_STR: 0.0})) / peak, 0.0, atol=1e-12
+        )
+
+    def test_latitude_order_does_not_matter(self) -> None:
+        """Ascending and descending latitude coordinates give the same flux.
+
+        The one-sided rule offsets the profile by half a cell in whichever
+        direction the array runs, so the two orderings disagreed by 4.5% of
+        the peak before the midpoint rule was adopted.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        asc = xr.DataArray(
+            _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+        )
+        desc = asc.isel({LAT_STR: slice(None, None, -1)})
+        f_asc = inferred_merid_flux(asc)
+        f_desc = inferred_merid_flux(desc).sel({LAT_STR: lats})
+        peak = float(np.abs(f_asc).max())
+        np.testing.assert_allclose((f_asc - f_desc).values / peak, 0.0, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
