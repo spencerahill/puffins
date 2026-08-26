@@ -83,7 +83,7 @@ def int_dp_g(
     dp : xarray.DataArray
         Pressure thickness of each level (Pa).
     dim : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
     grav : float, optional
         Gravitational acceleration (m/s^2). Default: Earth.
 
@@ -114,7 +114,7 @@ def int_dlogp(
     p_bot : float, optional
         Bottom pressure boundary (Pa). Default: MEAN_SLP_EARTH.
     pfull_str : str, optional
-        Name of the full-level pressure dimension. Default: 'level'.
+        Name of the full-level pressure dimension. Default: 'plev'.
     phalf_str : str, optional
         Name of the half-level pressure dimension. Default: 'phalf'.
 
@@ -139,7 +139,7 @@ def col_avg(arr: xr.DataArray, dp: xr.DataArray, dim: str = LEV_STR) -> xr.DataA
     dp : xarray.DataArray
         Pressure thickness of each level (Pa).
     dim : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
 
     Returns
     -------
@@ -166,7 +166,7 @@ def subtract_col_avg(
     dp : xarray.DataArray
         Pressure thickness of each level (Pa).
     dim : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
 
     Returns
     -------
@@ -588,7 +588,7 @@ def avg_p_weighted(
     pressure : xarray.DataArray
         Pressure at full levels.
     p_str : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
 
     Returns
     -------
@@ -622,7 +622,7 @@ def avg_logp_weighted(
     pressure : xarray.DataArray
         Pressure at full levels.
     p_str : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
 
     Returns
     -------
@@ -643,7 +643,7 @@ def col_extrema(arr: xr.DataArray, p_str: str = LEV_STR) -> xr.DataArray:
     arr : xarray.DataArray
         Field to search for extrema.
     p_str : str, optional
-        Name of the vertical dimension. Default: 'level'.
+        Name of the vertical dimension. Default: 'plev'.
 
     Returns
     -------

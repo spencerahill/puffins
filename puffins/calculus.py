@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 
 from ._typing import ArrayLike, Scalar, XarrayObj
-from .constants import RAD_EARTH
+from .constants import GRAV_EARTH, RAD_EARTH
 from .names import (
     BOUNDS_STR,
     LAT_BOUNDS_STR,
@@ -22,6 +22,7 @@ from .names import (
     SFC_AREA_STR,
 )
 from .nb_utils import cosdeg, sindeg
+from .vert_coords import int_dp_g
 
 
 # Derivatives.
@@ -54,6 +55,7 @@ def merid_integral_point_data(
     max_lat: float = 90,
     unif_thresh: float = 0.01,
     do_cumsum: bool = False,
+    centered: bool = False,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
     """Area-weighted meridional integral for data defined at single lats.
@@ -63,11 +65,63 @@ def merid_integral_point_data(
     that case, a discrete form of the summing operation should be used and is
     implemented in the function ``merid_integral_grid_data``.
 
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Field to integrate.
+    min_lat, max_lat : float, optional
+        Latitude bounds of the integral.  Default: the full sphere.
+    unif_thresh : float, optional
+        Maximum fractional spread in latitude spacing tolerated before
+        raising.  Default: 0.01.
+    do_cumsum : bool, optional
+        Return the cumulative integral as a function of latitude rather than
+        the total.  Default: False.
+    centered : bool, optional
+        Use the midpoint rather than the one-sided rectangle rule for the
+        cumulative integral.  Only meaningful when ``do_cumsum`` is True.
+        Default: False, which preserves the one-sided rule.  See Notes.
+    lat_str : str, optional
+        Name of the latitude dimension.  Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        The integral, reduced over latitude, or the cumulative integral as a
+        function of latitude when ``do_cumsum`` is True.
+
+    Raises
+    ------
+    ValueError
+        If the latitude spacing is not uniform to within ``unif_thresh``, or
+        if ``centered`` is True without ``do_cumsum``.
+
+    Notes
+    -----
+    A plain ``cumsum`` accumulates the whole cell centered on each latitude,
+    so it approximates the integral up to half a grid cell *past* that
+    latitude.  That makes it first-order accurate in the grid spacing.
+    Backing off half a cell, which is what ``centered=True`` does, is the
+    midpoint rule and is second-order accurate; measured convergence is 1.00
+    and 2.00 respectively.
+
+    The centered value at the final latitude is the full integral less half
+    that latitude's cell.  For a zero-mean field on a grid whose endpoints are
+    the poles, ``cos`` vanishes there and the cumulative integral still closes
+    to zero to machine precision.  On a cell-centred grid it does not, and
+    should not: the last cell centre is not the pole, and there is still half
+    a cell of area north of it.  Measured residuals for a zero-mean field are
+    4e-4 of the peak on a 1 degree cell-centred grid and 2e-5 on a 0.25 degree
+    one.
     """
+    if centered and not do_cumsum:
+        raise ValueError("`centered` is only meaningful when `do_cumsum` is True.")
     lat = arr[lat_str]
     lat_mask = (lat >= min_lat) & (lat <= max_lat)
     dlat_arr = lat.where(lat_mask, drop=True).diff(lat_str)
-    if (dlat_arr.max() - dlat_arr.min()) / dlat_arr.mean() > unif_thresh:
+    # ``abs`` on the denominator so the check also fires for a descending
+    # latitude coordinate, where the mean spacing is negative.
+    if (dlat_arr.max() - dlat_arr.min()) / np.abs(dlat_arr.mean()) > unif_thresh:
         raise ValueError(
             "Uniform latitude spacing required; given values "
             "are not sufficiently uniform."
@@ -76,7 +130,10 @@ def merid_integral_point_data(
         dlat = dlat_arr.mean()
     integrand = arr.where(lat_mask, drop=True) * cosdeg(lat) * np.deg2rad(dlat)
     if do_cumsum:
-        return cast(xr.DataArray, integrand.cumsum(lat_str))
+        cumulative = integrand.cumsum(lat_str)
+        if centered:
+            cumulative = cumulative - 0.5 * integrand
+        return cast(xr.DataArray, cumulative)
     return cast(xr.DataArray, integrand.sum(lat_str))
 
 
@@ -484,6 +541,208 @@ def lat_circumf_weight(
     if lat is None:
         lat = arr[lat_str]
     return cast(xr.DataArray, arr * lat_circumf(lat, radius=radius))
+
+
+def col_int_merid_flux(
+    v: xr.DataArray,
+    arr: xr.DataArray,
+    dp: xr.DataArray,
+    vert_str: str = LEV_STR,
+    lat_str: str = LAT_STR,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+) -> xr.DataArray:
+    """Total meridional flux of a mass-specific quantity across a lat circle.
+
+    The mass-weighted vertical integral of ``v * arr``, multiplied by the
+    circumference of the latitude circle.  When ``arr`` is an energy per unit
+    mass such as moist static energy, the result is the total northward energy
+    transport in Watts.
+
+    Parameters
+    ----------
+    v : xarray.DataArray
+        Meridional velocity (m/s).  For a column energy budget this should
+        usually be the mass-corrected velocity, i.e. the output of
+        ``vert_coords.subtract_col_avg``, so that a spurious net column mass
+        flux does not contaminate the transport.
+    arr : xarray.DataArray
+        The transported quantity, per unit mass (e.g. J/kg for an energy).
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa).
+    vert_str : str, optional
+        Name of the vertical dimension.  Default: 'plev'.
+    lat_str : str, optional
+        Name of the latitude dimension.  Default: 'lat'.
+    radius : float, optional
+        Planetary radius (m).  Default: Earth's.
+    grav : float, optional
+        Gravitational acceleration (m/s^2).  Default: Earth's.
+
+    Returns
+    -------
+    xarray.DataArray
+        Flux across the full latitude circle, in units of ``arr`` times kg/s,
+        i.e. Watts when ``arr`` is in J/kg.
+
+    See Also
+    --------
+    inferred_merid_flux : The same transport inferred from boundary fluxes.
+    puffins.vert_coords.subtract_col_avg : Mass correction for ``v``.
+
+    Notes
+    -----
+    ``dp`` must carry the same below-ground mask as ``v``.  The vertical sum
+    skips NaN but sums every ``dp``, so an unmasked ``dp`` paired with a
+    masked ``v`` dilutes the column mean that ``subtract_col_avg`` removes and
+    leaves a large spurious column mass flux behind.  Building ``dp`` from the
+    level coordinate alone and masking only the fields is the way this goes
+    wrong.
+
+    The vertical sum skips NaN, so a column with missing levels is integrated
+    over the levels that remain.  That is correct for genuinely below-ground
+    levels, whose mass is absent, but it also means an unintended NaN silently
+    reduces the transport, and a wholly missing column returns 0 rather than
+    NaN.
+    """
+    col_int = int_dp_g(v * arr, dp, dim=vert_str, grav=grav)
+    return lat_circumf_weight(col_int, lat_str=lat_str, radius=radius)
+
+
+def inferred_merid_flux(
+    boundary_fluxes: xr.DataArray,
+    do_remove_global_mean: bool = True,
+    lat_str: str = LAT_STR,
+    radius: float = RAD_EARTH,
+) -> xr.DataArray:
+    r"""Meridional flux implied by the net energy input to each column.
+
+    Integrates the net input per unit area northward from the south pole,
+    weighting by area:
+
+    .. math::
+
+        F(\phi) = 2 \pi a^2 \int_{-\pi/2}^{\phi}
+                  \left[ Q - \langle Q \rangle \right] \cos\phi' \, d\phi'
+
+    where :math:`Q` is ``boundary_fluxes`` and :math:`\langle Q \rangle` is its
+    global, area-weighted mean.  Removing that mean is what forces the implied
+    flux back to zero at the north pole.  Without it, any global imbalance
+    accumulates into a spurious flux that grows with latitude.
+
+    Standard uses: net top-of-atmosphere radiation gives the total (atmosphere
+    plus ocean) transport; net surface flux gives the ocean transport; net
+    column energy input minus column energy tendency gives the atmospheric
+    transport.
+
+    Parameters
+    ----------
+    boundary_fluxes : xarray.DataArray
+        Net energy input per unit area (W/m^2), signed positive into the
+        column.
+    do_remove_global_mean : bool, optional
+        Subtract the global area-weighted mean before integrating.
+        Default: True.
+    lat_str : str, optional
+        Name of the latitude dimension.  Default: 'lat'.
+    radius : float, optional
+        Planetary radius (m).  Default: Earth's.
+
+    Returns
+    -------
+    xarray.DataArray
+        Northward flux (W) as a function of latitude.
+
+    See Also
+    --------
+    col_int_merid_flux : The same transport computed directly from the winds.
+
+    Notes
+    -----
+    Requires uniformly spaced latitudes; see ``merid_integral_point_data``.
+
+    ``boundary_fluxes`` should span pole to pole.  The mean that is removed is
+    the mean over whatever latitudes are supplied, so on a hemispheric or
+    tropical subset this removes a domain mean rather than a global one, and
+    the result is then forced to zero at the northern edge of that subset.
+    That is the same property this function relies on for correctness on a
+    global array, so a subset produces a plausible-looking profile with no
+    warning.
+
+    The cumulative integral uses the midpoint rule, which is second-order
+    accurate in the latitude spacing.  It begins half a grid cell south of the
+    first latitude, so the value returned there is the contribution of that
+    half cell rather than zero.
+    """
+    if do_remove_global_mean:
+        integrand = boundary_fluxes - merid_avg_point_data(
+            boundary_fluxes, lat_str=lat_str
+        )
+    else:
+        integrand = boundary_fluxes
+    return cast(
+        xr.DataArray,
+        2.0
+        * np.pi
+        * radius**2
+        * merid_integral_point_data(
+            integrand, do_cumsum=True, centered=True, lat_str=lat_str
+        ),
+    )
+
+
+def effective_diffusivity(
+    flux: xr.DataArray,
+    arr: xr.DataArray,
+    radius: float = RAD_EARTH,
+    lat_str: str = LAT_STR,
+) -> xr.DataArray:
+    r"""Bulk diffusivity implied by a meridional flux and a meridional gradient.
+
+    Defined by requiring that the flux be down-gradient:
+
+    .. math::
+
+        D_{\mathrm{eff}} = -F \left/ \frac{\partial m}{\partial y} \right.
+
+    with :math:`\partial / \partial y = a^{-1} \partial / \partial \phi`.
+
+    Parameters
+    ----------
+    flux : xarray.DataArray
+        Meridional flux, e.g. the output of ``col_int_merid_flux`` (Watts, for
+        an energy flux across the full latitude circle).
+    arr : xarray.DataArray
+        Field whose meridional gradient sets the down-gradient direction, e.g.
+        near-surface moist static energy (J/kg).
+    radius : float, optional
+        Planetary radius (m).  Default: Earth's.
+    lat_str : str, optional
+        Name of the latitude dimension.  Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Effective diffusivity, in units of ``flux`` divided by units of ``arr``
+        per meter.  For ``flux`` in Watts and ``arr`` in J/kg that is kg m / s,
+        which is *not* the m^2/s of a true eddy diffusivity: the two differ by
+        the column mass along the latitude circle per unit meridional distance,
+        :math:`2 \pi a \cos\phi \, p_s / g`.
+
+    Notes
+    -----
+    The denominator vanishes at extrema of ``arr``, and the result there is
+    not usable.  Which way it fails depends on the grid, and neither way is
+    announced.  When a latitude sits exactly on the extremum the result is
+    a signed infinity, emitted without a numpy divide-by-zero warning, which
+    then propagates through a later ``mean`` and survives ``nanmax``.  When
+    the extremum falls between latitudes the result is instead a large finite
+    spike, which no warning or non-finite check will catch.  Both ``flux`` and
+    ``arr`` are usually smoothed in latitude first, and results within a few
+    grid points of an extremum of ``arr`` should be masked.
+    """
+    grad = lat_deriv(arr, lat_str=lat_str) / radius
+    return cast(xr.DataArray, -1 * flux / grad)
 
 
 if __name__ == "__main__":

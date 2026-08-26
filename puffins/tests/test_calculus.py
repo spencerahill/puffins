@@ -10,9 +10,12 @@ from puffins.calculus import (
     _diff_bounds,
     _grid_sfc_area,
     add_lat_lon_bounds,
+    col_int_merid_flux,
+    effective_diffusivity,
     flux_div,
     global_avg_grid_data,
     infer_bounds,
+    inferred_merid_flux,
     lat_circumf,
     lat_circumf_weight,
     lat_deriv,
@@ -24,7 +27,7 @@ from puffins.calculus import (
     sfc_area_latlon_box,
     to_radians,
 )
-from puffins.constants import RAD_EARTH
+from puffins.constants import GRAV_EARTH, RAD_EARTH
 from puffins.names import (
     BOUNDS_STR,
     LAT_BOUNDS_STR,
@@ -406,6 +409,65 @@ class TestMeridIntegralPointData:
         result = merid_integral_point_data(arr)
         assert LAT_STR not in result.dims
         assert LEV_STR in result.dims
+
+    def test_centered_backs_off_half_a_cell(self) -> None:
+        """centered=True subtracts half the local term from the cumsum.
+
+        The two cumulative sums are order 1 while the polar terms are order
+        1e-18, so the difference there is below the floating-point resolution
+        of the subtraction.  ``atol`` is set from that resolution rather than
+        chosen: it is 2 ULP of the largest cumulative value, which is fifteen
+        orders of magnitude below the signal at every other latitude.
+        """
+        arr = _make_1d_field(181, value=3.0)
+        plain = merid_integral_point_data(arr, do_cumsum=True)
+        cent = merid_integral_point_data(arr, do_cumsum=True, centered=True)
+        lats = arr[LAT_STR].values
+        dlat = np.deg2rad(np.mean(np.diff(lats)))
+        term = 3.0 * np.cos(np.deg2rad(lats)) * dlat
+        np.testing.assert_allclose(
+            (plain - cent).values,
+            0.5 * term,
+            rtol=1e-9,
+            atol=2.0 * np.spacing(float(np.abs(plain).max())),
+        )
+
+    def test_centered_closes_at_a_pole_terminated_grid(self) -> None:
+        """A discretely zero-mean field still closes to zero at the pole.
+
+        This is the property ``inferred_merid_flux`` relies on.  The mean is
+        removed with the same discrete quadrature the integral uses, so the
+        cancellation is exact rather than approximate, and ``cos`` vanishes at
+        the final latitude so the half-cell back-off costs nothing there.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        vals = 150.0 * np.cos(np.deg2rad(lats)) ** 2 - 100.0
+        raw = xr.DataArray(vals, dims=[LAT_STR], coords={LAT_STR: lats})
+        arr = raw - merid_avg_point_data(raw)
+        cent = merid_integral_point_data(arr, do_cumsum=True, centered=True)
+        scale = float(np.abs(cent).max())
+        assert scale > 0
+        np.testing.assert_allclose(
+            float(cent.isel({LAT_STR: -1})) / scale, 0.0, atol=1e-12
+        )
+
+    def test_centered_without_cumsum_raises(self) -> None:
+        """centered is meaningless for the total, so it raises rather than no-op."""
+        arr = _make_1d_field(91)
+        with pytest.raises(ValueError, match="only meaningful when"):
+            merid_integral_point_data(arr, centered=True)
+
+    def test_nonuniform_spacing_raises_for_descending_lats(self) -> None:
+        """The uniformity guard fires regardless of latitude direction.
+
+        A descending coordinate has negative spacings, so a guard that divides
+        the spread by the signed mean compares a negative number against the
+        threshold and never fires.
+        """
+        lats = np.array([90.0, 60.0, 0.0, -30.0, -90.0])
+        arr = xr.DataArray(np.ones(5), dims=[LAT_STR], coords={LAT_STR: lats})
+        with pytest.raises(ValueError, match="Uniform latitude spacing"):
+            merid_integral_point_data(arr)
 
 
 # ---------------------------------------------------------------------------
@@ -893,5 +955,457 @@ class TestLatCircumfWeight:
         """Output is DataArray with same dims."""
         arr = _make_1d_field(91)
         result = lat_circumf_weight(arr)
+        assert isinstance(result, xr.DataArray)
+        assert LAT_STR in result.dims
+
+
+# ---------------------------------------------------------------------------
+# TestColIntMeridFlux
+# ---------------------------------------------------------------------------
+
+
+def _make_flux_inputs(
+    nlat: int = 7, nlev: int = 4, seed: int = 0
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    """Pseudo-random (lat, lev) velocity, tracer, and layer-thickness fields.
+
+    Values are drawn once from a seeded generator so the raw-numpy
+    reconstructions below can use the same arrays the function sees.
+    """
+    rng = np.random.default_rng(seed)
+    lats = np.linspace(-60.0, 60.0, nlat)
+    levs = np.linspace(250.0, 1000.0, nlev)
+    dims = [LAT_STR, LEV_STR]
+    coords = {LAT_STR: lats, LEV_STR: levs}
+    v = xr.DataArray(
+        rng.normal(scale=5.0, size=(nlat, nlev)), dims=dims, coords=coords, name="v"
+    )
+    arr = xr.DataArray(
+        rng.normal(loc=3.0e5, scale=1.0e4, size=(nlat, nlev)),
+        dims=dims,
+        coords=coords,
+        name="mse",
+    )
+    dp = xr.DataArray(
+        rng.uniform(1.0e4, 2.0e4, size=(nlat, nlev)),
+        dims=dims,
+        coords=coords,
+        name="dp",
+    )
+    return v, arr, dp
+
+
+def _reconstruct_col_int_merid_flux(
+    v: xr.DataArray,
+    arr: xr.DataArray,
+    dp: xr.DataArray,
+    radius: float = RAD_EARTH,
+    grav: float = GRAV_EARTH,
+) -> np.ndarray:
+    """Rebuild the column-integrated meridional flux from raw numpy.
+
+    Independent of the module's own helpers: mass-weighted vertical sum of
+    ``v * arr``, then the latitude-circle circumference.
+    """
+    lats = v[LAT_STR].values
+    col_int = (v.values * arr.values * dp.values).sum(axis=1) / grav
+    return np.asarray(col_int * 2.0 * np.pi * radius * np.cos(np.deg2rad(lats)))
+
+
+class TestColIntMeridFlux:
+    """Tests for col_int_merid_flux."""
+
+    def test_reconstructs_from_numpy(self) -> None:
+        """Matches a raw-numpy rebuild of the full expression."""
+        v, arr, dp = _make_flux_inputs()
+        result = col_int_merid_flux(v, arr, dp)
+        expected = _reconstruct_col_int_merid_flux(v, arr, dp)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+
+    def test_nondefault_radius_and_grav(self) -> None:
+        """Both radius and grav are honored, against a raw-numpy rebuild."""
+        v, arr, dp = _make_flux_inputs()
+        radius, grav = 3.39e6, 3.71  # Roughly Mars.
+        result = col_int_merid_flux(v, arr, dp, radius=radius, grav=grav)
+        expected = _reconstruct_col_int_merid_flux(v, arr, dp, radius=radius, grav=grav)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+
+    def test_radius_scales_linearly(self) -> None:
+        """Doubling the radius doubles the flux (circumference is linear)."""
+        v, arr, dp = _make_flux_inputs()
+        base = col_int_merid_flux(v, arr, dp, radius=RAD_EARTH)
+        doubled = col_int_merid_flux(v, arr, dp, radius=2 * RAD_EARTH)
+        np.testing.assert_allclose(doubled.values, 2.0 * base.values, rtol=1e-12)
+
+    def test_grav_scales_inversely(self) -> None:
+        """Doubling grav halves the flux (mass per unit area halves)."""
+        v, arr, dp = _make_flux_inputs()
+        base = col_int_merid_flux(v, arr, dp, grav=GRAV_EARTH)
+        doubled = col_int_merid_flux(v, arr, dp, grav=2 * GRAV_EARTH)
+        np.testing.assert_allclose(doubled.values, 0.5 * base.values, rtol=1e-12)
+
+    def test_nondefault_vert_str(self) -> None:
+        """Integrates over the named vertical dim, not a hardcoded one."""
+        v, arr, dp = _make_flux_inputs()
+        v_r, arr_r, dp_r = (x.rename({LEV_STR: "level"}) for x in (v, arr, dp))
+        result = col_int_merid_flux(v_r, arr_r, dp_r, vert_str="level")
+        expected = _reconstruct_col_int_merid_flux(v, arr, dp)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+        assert "level" not in result.dims
+
+    def test_nondefault_lat_str(self) -> None:
+        """Weights by the named latitude dim, not a hardcoded one."""
+        v, arr, dp = _make_flux_inputs()
+        v_r, arr_r, dp_r = (x.rename({LAT_STR: "latitude"}) for x in (v, arr, dp))
+        result = col_int_merid_flux(v_r, arr_r, dp_r, lat_str="latitude")
+        expected = _reconstruct_col_int_merid_flux(v, arr, dp)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+        assert "latitude" in result.dims
+
+    def test_zero_velocity_gives_zero_flux(self) -> None:
+        """No meridional wind means no transport."""
+        v, arr, dp = _make_flux_inputs()
+        result = col_int_merid_flux(xr.zeros_like(v), arr, dp)
+        np.testing.assert_allclose(result.values, 0.0, atol=0)
+
+    def test_sign_follows_velocity(self) -> None:
+        """Reversing the wind reverses the flux."""
+        v, arr, dp = _make_flux_inputs()
+        base = col_int_merid_flux(v, arr, dp)
+        reversed_ = col_int_merid_flux(-v, arr, dp)
+        np.testing.assert_allclose(reversed_.values, -base.values, rtol=1e-12)
+
+    def test_lat_dim_retained_vert_dim_reduced(self) -> None:
+        """Output is a function of latitude only."""
+        v, arr, dp = _make_flux_inputs()
+        result = col_int_merid_flux(v, arr, dp)
+        assert isinstance(result, xr.DataArray)
+        assert LAT_STR in result.dims
+        assert LEV_STR not in result.dims
+
+
+# ---------------------------------------------------------------------------
+# TestInferredMeridFlux
+# ---------------------------------------------------------------------------
+
+
+def _reconstruct_inferred_merid_flux(
+    vals: np.ndarray,
+    lats: np.ndarray,
+    radius: float = RAD_EARTH,
+    do_remove_global_mean: bool = True,
+) -> np.ndarray:
+    """Rebuild the inferred meridional flux from raw numpy.
+
+    Mirrors the discrete midpoint rule of ``merid_integral_point_data``:
+    cumulative sum of ``Q * cos(lat) * dlat`` in radians, less half the local
+    term, times 2*pi*a^2.
+
+    This shares a discretization with the code under test, so it pins the
+    coefficients and the weighting but is blind to an error in the quadrature
+    itself.  ``TestInferredMeridFluxAccuracy`` covers that gap against a
+    closed form.
+    """
+    dlat = np.deg2rad(np.mean(np.diff(lats)))
+    coslat = np.cos(np.deg2rad(lats))
+    if do_remove_global_mean:
+        global_mean = (vals * coslat * dlat).sum() / (coslat * dlat).sum()
+        integrand = vals - global_mean
+    else:
+        integrand = vals
+    term = integrand * coslat * dlat
+    return np.asarray(2.0 * np.pi * radius**2 * (np.cumsum(term) - 0.5 * term))
+
+
+def _make_boundary_fluxes(n: int = 181) -> xr.DataArray:
+    """An idealized net-radiation-like profile: positive tropics, negative poles."""
+    lats = np.linspace(-90.0, 90.0, n)
+    data = 150.0 * np.cos(np.deg2rad(lats)) ** 2 - 60.0
+    return xr.DataArray(data, dims=[LAT_STR], coords={LAT_STR: lats}, name="net_rad")
+
+
+class TestInferredMeridFlux:
+    """Tests for inferred_merid_flux."""
+
+    def test_reconstructs_from_numpy(self) -> None:
+        """Matches a raw-numpy rebuild of the full expression."""
+        arr = _make_boundary_fluxes()
+        result = inferred_merid_flux(arr)
+        expected = _reconstruct_inferred_merid_flux(arr.values, arr[LAT_STR].values)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_no_global_mean_removal_reconstructs_from_numpy(self) -> None:
+        """With do_remove_global_mean=False, the raw field is integrated."""
+        arr = _make_boundary_fluxes()
+        result = inferred_merid_flux(arr, do_remove_global_mean=False)
+        expected = _reconstruct_inferred_merid_flux(
+            arr.values, arr[LAT_STR].values, do_remove_global_mean=False
+        )
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_global_mean_removal_closes_at_north_pole(self) -> None:
+        """Removing the global mean drives the flux back to zero at 90N.
+
+        This is the defining property of the calculation: the cumulative
+        integral of a zero-global-mean field over the whole sphere vanishes.
+        """
+        arr = _make_boundary_fluxes()
+        result = inferred_merid_flux(arr)
+        scale = np.abs(result.values).max()
+        assert scale > 0
+        np.testing.assert_allclose(
+            result.isel({LAT_STR: -1}).item() / scale, 0.0, atol=1e-12
+        )
+
+    def test_global_imbalance_survives_without_removal(self) -> None:
+        """A field with nonzero global mean leaves a residual flux at 90N."""
+        arr = _make_boundary_fluxes()
+        result = inferred_merid_flux(arr, do_remove_global_mean=False)
+        scale = np.abs(result.values).max()
+        assert abs(result.isel({LAT_STR: -1}).item()) / scale > 0.1
+
+    def test_removal_flag_changes_result(self) -> None:
+        """The two branches disagree for a field with nonzero global mean."""
+        arr = _make_boundary_fluxes()
+        with_removal = inferred_merid_flux(arr, do_remove_global_mean=True)
+        without = inferred_merid_flux(arr, do_remove_global_mean=False)
+        assert not np.allclose(with_removal.values, without.values)
+
+    def test_radius_scales_quadratically(self) -> None:
+        """Doubling the radius quadruples the flux (area scales as a^2)."""
+        arr = _make_boundary_fluxes()
+        base = inferred_merid_flux(arr, radius=RAD_EARTH)
+        doubled = inferred_merid_flux(arr, radius=2 * RAD_EARTH)
+        np.testing.assert_allclose(doubled.values, 4.0 * base.values, rtol=1e-12)
+
+    def test_nondefault_radius_reconstructs_from_numpy(self) -> None:
+        """A non-default radius matches the raw-numpy rebuild."""
+        arr = _make_boundary_fluxes()
+        radius = 3.39e6  # Roughly Mars.
+        result = inferred_merid_flux(arr, radius=radius)
+        expected = _reconstruct_inferred_merid_flux(
+            arr.values, arr[LAT_STR].values, radius=radius
+        )
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_nondefault_lat_str(self) -> None:
+        """Integrates over the named latitude dim, not a hardcoded one."""
+        arr = _make_boundary_fluxes().rename({LAT_STR: "latitude"})
+        result = inferred_merid_flux(arr, lat_str="latitude")
+        expected = _reconstruct_inferred_merid_flux(arr.values, arr["latitude"].values)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_energy_into_tropics_flows_poleward(self) -> None:
+        """Tropical heating and polar cooling give poleward transport.
+
+        Northward flux is positive in the NH and negative in the SH, the
+        observed sense of the atmosphere-plus-ocean energy transport.
+        """
+        arr = _make_boundary_fluxes()
+        result = inferred_merid_flux(arr)
+        assert result.sel({LAT_STR: 45.0}).item() > 0
+        assert result.sel({LAT_STR: -45.0}).item() < 0
+
+    def test_nonuniform_spacing_raises(self) -> None:
+        """Inherits the uniform-spacing requirement of the integral."""
+        lats = np.array([-90.0, -30.0, 0.0, 60.0, 90.0])
+        arr = xr.DataArray(np.ones(5), dims=[LAT_STR], coords={LAT_STR: lats})
+        with pytest.raises(ValueError, match="Uniform latitude spacing"):
+            inferred_merid_flux(arr)
+
+
+# ---------------------------------------------------------------------------
+# TestInferredMeridFluxAccuracy
+# ---------------------------------------------------------------------------
+
+
+def _q_zero_global_mean(lats: np.ndarray) -> np.ndarray:
+    """Forcing whose global area-weighted mean is exactly zero.
+
+    ``<cos^2>`` over the sphere is 2/3, so ``150 * cos^2 - 100`` integrates to
+    zero and the implied flux has a closed form.
+    """
+    return np.asarray(150.0 * np.cos(np.deg2rad(lats)) ** 2 - 100.0)
+
+
+def _flux_exact(lats: np.ndarray, radius: float = RAD_EARTH) -> np.ndarray:
+    """Closed form for ``_q_zero_global_mean``.
+
+    F(phi) = 2*pi*a^2 * Integral_{-pi/2}^{phi} Q cos(phi') dphi'
+           = 2*pi*a^2 * 50 * sin(phi) * cos^2(phi),
+    using Integral cos^3 = sin - sin^3/3 and Integral cos = sin, with both
+    lower-limit terms cancelling at -pi/2.
+    """
+    p = np.deg2rad(lats)
+    return np.asarray(2.0 * np.pi * radius**2 * 50.0 * np.sin(p) * np.cos(p) ** 2)
+
+
+def _flux_err(n: int) -> float:
+    """Max error against the closed form, as a fraction of the peak flux."""
+    lats = np.linspace(-90.0, 90.0, n)
+    arr = xr.DataArray(
+        _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+    )
+    exact = _flux_exact(lats)
+    return float(np.abs(inferred_merid_flux(arr).values - exact).max()) / float(
+        np.abs(exact).max()
+    )
+
+
+class TestInferredMeridFluxAccuracy:
+    """Accuracy of inferred_merid_flux against a closed-form solution.
+
+    These tests exist because ``_reconstruct_inferred_merid_flux`` shares its
+    discretization with the code under test, so it cannot see an error in the
+    quadrature.  Everything here is measured against an analytic answer.
+    """
+
+    def test_matches_closed_form(self) -> None:
+        """At 0.25 degrees the error is a small fraction of the peak flux.
+
+        Tolerance measured, not chosen: the midpoint rule gives 1.4e-5 of peak
+        on this grid, so 3e-5 passes it and fails the one-sided rule, which
+        gives 5.7e-3.
+        """
+        assert _flux_err(721) < 3e-5
+
+    def test_second_order_convergence(self) -> None:
+        """Halving the grid spacing cuts the error by about four.
+
+        A one-sided cumulative sum is first order and would give a ratio near
+        two.  Measured ratios are 2.00 in log2 across four refinements.
+        """
+        err_coarse = _flux_err(181)
+        err_fine = _flux_err(361)
+        ratio = err_coarse / err_fine
+        assert 3.7 < ratio < 4.3, f"convergence ratio {ratio:.2f}, expected ~4"
+
+    def test_symmetric_forcing_gives_no_cross_equatorial_flux(self) -> None:
+        """A hemispherically symmetric forcing transports nothing across 0.
+
+        The one-sided rule returns +0.11 PW here at 1 degree, which is 2.3% of
+        the peak transport.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        arr = xr.DataArray(
+            _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+        )
+        result = inferred_merid_flux(arr)
+        peak = float(np.abs(result).max())
+        assert peak > 0
+        np.testing.assert_allclose(
+            float(result.sel({LAT_STR: 0.0})) / peak, 0.0, atol=1e-12
+        )
+
+    def test_latitude_order_does_not_matter(self) -> None:
+        """Ascending and descending latitude coordinates give the same flux.
+
+        The one-sided rule offsets the profile by half a cell in whichever
+        direction the array runs, so the two orderings disagreed by 4.5% of
+        the peak before the midpoint rule was adopted.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        asc = xr.DataArray(
+            _q_zero_global_mean(lats), dims=[LAT_STR], coords={LAT_STR: lats}
+        )
+        desc = asc.isel({LAT_STR: slice(None, None, -1)})
+        f_asc = inferred_merid_flux(asc)
+        f_desc = inferred_merid_flux(desc).sel({LAT_STR: lats})
+        peak = float(np.abs(f_asc).max())
+        np.testing.assert_allclose((f_asc - f_desc).values / peak, 0.0, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# TestEffectiveDiffusivity
+# ---------------------------------------------------------------------------
+
+
+def _monotonic_lat_field(n: int = 91, slope: float = 500.0) -> xr.DataArray:
+    """A field increasing linearly with latitude, so its gradient never vanishes."""
+    lats = np.linspace(-60.0, 60.0, n)
+    return xr.DataArray(
+        slope * lats, dims=[LAT_STR], coords={LAT_STR: lats}, name="mse"
+    )
+
+
+class TestEffectiveDiffusivity:
+    """Tests for effective_diffusivity."""
+
+    def test_known_value_linear_field(self) -> None:
+        """For a field linear in latitude, the answer is a closed form.
+
+        With ``arr = s * lat`` in degrees, d(arr)/dy = s * (180/pi) / a, so
+        D = -F * pi * a / (180 * s).
+        """
+        slope = 500.0
+        arr = _monotonic_lat_field(slope=slope)
+        flux = xr.full_like(arr, -2.0e15)
+        result = effective_diffusivity(flux, arr)
+        expected = 2.0e15 * np.pi * RAD_EARTH / (180.0 * slope)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_reconstructs_from_numpy(self) -> None:
+        """Matches a raw-numpy rebuild for a non-linear field."""
+        lats = np.linspace(-60.0, 60.0, 61)
+        vals = 3.0e5 + 2.0e4 * np.sin(np.deg2rad(lats))
+        arr = xr.DataArray(vals, dims=[LAT_STR], coords={LAT_STR: lats})
+        flux = xr.DataArray(
+            -1.0e15 * np.cos(np.deg2rad(lats)), dims=[LAT_STR], coords={LAT_STR: lats}
+        )
+        result = effective_diffusivity(flux, arr)
+        grad = np.rad2deg(np.gradient(vals, lats)) / RAD_EARTH
+        np.testing.assert_allclose(result.values, -flux.values / grad, rtol=1e-10)
+
+    def test_down_gradient_flux_is_positive(self) -> None:
+        """A flux directed down-gradient gives a positive diffusivity."""
+        arr = _monotonic_lat_field()  # Increases northward.
+        flux = xr.full_like(arr, -1.0e15)  # Southward, i.e. down-gradient.
+        assert np.all(effective_diffusivity(flux, arr).values > 0)
+
+    def test_up_gradient_flux_is_negative(self) -> None:
+        """A flux directed up-gradient gives a negative diffusivity."""
+        arr = _monotonic_lat_field()
+        flux = xr.full_like(arr, 1.0e15)  # Northward, i.e. up-gradient.
+        assert np.all(effective_diffusivity(flux, arr).values < 0)
+
+    def test_radius_scales_linearly(self) -> None:
+        """Doubling the radius doubles the diffusivity (halves the gradient)."""
+        arr = _monotonic_lat_field()
+        flux = xr.full_like(arr, -1.0e15)
+        base = effective_diffusivity(flux, arr, radius=RAD_EARTH)
+        doubled = effective_diffusivity(flux, arr, radius=2 * RAD_EARTH)
+        np.testing.assert_allclose(doubled.values, 2.0 * base.values, rtol=1e-12)
+
+    def test_nondefault_radius_known_value(self) -> None:
+        """A non-default radius matches the closed form."""
+        slope, radius = 500.0, 3.39e6  # Roughly Mars.
+        arr = _monotonic_lat_field(slope=slope)
+        flux = xr.full_like(arr, -2.0e15)
+        result = effective_diffusivity(flux, arr, radius=radius)
+        expected = 2.0e15 * np.pi * radius / (180.0 * slope)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_nondefault_lat_str(self) -> None:
+        """Differentiates along the named latitude dim, not a hardcoded one."""
+        slope = 500.0
+        arr = _monotonic_lat_field(slope=slope).rename({LAT_STR: "latitude"})
+        flux = xr.full_like(arr, -2.0e15)
+        result = effective_diffusivity(flux, arr, lat_str="latitude")
+        expected = 2.0e15 * np.pi * RAD_EARTH / (180.0 * slope)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-10)
+
+    def test_flux_scales_linearly(self) -> None:
+        """Doubling the flux doubles the implied diffusivity."""
+        arr = _monotonic_lat_field()
+        flux = xr.full_like(arr, -1.0e15)
+        base = effective_diffusivity(flux, arr)
+        doubled = effective_diffusivity(2 * flux, arr)
+        np.testing.assert_allclose(doubled.values, 2.0 * base.values, rtol=1e-12)
+
+    def test_returns_dataarray_on_lat(self) -> None:
+        """Output is a DataArray retaining the latitude dim."""
+        arr = _monotonic_lat_field()
+        flux = xr.full_like(arr, -1.0e15)
+        result = effective_diffusivity(flux, arr)
         assert isinstance(result, xr.DataArray)
         assert LAT_STR in result.dims

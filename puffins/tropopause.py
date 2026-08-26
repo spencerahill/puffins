@@ -43,7 +43,7 @@ def tropo_wmo(
     height : xarray.DataArray
         Geopotential height field on pressure levels.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     threshold : float, optional
         Lapse-rate threshold (K/m). Default: -2e-3 (i.e. -2 K/km).
     max_pressure : float, optional
@@ -130,7 +130,7 @@ def tropopause_wmo(
     z : xarray.DataArray
         Geopotential height field on pressure levels.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     lat_str : str, optional
         Name of the latitude dimension. Default: 'lat'.
     threshold : float, optional
@@ -190,7 +190,7 @@ def tropopause_cold_point(
     interpolate : bool, optional
         Whether to interpolate to finer vertical resolution. Default: True.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     lat_str : str, optional
         Name of the latitude dimension. Default: 'lat'.
 
@@ -253,7 +253,7 @@ def tropopause_max_vert_curv(
     max_pressure : float, optional
         Maximum pressure level (hPa) to consider. Default: 500.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     lat_str : str, optional
         Name of the latitude dimension. Default: 'lat'.
 
@@ -317,7 +317,7 @@ def tropopause_fixed_temp(
     interpolate : bool, optional
         Whether to interpolate to finer vertical resolution. Default: True.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     lat_str : str, optional
         Name of the latitude dimension. Default: 'lat'.
 
@@ -379,7 +379,7 @@ def tropopause_fixed_height(
     interpolate : bool, optional
         Whether to interpolate to finer vertical resolution. Default: True.
     p_str : str, optional
-        Name of the pressure/level dimension. Default: 'level'.
+        Name of the pressure/level dimension. Default: 'plev'.
     lat_str : str, optional
         Name of the latitude dimension. Default: 'lat'.
 

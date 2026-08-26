@@ -248,6 +248,73 @@ def rel_hum_from_temp_dewpoint(
     return sat_vap_press_tetens_kelvin(temp_dew) / sat_vap_press_tetens_kelvin(temp)
 
 
+def kinetic_energy(
+    u: ArrayLike,
+    v: ArrayLike,
+) -> ArrayLike:
+    """Kinetic energy per unit mass of the horizontal flow.
+
+    Neglects the vertical velocity contribution, which for large-scale
+    atmospheric flows is smaller than the horizontal one by several orders of
+    magnitude.
+
+    Parameters
+    ----------
+    u : ArrayLike
+        Zonal velocity (m/s).
+    v : ArrayLike
+        Meridional velocity (m/s).
+
+    Returns
+    -------
+    ArrayLike
+        Kinetic energy per unit mass (J/kg).
+
+    See Also
+    --------
+    total_energy : Moist static energy plus kinetic energy.
+    """
+    return 0.5 * (u * u + v * v)
+
+
+def dry_static_energy(
+    temp: ArrayLike,
+    height: ArrayLike,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+) -> ArrayLike:
+    """Dry static energy.
+
+    Parameters
+    ----------
+    temp : ArrayLike
+        Temperature (K).
+    height : ArrayLike
+        Geopotential height (m), i.e. geopotential divided by ``grav``.  Note
+        that reanalyses including ERA5 archive *geopotential* (m^2/s^2), not
+        height, so divide such a field by ``grav`` before passing it in.
+        Geopotential height and geometric height differ by roughly 0.5% at
+        30 km, but the returned energy is unaffected either way, since the
+        division by ``grav`` here is undone by the multiplication below.
+    c_p : float, optional
+        Specific heat of dry air at constant pressure (J/kg/K).
+        Default: ``C_P``.
+    grav : float, optional
+        Gravitational acceleration (m/s^2).  Default: Earth's.
+
+    Returns
+    -------
+    ArrayLike
+        Dry static energy (J/kg).
+
+    See Also
+    --------
+    moist_static_energy : Adds the latent energy of water vapor.
+    total_energy : Adds latent and kinetic energy.
+    """
+    return c_p * temp + grav * height
+
+
 def moist_static_energy(
     temp: ArrayLike,
     height: ArrayLike,
@@ -258,6 +325,67 @@ def moist_static_energy(
 ) -> ArrayLike:
     """Moist static energy."""
     return c_p * temp + grav * height + l_v * spec_hum
+
+
+def total_energy(
+    u: ArrayLike,
+    v: ArrayLike,
+    temp: ArrayLike,
+    height: ArrayLike,
+    spec_hum: ArrayLike,
+    c_p: float = C_P,
+    grav: float = GRAV_EARTH,
+    l_v: float = L_V,
+) -> ArrayLike:
+    r"""Total energy: moist static energy plus kinetic energy.
+
+    This is the quantity whose meridional *flux* appears in the
+    column-integrated energy budget.
+
+    Its column integral is not the column's energy content, and should not be
+    used as one.  For a hydrostatic column the vertical integral of the
+    geopotential equals that of :math:`R_d T`, so integrating this quantity
+    counts the potential energy twice: the dry part comes out larger than
+    :math:`\int c_p T \, dp/g` by the factor :math:`1 + R_d/c_p`, about 1.29
+    for dry air.  The column energy content is
+    :math:`\int (c_p T + L_v q + \mathrm{KE}) \, dp/g`, with no geopotential
+    term.  The asymmetry is real rather than an inconsistency: the flux
+    carries the geopotential and the storage term does not.
+
+    Parameters
+    ----------
+    u : ArrayLike
+        Zonal velocity (m/s).
+    v : ArrayLike
+        Meridional velocity (m/s).
+    temp : ArrayLike
+        Temperature (K).
+    height : ArrayLike
+        Geopotential height (m).  See ``dry_static_energy`` for the ERA5
+        geopotential caveat.
+    spec_hum : ArrayLike
+        Specific humidity (kg/kg).
+    c_p : float, optional
+        Specific heat of dry air at constant pressure (J/kg/K).
+        Default: ``C_P``.
+    grav : float, optional
+        Gravitational acceleration (m/s^2).  Default: Earth's.
+    l_v : float, optional
+        Latent heat of vaporization (J/kg).  Default: ``L_V``.
+
+    Returns
+    -------
+    ArrayLike
+        Total energy per unit mass (J/kg).
+
+    See Also
+    --------
+    moist_static_energy : The static (non-kinetic) portion.
+    kinetic_energy : The kinetic portion.
+    """
+    return moist_static_energy(
+        temp, height, spec_hum, c_p=c_p, grav=grav, l_v=l_v
+    ) + kinetic_energy(u, v)
 
 
 def saturation_mse(
