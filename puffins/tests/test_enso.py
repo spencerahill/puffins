@@ -5,6 +5,8 @@ from the module's own helpers, so that each test pins a coefficient, a bound or
 an offset rather than restating the code.
 """
 
+from typing import cast
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -48,9 +50,8 @@ def sst() -> xr.DataArray:
         name="sst",
     )
     # Land: one cell in the NINO3.4 box, one in the TIO box.
-    return da.where(~((da.lat == 0.0) & (da.lon == 200.0))).where(
-        ~((da.lat == 10.0) & (da.lon == 60.0))
-    )
+    land = ((da.lat == 0.0) & (da.lon == 200.0)) | ((da.lat == 10.0) & (da.lon == 60.0))
+    return cast(xr.DataArray, da.where(~land))
 
 
 def numpy_box_mean(
@@ -67,7 +68,7 @@ def numpy_box_mean(
     vals = da.to_numpy()[:, ilat][:, :, ilon].astype(np.float64)
     w = np.cos(np.deg2rad(lat[ilat]))[None, :, None] * np.ones_like(vals)
     w[np.isnan(vals)] = 0.0
-    return np.nansum(vals * w, axis=(1, 2)) / w.sum(axis=(1, 2))
+    return cast(np.ndarray, np.nansum(vals * w, axis=(1, 2)) / w.sum(axis=(1, 2)))
 
 
 def numpy_monthly_anomaly(
