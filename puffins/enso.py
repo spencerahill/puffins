@@ -113,17 +113,21 @@ def nino34(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
 
     ``kwargs`` pass coordinate names through to ``box_mean``.
     """
-    return box_mean(sst, NINO34_LAT, NINO34_LON, **kwargs).rename("nino34")
+    return cast(
+        xr.DataArray, box_mean(sst, NINO34_LAT, NINO34_LON, **kwargs).rename("nino34")
+    )
 
 
 def tropical_mean(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     """20S-20N ocean-mean SST, all longitudes."""
-    return box_mean(sst, TROPICS_LAT, None, **kwargs).rename("tropical_mean")
+    return cast(
+        xr.DataArray, box_mean(sst, TROPICS_LAT, None, **kwargs).rename("tropical_mean")
+    )
 
 
 def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     """Tropical Indian Ocean SST on Yu et al. (2021)'s box, 20S-20N, 50-110E."""
-    return box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio")
+    return cast(xr.DataArray, box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio"))
 
 
 def monthly_anomaly(
@@ -151,7 +155,7 @@ def monthly_anomaly(
         raise ValueError(f"base period {base} does not cover all twelve months")
     clim = in_base.groupby(f"{time_str}.month").mean(time_str)
     month = series[time_str].dt.month
-    return series - clim.sel(month=month).drop_vars("month")
+    return cast(xr.DataArray, series - clim.sel(month=month).drop_vars("month"))
 
 
 def roni_ratio(
@@ -178,12 +182,12 @@ def roni_ratio(
     keep = (year >= years[0]) & (year <= years[1])
     sd_oni = oni.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
     sd_diff = diff.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
-    return (sd_oni / sd_diff).rename("roni_ratio")
+    return cast(xr.DataArray, (sd_oni / sd_diff).rename("roni_ratio"))
 
 
 def _ratio_by_month(ratio: xr.DataArray, times: xr.DataArray) -> xr.DataArray:
     """``ratio`` looked up for the calendar month of each time."""
-    return ratio.sel(month=times.dt.month).drop_vars("month")
+    return cast(xr.DataArray, ratio.sel(month=times.dt.month).drop_vars("month"))
 
 
 def roni(
@@ -214,7 +218,9 @@ def roni(
         n34.rolling({time_str: 3}, center=True).mean()
         - trop.rolling({time_str: 3}, center=True).mean()
     )
-    return (diff * _ratio_by_month(ratio, diff[time_str])).rename("roni")
+    return cast(
+        xr.DataArray, (diff * _ratio_by_month(ratio, diff[time_str])).rename("roni")
+    )
 
 
 def relative_nino34(
@@ -239,7 +245,7 @@ def relative_nino34(
     if scaled:
         ratio = roni_ratio(n34, trop, sigma_years, time_str)
         rel = rel * _ratio_by_month(ratio, rel[time_str])
-    return rel.rename("relative_nino34")
+    return cast(xr.DataArray, rel.rename("relative_nino34"))
 
 
 def season_mean(
@@ -271,11 +277,10 @@ def season_mean(
     season_year = season_year.rename(year_str)
     mean = sub.groupby(season_year).mean(time_str)
     count = sub.notnull().groupby(season_year).sum(time_str)
-    return mean.where(count == len(months), drop=True)
+    return cast(xr.DataArray, mean.where(count == len(months), drop=True))
 
 
 def relative_nino34_jjas(sst: xr.DataArray, scaled: bool = True) -> xr.DataArray:
     """June-September mean of ``relative_nino34``: RONI's summer counterpart."""
-    return season_mean(relative_nino34(sst, scaled=scaled), JJAS).rename(
-        "relative_nino34_jjas"
-    )
+    out = season_mean(relative_nino34(sst, scaled=scaled), JJAS)
+    return cast(xr.DataArray, out.rename("relative_nino34_jjas"))
