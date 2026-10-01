@@ -23,14 +23,14 @@ signatures encode units and coordinate conventions.
 
 ## Progress
 
-**25 of 31 modules fully annotated** (in the `pyproject.toml` mypy strict
-overrides) as of 2026-07-28; the count excludes `__init__.py`. Remaining (6):
+**26 of 32 modules fully annotated** (in the `pyproject.toml` mypy strict
+overrides) as of 2026-09-30; the count excludes `__init__.py`. Remaining (6):
 `kuo_el`, `lindzen_hou_1988`, `plumb_hou_1992`,
 `fixed_temp_tropo`, `plotting`, `nb_utils`, all in the theoretical-model /
 visualization cluster.
 
 **mypy is now blocking in CI** (2026-07-20). It reports 0 errors across all
-59 files it checks: the 32 source files plus the 27 test modules. CI runs
+61 files it checks: the 33 source files plus the 28 test modules. CI runs
 `mypy puffins/`, which includes `puffins/tests/`, so the test suite is
 type-checked and gating alongside the library source.
 
@@ -153,6 +153,7 @@ uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 - [x] `stats.py` — statistical analysis tools; 66 tests added; fixed `rmse` (`squared=` removed in sklearn ≥1.4) and `quantile_regress` (returned a length-1 `coef_` array that broke `apply_ufunc`) to work with modern sklearn/numpy (completed 2026-07-16)
 - [x] `bootstrap.py` — bootstrap methods; type hints + tests added, seedable `boot_risk_ratio`, wider `rand_states`, NaN handling (completed 2026-07-15)
 - [x] `eofs.py` — empirical orthogonal functions; type hints + tests added, `lat_str` coverage and unified RNG (completed 2026-07-13)
+- [x] `enso.py`: ENSO and tropical-ocean SST indices (NINO3.4, CPC's Relative Oceanic Nino Index, the tropical Indian Ocean box), moved from the lps-enso-grl project and annotated from the start; 31 tests with raw-numpy known-value reconstructions, and each of 27 deliberate mutations makes one fail (completed 2026-09-30)
 - [x] `budget_adj.py` — column budget adjustment; already had type hints, so fixed the `no-any-return` error (line 69) and added it to the mypy strict overrides. Its tests require `windspharm`/`pyspharm` (Fortran + legacy build tooling), which is not installed in CI, so they remain skipped there and coverage stays low — this is a packaging limitation, not missing tests (completed 2026-07-19)
 
 ## Group 7: Visualization & Notebooks

@@ -135,6 +135,7 @@ module = [
     "puffins.constants",
     "puffins.dates",
     "puffins.dynamics",
+    "puffins.enso",
     "puffins.eofs",
     "puffins.eq_area",
     "puffins.grad_bal",

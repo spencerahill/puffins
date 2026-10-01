@@ -8,6 +8,7 @@ from . import (
     constants,
     dates,
     dynamics,
+    enso,
     eofs,
     eq_area,
     fixed_temp_tropo,
