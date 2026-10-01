@@ -15,9 +15,9 @@ function and enforced coverage thresholds in CI.
 
 ## Current State (as of 2026-10-12)
 
-- **26 test files** (25 module test files plus `test_typing_overloads.py`, a
-  compile-time type-contract file that yields no runtime tests), covering 25
-  of 30 modules
+- **27 test files** (26 module test files plus `test_typing_overloads.py`, a
+  compile-time type-contract file that yields no runtime tests), covering 26
+  of 31 modules
 - **1025 tests passing** (1 skipped, 10 xfailed)
 - **91% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
@@ -30,8 +30,8 @@ The existing tests are well-structured and serve as good templates: they use xar
 
 ### Coverage by module
 
-Meets the ≥80% success criterion (23 modules): `bootstrap` 100, `calculus`
-98, `constants` 100, `dates` 98, `dynamics` 99, `eofs` 100, `eq_area` 99,
+Meets the ≥80% success criterion (24 modules): `bootstrap` 100, `calculus`
+98, `constants` 100, `dates` 98, `dynamics` 99, `enso` 100, `eofs` 100, `eq_area` 99,
 `grad_bal` 97, `had_cell` 87, `held_hou_1980` 97, `hides` 96, `interp` 99,
 `lcl` 100, `longitude` 88, `names` 100, `num_solver` 98, `polar_amp` 100,
 `radiation` 100, `stats` 95, `therm_inert` 100, `thermodynamics` 96,
