@@ -47,6 +47,7 @@ The package is structured into several functional groups:
 - `grad_bal.py`: Gradient balance and thermal wind balance, plus the angular-momentum-conserving and uniform-Rossby-number wind and potential temperature expressions
 - `eq_area.py`: Equal-area model analytical solutions and numerical solvers (Held-Hou 1980, Lindzen-Hou 1988 variants); belongs conceptually with the Theoretical Models below
 - `eofs.py`: Empirical Orthogonal Function analysis
+- `enso.py`: ENSO and tropical-ocean SST indices from a gridded monthly SST field (NINO3.4, CPC's Relative Oceanic Nino Index, the tropical Indian Ocean box)
 - `stats.py`: Statistical analysis tools
 - `budget_adj.py`: Column budget adjustment via spherical harmonic wind inversion
 
