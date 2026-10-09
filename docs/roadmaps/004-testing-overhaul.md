@@ -18,7 +18,7 @@ function and enforced coverage thresholds in CI.
 - **26 test files** (25 module test files plus `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests), covering 25
   of 30 modules
-- **978 tests passing** (1 skipped, 10 xfailed)
+- **983 tests passing** (1 skipped, 10 xfailed)
 - **91% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from

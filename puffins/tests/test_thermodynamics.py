@@ -364,6 +364,23 @@ def _on_lev(vals: np.ndarray, pfull: np.ndarray, name: str) -> xr.DataArray:
     return xr.DataArray(vals, dims=[LEV_STR], coords={LEV_STR: pfull}, name=name)
 
 
+def _masked_ratio(
+    spec_hum: np.ndarray,
+    sat_spec_hum: np.ndarray,
+    pressure: np.ndarray,
+    dp: np.ndarray,
+    p_top: float,
+) -> np.ndarray:
+    """Per-column sum ratio over finite levels at p >= p_top, last axis.
+
+    A numpy paraphrase of the same discrete sum, so it pins which levels
+    enter each column, not the quadrature (the closed-form test does that).
+    """
+    ok = (pressure >= p_top) & np.isfinite(spec_hum) & np.isfinite(sat_spec_hum)
+    num = np.where(ok, spec_hum * dp, 0.0).sum(axis=-1)
+    return np.asarray(num / np.where(ok, sat_spec_hum * dp, 0.0).sum(axis=-1))
+
+
 class TestColRelHum:
     """Tests for col_rel_hum."""
 
@@ -487,6 +504,118 @@ class TestColRelHum:
             _on_lev(dp, pfull, "dp"),
         )
         np.testing.assert_allclose(result.item(), 0.6, rtol=1e-12)
+
+    def test_per_column_p_top(self) -> None:
+        """A DataArray p_top, such as a tropopause pressure, applies to each
+        column separately.
+
+        The two columns have q = 0.7 q_s at and below their own tropopause,
+        100 and 300 hPa, and q = 3e-6 kg/kg above it, so each gives 0.7
+        exactly only if its own limit is applied.
+        """
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        p_trop = np.array([1e4, 3e4])
+        spec_hum = np.where(pfull[None, :] >= p_trop[:, None], 0.7 * q_s, 3e-6)
+        dims = ["lat", LEV_STR]
+        coords = {"lat": [0.0, 60.0], LEV_STR: pfull}
+        result = col_rel_hum(
+            xr.DataArray(spec_hum, dims=dims, coords=coords, name="spec_hum"),
+            xr.DataArray(np.tile(q_s, (2, 1)), dims=dims, coords=coords, name="q_s"),
+            _on_lev(pfull, pfull, "pressure"),
+            _on_lev(dp, pfull, "dp"),
+            p_top=xr.DataArray(p_trop, dims=["lat"], coords={"lat": [0.0, 60.0]}),
+        )
+        np.testing.assert_allclose(result.values, [0.7, 0.7], rtol=1e-12)
+
+    def test_pressure_in_hpa_raises(self) -> None:
+        """Pressure in hPa puts every level below p_top = 1e4, which raises
+        instead of returning NaN in every column."""
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        with pytest.raises(ValueError, match="p_top or greater"):
+            col_rel_hum(
+                _on_lev(0.7 * q_s, pfull, "spec_hum"),
+                _on_lev(q_s, pfull, "q_s"),
+                _on_lev(pfull / 100.0, pfull, "pressure"),
+                _on_lev(dp / 100.0, pfull, "dp"),
+            )
+
+    def test_mismatched_level_coords_raise(self) -> None:
+        """Level coordinates that differ by float32 round-off raise, where an
+        inner join would silently drop the 20 of climlab's 30 levels whose
+        float32 value differs."""
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        pfull32 = pfull.astype(np.float32).astype(np.float64)
+        assert (pfull32 != pfull).sum() == 20
+        with pytest.raises(ValueError):
+            col_rel_hum(
+                _on_lev(0.7 * q_s, pfull32, "spec_hum"),
+                _on_lev(q_s, pfull32, "q_s"),
+                _on_lev(pfull, pfull, "pressure"),
+                _on_lev(dp, pfull, "dp"),
+            )
+
+    def test_hybrid_levels_cut_per_column(self) -> None:
+        """On hybrid levels the 100 hPa cut falls on a different level in each
+        column, and dp is not proportional across columns.
+
+        Relative humidity varies with level, so a mask shared across columns,
+        a mask or dp taken from one column, or a level dropped in every column
+        changes the result.  Mask-pinning only; see ``_masked_ratio``.
+        """
+        a_half = np.array([0, 3000, 6000, 8000, 9000, 8000, 6000, 3000, 1000, 0.0])
+        b_half = np.array([0, 0, 0.02, 0.06, 0.12, 0.25, 0.45, 0.65, 0.85, 1.0])
+        p_sfc = np.array([1.02e5, 8.0e4, 5.5e4])
+        phalf = a_half[None, :] + b_half[None, :] * p_sfc[:, None]
+        pres = 0.5 * (phalf[:, 1:] + phalf[:, :-1])
+        dp = np.diff(phalf, axis=1)
+        assert len({int((row >= 1e4).argmax()) for row in pres}) > 1
+        q_s = _sat_spec_hum_raw(pres, 210.0 + 90.0 * (pres / p_sfc[:, None]) ** 0.6)
+        spec_hum = np.linspace(0.1, 0.9, pres.shape[1])[None, :] * q_s
+        dims = ["lat", "level"]
+        coords = {"lat": [-20.0, 0.0, 20.0], "level": np.arange(pres.shape[1])}
+        result = col_rel_hum(
+            xr.DataArray(spec_hum, dims=dims, coords=coords, name="spec_hum"),
+            xr.DataArray(q_s, dims=dims, coords=coords, name="q_s"),
+            xr.DataArray(pres, dims=dims, coords=coords, name="pressure"),
+            xr.DataArray(dp, dims=dims, coords=coords, name="dp"),
+            dim="level",
+        )
+        expected = _masked_ratio(spec_hum, q_s, pres, dp, 1e4)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+
+    def test_pressure_levels_below_ground_per_column(self) -> None:
+        """Descending standard pressure levels with 1-D pressure and dp.
+
+        NaN marks levels below ground to different depths in each column:
+        column 1 has NaN only in q_s, with a stray q there, and column 2 has
+        NaN only in q at its three lowest levels.  q = 0 at 100 hPa, a level
+        exactly at the default p_top, so a validity test of q > 0 or a default
+        other than 100 hPa changes the result.  Mask-pinning only; see
+        ``_masked_ratio``.
+        """
+        plev = np.array([1000, 925, 850, 700, 500, 300, 200, 100, 50.0]) * 100
+        dp = np.array([7500, 7500, 11250, 17500, 20000, 15000, 10000, 7500, 5000.0])
+        q_s = np.tile(
+            _sat_spec_hum_raw(plev, 200.0 + 100.0 * (plev - 1e4) / 9e4), (3, 1)
+        )
+        spec_hum = np.linspace(0.9, 0.2, plev.size) * q_s
+        spec_hum[:, 7] = 0.0
+        q_s[1, 0] = np.nan
+        spec_hum[1, 0] = 0.05
+        spec_hum[2, :3] = np.nan
+        dims = ["lat", LEV_STR]
+        coords = {"lat": [-20.0, 0.0, 20.0], LEV_STR: plev}
+        result = col_rel_hum(
+            xr.DataArray(spec_hum, dims=dims, coords=coords, name="spec_hum"),
+            xr.DataArray(q_s, dims=dims, coords=coords, name="q_s"),
+            _on_lev(plev, plev, "pressure"),
+            _on_lev(dp, plev, "dp"),
+        )
+        expected = _masked_ratio(spec_hum, q_s, plev[None, :], dp[None, :], 1e4)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
