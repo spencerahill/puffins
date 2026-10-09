@@ -22,6 +22,8 @@ from .constants import (
     R_V,
     REL_HUM,
 )
+from .names import LEV_STR
+from .vert_coords import int_dp_g
 
 
 @overload
@@ -246,6 +248,70 @@ def rel_hum_from_temp_dewpoint(
 
     """
     return sat_vap_press_tetens_kelvin(temp_dew) / sat_vap_press_tetens_kelvin(temp)
+
+
+def col_rel_hum(
+    spec_hum: xr.DataArray,
+    sat_spec_hum: xr.DataArray,
+    pressure: xr.DataArray,
+    dp: xr.DataArray,
+    p_top: float = 1e4,
+    dim: str = LEV_STR,
+) -> xr.DataArray:
+    """Column relative humidity: column water vapor over its saturation value.
+
+    The ratio W / W_s of the mass-weighted vertical integrals of specific
+    humidity (W, the column water vapor or precipitable water) and of
+    saturation specific humidity (W_s), as in Bretherton et al. (2004, J.
+    Climate).  Both integrals are taken over the same levels: those at
+    pressures of ``p_top`` or greater where neither ``spec_hum`` nor
+    ``sat_spec_hum`` is NaN.  Levels are included or excluded whole; a level
+    straddling ``p_top`` is not split.
+
+    The upper limit matters.  At fixed temperature, saturation specific
+    humidity varies inversely with pressure, so a warm level above the
+    tropopause, such as the top level of many models, adds saturation water
+    vapor that the actual water vapor does not match, which lowers the ratio.
+    The default ``p_top`` of 100 hPa keeps the tropical stratosphere out of
+    both integrals.  Pass ``p_top=0`` to integrate over every level.
+
+    Saturation specific humidity is an argument, as saturation vapor pressure
+    is in :func:`relative_humidity`, because it should come from the formula
+    the data were produced with.  :func:`saturation_specific_humidity` gives
+    the Tetens value over liquid water.  For model output, use the model's own
+    formula: the Tetens saturation vapor pressure is lower than that of Bolton
+    (1980), which climlab uses, by 1% at 253 K, 5% at 220 K and 10% at 200 K,
+    so a cold column saturated by climlab's formula has a Tetens-based column
+    relative humidity above 1.
+
+    Parameters
+    ----------
+    spec_hum : xarray.DataArray
+        Specific humidity (kg/kg).
+    sat_spec_hum : xarray.DataArray
+        Saturation specific humidity (kg/kg), e.g. from
+        :func:`saturation_specific_humidity`.
+    pressure : xarray.DataArray
+        Pressure of each level (Pa): the vertical coordinate of data on
+        pressure levels, or a full-level pressure field on hybrid levels.
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa), e.g. from
+        :func:`puffins.vert_coords.dp_from_pfull`.
+    p_top : float, optional
+        Levels at pressures below this value (Pa) are excluded from both
+        integrals.  Default: 1e4 (100 hPa).
+    dim : str, optional
+        Name of the vertical dimension.  Default: 'plev'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Column relative humidity (dimensionless), named 'col_rel_hum'.
+    """
+    in_col = (pressure >= p_top) & spec_hum.notnull() & sat_spec_hum.notnull()
+    col_wv = int_dp_g(spec_hum.where(in_col), dp, dim=dim)
+    col_wv_sat = int_dp_g(sat_spec_hum.where(in_col), dp, dim=dim)
+    return cast(xr.DataArray, (col_wv / col_wv_sat).rename("col_rel_hum"))
 
 
 def kinetic_energy(

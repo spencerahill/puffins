@@ -5,7 +5,9 @@ import pytest
 import xarray as xr
 
 from puffins.constants import C_P, EPSILON, GRAV_EARTH, L_V, P0, R_D
+from puffins.names import LEV_STR
 from puffins.thermodynamics import (
+    col_rel_hum,
     dry_static_energy,
     dsat_entrop_dtemp_approx,
     equiv_pot_temp,
@@ -323,6 +325,168 @@ class TestRelHumFromTempDewpoint:
         result = rel_hum_from_temp_dewpoint(temps, dews)
         np.testing.assert_allclose(result[0], 1.0)
         assert result[1] < 1.0
+
+
+# ---------------------------------------------------------------------------
+# TestColRelHum
+# ---------------------------------------------------------------------------
+
+
+def _sat_vap_press_raw(temp: np.ndarray | float) -> np.ndarray:
+    """Tetens saturation vapor pressure (Pa) over liquid water, raw numpy:
+    610.78 Pa, 17.27 and 237.3 C."""
+    return np.asarray(
+        610.78 * np.exp(17.27 * (temp - 273.15) / (temp - 273.15 + 237.3))
+    )
+
+
+def _sat_spec_hum_raw(
+    pressure: np.ndarray, temp: np.ndarray, epsilon: float = EPSILON
+) -> np.ndarray:
+    """Saturation specific humidity eps e_s / (p - (1 - eps) e_s), raw numpy."""
+    e_s = _sat_vap_press_raw(temp)
+    return np.asarray(epsilon * e_s / (pressure - (1.0 - epsilon) * e_s))
+
+
+def _climlab_column() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pressure (Pa), thickness (Pa) and temperature (K) on climlab's 30
+    evenly spaced levels, with a stratosphere above 100 hPa that warms
+    upward to 250 K at the top level (16.7 hPa)."""
+    pfull = (np.arange(30) + 0.5) * 1e5 / 30
+    dp = np.full(30, 1e5 / 30)
+    temp = 200.0 + 100.0 * (pfull - 1e4) / 9e4
+    strat = pfull < 1e4
+    temp[strat] = 250.0 - 45.0 * (pfull[strat] - pfull[0]) / (1e4 - pfull[0])
+    return pfull, dp, temp
+
+
+def _on_lev(vals: np.ndarray, pfull: np.ndarray, name: str) -> xr.DataArray:
+    return xr.DataArray(vals, dims=[LEV_STR], coords={LEV_STR: pfull}, name=name)
+
+
+class TestColRelHum:
+    """Tests for col_rel_hum."""
+
+    def test_isothermal_closed_form(self) -> None:
+        """Isothermal column with uniform q against the analytic integrals.
+
+        At fixed temperature e_s is constant, so the integral of
+        q_s = eps e_s / (p - c) over pressure is eps e_s ln[(p_s - c) /
+        (p_t - c)] with c = (1 - eps) e_s, and the integral of q is
+        q (p_s - p_t).  The grid is stretched, so a version that ignored
+        ``dp`` would fail (it gives 0.108 against the exact 0.177).  The
+        midpoint-rule error, measured 2026-10-09, falls fourfold per doubling
+        of the level count and is 1.4e-7 at 2000 levels, inside the 1e-6
+        tolerance.
+        """
+        temp0, q0, p_t, p_s = 285.0, 4e-3, 1e4, 1e5
+        phalf = p_t + (p_s - p_t) * np.linspace(0.0, 1.0, 2001) ** 2
+        pfull = 0.5 * (phalf[1:] + phalf[:-1])
+        result = col_rel_hum(
+            _on_lev(np.full(pfull.size, q0), pfull, "spec_hum"),
+            _on_lev(_sat_spec_hum_raw(pfull, np.full(pfull.size, temp0)), pfull, "q_s"),
+            _on_lev(pfull, pfull, "pressure"),
+            _on_lev(np.diff(phalf), pfull, "dp"),
+        )
+        e_s = _sat_vap_press_raw(temp0)
+        c = (1.0 - EPSILON) * e_s
+        expected = q0 * (p_s - p_t) / (EPSILON * e_s * np.log((p_s - c) / (p_t - c)))
+        np.testing.assert_allclose(result.item(), expected, rtol=1e-6)
+
+    @pytest.mark.parametrize("dim", [LEV_STR, "level"])
+    def test_uniform_rel_hum_per_column(self, dim: str) -> None:
+        """q = r q_s at every level gives exactly r in each column.
+
+        Each column has its own r and surface pressure, so pressure is a
+        (lat, level) field as on hybrid sigma levels, and a version reducing
+        over more than the vertical dimension would fail.
+        """
+        rel_hum = np.array([0.2, 0.55, 0.9])
+        p_sfc = np.array([1.01e5, 9.0e4, 7.5e4])
+        sigma_half = np.array([0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 1.0])
+        sigma = 0.5 * (sigma_half[1:] + sigma_half[:-1])
+        pres = p_sfc[:, None] * sigma[None, :]
+        temp = 300.0 * sigma[None, :] ** 0.19 * np.ones((3, 1))
+        q_s = _sat_spec_hum_raw(pres, temp)
+        dims = ["lat", dim]
+        coords = {"lat": [-30.0, 0.0, 30.0], dim: sigma}
+        result = col_rel_hum(
+            xr.DataArray(rel_hum[:, None] * q_s, dims=dims, coords=coords, name="q"),
+            xr.DataArray(q_s, dims=dims, coords=coords, name="q_s"),
+            xr.DataArray(pres, dims=dims, coords=coords, name="pressure"),
+            xr.DataArray(
+                p_sfc[:, None] * np.diff(sigma_half)[None, :],
+                dims=dims,
+                coords=coords,
+                name="dp",
+            ),
+            dim=dim,
+        )
+        assert result.dims == ("lat",)
+        assert result.name == "col_rel_hum"
+        np.testing.assert_allclose(result.values, rel_hum, rtol=1e-12)
+
+    def test_warm_top_level_excluded_by_default(self) -> None:
+        """A warm, dry stratosphere lowers CRH unless p_top excludes it.
+
+        Below 100 hPa q = 0.7 q_s; above it q = 3e-6 kg/kg, while the top
+        level is at 250 K.  The default p_top gives 0.7 exactly; p_top=0
+        adds the stratospheric levels to both sums.
+        """
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        trop = pfull >= 1e4
+        spec_hum = np.where(trop, 0.7 * q_s, 3e-6)
+        args = (
+            _on_lev(spec_hum, pfull, "spec_hum"),
+            _on_lev(q_s, pfull, "q_s"),
+            _on_lev(pfull, pfull, "pressure"),
+            _on_lev(dp, pfull, "dp"),
+        )
+        np.testing.assert_allclose(col_rel_hum(*args).item(), 0.7, rtol=1e-12)
+        expected_full = np.sum(spec_hum * dp) / np.sum(q_s * dp)
+        np.testing.assert_allclose(
+            col_rel_hum(*args, p_top=0.0).item(), expected_full, rtol=1e-12
+        )
+
+    def test_level_at_p_top_included(self) -> None:
+        """A level exactly at p_top is in both integrals; those above are not."""
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        p_top = pfull[15]
+        rel_hum = np.select([pfull > p_top, pfull == p_top], [0.4, 0.9], 0.1)
+        result = col_rel_hum(
+            _on_lev(rel_hum * q_s, pfull, "spec_hum"),
+            _on_lev(q_s, pfull, "q_s"),
+            _on_lev(pfull, pfull, "pressure"),
+            _on_lev(dp, pfull, "dp"),
+            p_top=p_top,
+        )
+        below = pfull > p_top
+        expected = (0.4 * np.sum(q_s[below]) + 0.9 * q_s[15]) / (
+            np.sum(q_s[below]) + q_s[15]
+        )
+        np.testing.assert_allclose(result.item(), expected, rtol=1e-12)
+
+    @pytest.mark.parametrize("nan_field", ["sat_spec_hum", "spec_hum"])
+    def test_nan_level_dropped_from_both_integrals(self, nan_field: str) -> None:
+        """A NaN in either input removes that level from both integrals, as
+        for levels below ground in pressure-level data."""
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        spec_hum = 0.6 * q_s
+        spec_hum[-1] = 0.02
+        if nan_field == "sat_spec_hum":
+            q_s[-1] = np.nan
+        else:
+            spec_hum[-1] = np.nan
+        result = col_rel_hum(
+            _on_lev(spec_hum, pfull, "spec_hum"),
+            _on_lev(q_s, pfull, "q_s"),
+            _on_lev(pfull, pfull, "pressure"),
+            _on_lev(dp, pfull, "dp"),
+        )
+        np.testing.assert_allclose(result.item(), 0.6, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
