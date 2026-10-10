@@ -59,6 +59,37 @@ class TestLonToPm180:
     def test_negative_90(self) -> None:
         assert lon_to_pm180(-90) == -90
 
+    # Inputs spanning several wraps in both directions, with 180 itself and
+    # its equivalents (-540, -180, 540), which map to -180, and points either
+    # side of each hemisphere boundary.
+    _LONS = np.array([-540, -190, -180, -10, 0, 10, 179.5, 180, 190, 359.5, 360, 540])
+    _EXPECTED = np.array(
+        [-180, 170, -180, -10, 0, 10, 179.5, -180, -170, -0.5, 0, -180]
+    )
+
+    def test_numpy_array(self) -> None:
+        """Element-wise on a numpy array (issue #17)."""
+        np.testing.assert_array_equal(lon_to_pm180(self._LONS), self._EXPECTED)
+
+    def test_dataarray_keeps_coords_and_name(self) -> None:
+        """A DataArray comes back as a DataArray with its coordinates."""
+        coord = np.arange(self._LONS.size) * 10.0
+        arr = xr.DataArray(self._LONS, dims=["x"], coords={"x": coord}, name="lons")
+        result = lon_to_pm180(arr)
+        assert isinstance(result, xr.DataArray)
+        assert result.name == "lons"
+        np.testing.assert_array_equal(result["x"].values, coord)
+        np.testing.assert_array_equal(result.values, self._EXPECTED)
+
+    def test_scalar_stays_scalar_of_same_type(self) -> None:
+        """Python ints stay ints and floats stay floats, not 0-d arrays."""
+        result_int = lon_to_pm180(190)
+        result_float = lon_to_pm180(359.5)
+        assert type(result_int) is int
+        assert result_int == -170
+        assert type(result_float) is float
+        assert result_float == -0.5
+
 
 class TestLongitudeInit:
     """Tests for Longitude.__init__."""

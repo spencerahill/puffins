@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import xarray as xr
@@ -61,11 +61,9 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
 
     """
     lon0360 = lon_to_0360(lon)
-    # NOTE: bare `if` only works on scalars; arrays raise ValueError. See #17.
-    if _lon_in_west_hem(lon0360):
-        return lon0360 - 360
-    else:
-        return lon0360
+    # Arithmetic on the boolean, so that scalars stay scalars and DataArrays
+    # keep their coordinates.
+    return cast(ArrayLike, lon0360 - 360 * _lon_in_west_hem(lon0360))
 
 
 def _maybe_cast_to_lon(obj: Any, strict: bool = False) -> Any:
