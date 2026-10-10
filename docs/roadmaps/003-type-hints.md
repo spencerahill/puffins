@@ -49,21 +49,20 @@ and `dynamics.brunt_vaisala_freq` used `** 0.5`, which returns a `complex` for
 a negative Python float while giving `nan` for a numpy scalar or array. It now
 uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 
-> **Note (what the "0 errors" figure depends on):** it holds for the exact
-> combination CI uses, namely `python_version = "3.10"` in `[tool.mypy]`
+> **Note (what the "0 errors" figure depends on):** it holds for the
+> combination CI uses, namely `python_version = "3.11"` in `[tool.mypy]`
 > analyzed against the dependency versions that `uv sync --extra dev`
-> resolves on the runner's default interpreter. Both halves matter, and
-> measurements as of 2026-07-20 are:
+> resolves on the runner's default interpreter. Raising `python_version` from
+> 3.10 to 3.11, when support for Python 3.10 was dropped at its end of life
+> (2026-10-01), exposed 36 errors in 5 files under the newer numpy and xarray
+> stubs. 28 of them were `arg-type` errors from dictionaries unpacked into
+> `DataArray.interp` in `tropopause.py`; all 36 were fixed in the same PR.
+> Measured on 2026-10-09 after those fixes:
 >
-> - `mypy --python-version 3.12` (or `3.13`) against the same environment:
->   **36 errors** in 5 files, mostly `arg-type` in `tropopause.py`.
-> - `uv sync --extra dev --python 3.10`, which resolves older numpy/xarray
->   stubs (xarray 2025.6.1 rather than 2026.2.0): **41 errors** in 7 files.
->
-> So pinning the lint job's interpreter to match `python_version` does *not*
-> reconcile the two; it was tried and reddens CI. Clear these before raising
-> `python_version`, which will be forced when Python 3.10 goes end-of-life in
-> late 2026.
+> - `mypy --python-version 3.12` or `3.13` against the same environment:
+>   0 errors.
+> - an environment built on Python 3.11, the oldest supported interpreter
+>   (`uv run --isolated --python 3.11 --extra dev mypy puffins/`): 0 errors.
 
 > **Note (overload coverage is test-driven):** the 14 functions carrying
 > `@overload` stacks are the ones the test suite exercises, not a complete
