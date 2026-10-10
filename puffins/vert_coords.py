@@ -91,9 +91,19 @@ def int_dp_g(
     -------
     xarray.DataArray
         Vertically integrated field.
+
+    Notes
+    -----
+    Levels where ``arr * dp`` is NaN are skipped, so a column with missing
+    levels is integrated over the levels that remain, as is correct for levels
+    below ground.  A column with no non-NaN level returns NaN, where xarray's
+    default sum would give 0.  That includes a layer lying wholly below
+    ground, which contains no mass; when integrating over a layer above the
+    surface, set to 0 the columns whose surface pressure is lower than the
+    layer's top pressure.
     """
     weighted = cast(xr.DataArray, arr * dp)
-    return cast(xr.DataArray, weighted.sum(dim=dim) / grav)
+    return cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
 
 
 def int_dlogp(

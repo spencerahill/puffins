@@ -602,8 +602,9 @@ def col_int_merid_flux(
     The vertical sum skips NaN, so a column with missing levels is integrated
     over the levels that remain.  That is correct for genuinely below-ground
     levels, whose mass is absent, but it also means an unintended NaN silently
-    reduces the transport, and a wholly missing column returns 0 rather than
-    NaN.
+    reduces the transport.  A wholly missing column returns NaN, and so does a
+    pole point at which the dataset leaves ``v`` undefined at every level,
+    where the transport is physically 0.
     """
     col_int = int_dp_g(v * arr, dp, dim=vert_str, grav=grav)
     return lat_circumf_weight(col_int, lat_str=lat_str, radius=radius)

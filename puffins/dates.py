@@ -86,8 +86,9 @@ _ann_subs = (
     seasons_6mon,
     ann,
 )
-ann_subsets: dict[str, int | list[int] | range] = {}
-[ann_subsets.update(d) for d in _ann_subs]
+ann_subsets: dict[str, int | list[int] | range] = {
+    key: val for subs in _ann_subs for key, val in subs.items()
+}
 
 
 def subset_ann(
@@ -225,17 +226,17 @@ def ann_harm(
         mask[-num_harm:] = 1
     else:
         mask[-num_harm] = 1
+    # These two lines below are for if you want the approximation at
+    # whatever frequency has the most power.  What I want is the
+    # approximation using just the lowest `n` frequencies.
+    # imax = np.argmax(np.absolute(mfft))
+    # mask[[imax]] = 1
     vals = float(arr_mean) + 2.0 * np.real(np.fft.ifft(mfft * mask))
     if normalize:
         vals /= np.abs(vals).max()
     if isinstance(arr, xr.DataArray):
         return cast(xr.DataArray, xr.ones_like(arr) * vals)
     return np.asarray(vals)
-    # These two lines below are for if you want the approximation at
-    # whatever frequency has the most power.  What I want is the
-    # approximation using just the lowest `n` frequencies.
-    # imax = np.argmax(np.absolute(mfft))
-    # mask[[imax]] = 1
 
 
 def time_to_year_and_day(arr: xr.DataArray, dim: str = "time") -> xr.DataArray:
