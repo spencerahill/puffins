@@ -1,5 +1,7 @@
 """Tests for longitude module."""
 
+from typing import Any
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -90,6 +92,33 @@ class TestLonToPm180:
         assert type(result_float) is float
         assert result_float == -0.5
 
+    def test_eastern_values_returned_exactly(self) -> None:
+        """Values already in [0, 180) come back bit for bit, with no round-off.
+
+        A form such as ``(lon + 180) % 360 - 180`` would return 0.1 as
+        0.09999999999999432, which breaks exact coordinate matching.
+        """
+        lons = np.array([0.1, 45.3, 123.456, 179.9])
+        np.testing.assert_array_equal(lon_to_pm180(lons), lons)
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64, np.int32, np.int64])
+    def test_array_dtype_preserved(self, dtype: Any) -> None:
+        """The output dtype matches the input's, as lon_to_0360's does."""
+        lons = np.array([-190, 10, 190, 350], dtype=dtype)
+        result = lon_to_pm180(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == lons.dtype
+        np.testing.assert_array_equal(result, [170, 10, -170, -10])
+
+    @pytest.mark.parametrize(
+        "value", [np.float32(190.0), np.float64(190.0), np.int32(190), np.int64(190)]
+    )
+    def test_numpy_scalar_type_preserved(self, value: Any) -> None:
+        """A numpy scalar comes back as a scalar of the same numpy type."""
+        result = lon_to_pm180(value)
+        assert type(result) is type(value)
+        assert result == -170
+
 
 class TestLongitudeInit:
     """Tests for Longitude.__init__."""
@@ -108,6 +137,16 @@ class TestLongitudeInit:
         lon = Longitude(0)
         assert lon.longitude == 0
         assert lon.hemisphere == "E"
+
+    @pytest.mark.parametrize(
+        ("value", "lon", "hem"),
+        [(-90, 90.0, "W"), (-270, 90.0, "E"), (450, 90.0, "E"), (630, 90.0, "W")],
+    )
+    def test_numeric_outside_0_360(self, value: float, lon: float, hem: str) -> None:
+        """Numbers below 0 or from 360 up wrap to the right hemisphere."""
+        obj = Longitude(value)
+        assert obj.longitude == lon
+        assert obj.hemisphere == hem
 
     def test_from_string_east(self) -> None:
         lon = Longitude("45e")

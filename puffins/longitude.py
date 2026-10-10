@@ -21,7 +21,7 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
 
     Parameters
     ----------
-    lon : scalar or sequence of scalars
+    lon : scalar, numpy.ndarray, or xarray.DataArray
         One or more longitude values to be converted to lie in the [0, 360)
         range
 
@@ -49,7 +49,7 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
 
     Parameters
     ----------
-    lon : scalar or sequence of scalars
+    lon : scalar, numpy.ndarray, or xarray.DataArray
         One or more longitude values to be converted to lie in the [-180, 180)
         range
 
@@ -61,9 +61,11 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
 
     """
     lon0360 = lon_to_0360(lon)
-    # Arithmetic on the boolean, so that scalars stay scalars and DataArrays
-    # keep their coordinates.
-    return cast(ArrayLike, lon0360 - 360 * _lon_in_west_hem(lon0360))
+    # `lon0360 // 180 % 2` is 1 in the western hemisphere and 0 in the
+    # eastern, in lon0360's own type, so scalars stay scalars, float32 stays
+    # float32, DataArrays keep their coordinates, and the values match the
+    # former scalar-only `lon0360 - 360` branch exactly.
+    return cast(ArrayLike, lon0360 - 360 * (lon0360 // 180 % 2))
 
 
 def _maybe_cast_to_lon(obj: Any, strict: bool = False) -> Any:
