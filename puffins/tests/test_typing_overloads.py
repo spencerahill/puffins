@@ -20,9 +20,10 @@ finds no test functions, and moves on.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from typing import assert_type
+
     import numpy as np
     import xarray as xr
-    from typing_extensions import assert_type
 
     from puffins._typing import Scalar
     from puffins.calculus import lat_circumf, to_radians

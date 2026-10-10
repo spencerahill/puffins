@@ -401,6 +401,7 @@ class TestCorrDetrended:
         raw = float(xr.corr(a, b, "time"))
         detrended = corr_detrended(a, b, "time")
         assert raw > 0.99
+        assert isinstance(detrended, float)
         assert abs(detrended) < 0.5
 
 

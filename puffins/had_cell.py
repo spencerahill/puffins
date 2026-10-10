@@ -267,7 +267,7 @@ def had_cells_strength(
             center_lats = center_lats[1:]
             cell_strengths = cell_strengths[1:]
 
-    hc_strengths = cell_strengths.sortby(np.abs(center_lats))[:2]
+    hc_strengths = cell_strengths.sortby(abs(center_lats))[:2]
 
     # Order the cells from south to north.
     hc_strengths = hc_strengths.sortby(hc_strengths[lat_str])
@@ -413,8 +413,8 @@ def had_cell_edge(
                 return 90.0
             return -90.0
         lats_interp = np.arange(
-            sf_one_side[lat_str].min(),
-            sf_one_side[lat_str].max() - 0.2 * dlat_avg,
+            float(sf_one_side[lat_str].min()),
+            float(sf_one_side[lat_str].max()) - 0.2 * dlat_avg,
             0.1 * dlat_avg,
         )
         sf_one_side_interp = sf_one_side.interp({lat_str: lats_interp})
