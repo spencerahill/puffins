@@ -216,10 +216,7 @@ def ann_harm(
         return arr
     arr_mean = arr.mean()
     arr_anom = arr - arr_mean
-    if isinstance(arr, xr.DataArray):
-        mfft = np.fft.fft(arr_anom.values)
-    else:
-        mfft = np.fft.fft(arr_anom)
+    mfft = np.fft.fft(np.asarray(arr_anom))
     mask = np.zeros_like(mfft)
     if do_sum:
         mask[-num_harm:] = 1
