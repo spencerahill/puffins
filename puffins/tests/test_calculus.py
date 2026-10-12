@@ -1022,6 +1022,16 @@ class TestColIntMeridFlux:
         expected = _reconstruct_col_int_merid_flux(v, arr, dp)
         np.testing.assert_allclose(result.values, expected, rtol=1e-12)
 
+    def test_all_nan_column_is_nan(self) -> None:
+        """A latitude whose column is wholly missing gives NaN, not 0 (#72)."""
+        v, arr, dp = _make_flux_inputs()
+        v[2, :] = np.nan
+        result = col_int_merid_flux(v, arr, dp)
+        # The raw-numpy rebuild's plain sum propagates NaN, so its row 2 is NaN.
+        expected = _reconstruct_col_int_merid_flux(v, arr, dp)
+        assert np.isnan(result.values[2])
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+
     def test_nondefault_radius_and_grav(self) -> None:
         """Both radius and grav are honored, against a raw-numpy rebuild."""
         v, arr, dp = _make_flux_inputs()

@@ -195,6 +195,65 @@ class TestIntDpG:
         result_half_g = int_dp_g(arr, dp, grav=GRAV_EARTH / 2)
         np.testing.assert_allclose(result_half_g.item(), 2.0 * result_default.item())
 
+    def test_nan_levels(self) -> None:
+        """NaN levels are skipped; a column with no finite level is NaN (#72).
+
+        Three columns: all levels finite, the middle level NaN (as for a level
+        below ground), and every level NaN.  The last returned 0 before #72.
+        """
+        dp_vals = np.array([100.0, 200.0, 300.0])
+        vals = np.array([[1.0, 2.0, 3.0], [1.0, np.nan, 3.0], [np.nan, np.nan, np.nan]])
+        plev = [1e4, 5e4, 9e4]
+        dp = xr.DataArray(dp_vals, dims=[LEV_STR], coords={LEV_STR: plev})
+        arr = xr.DataArray(
+            vals, dims=["col", LEV_STR], coords={LEV_STR: plev}, name="arr"
+        )
+        result = int_dp_g(arr, dp)
+        expected = np.array(
+            [
+                (1.0 * 100.0 + 2.0 * 200.0 + 3.0 * 300.0) / GRAV_EARTH,
+                (1.0 * 100.0 + 3.0 * 300.0) / GRAV_EARTH,
+                np.nan,
+            ]
+        )
+        assert np.isnan(result.values[2])
+        np.testing.assert_allclose(result.values, expected)
+
+    def test_single_finite_level_kept(self) -> None:
+        """One finite level suffices: the column gives that level, not NaN.
+
+        As for a high-topography column where only the top level is above
+        ground.
+        """
+        plev = [1e4, 5e4, 9e4]
+        dp = xr.DataArray([100.0, 200.0, 300.0], dims=[LEV_STR], coords={LEV_STR: plev})
+        arr = xr.DataArray(
+            [np.nan, np.nan, 3.0], dims=[LEV_STR], coords={LEV_STR: plev}, name="arr"
+        )
+        np.testing.assert_allclose(int_dp_g(arr, dp).item(), 3.0 * 300.0 / GRAV_EARTH)
+
+    def test_nan_in_dp(self) -> None:
+        """NaN in dp is skipped like NaN in arr; an all-NaN dp column is NaN."""
+        plev = [1e4, 5e4, 9e4]
+        dp = xr.DataArray(
+            [[100.0, 200.0, 300.0], [100.0, np.nan, 300.0], [np.nan, np.nan, np.nan]],
+            dims=["col", LEV_STR],
+            coords={LEV_STR: plev},
+        )
+        arr = xr.DataArray(
+            np.full((3, 3), 2.0),
+            dims=["col", LEV_STR],
+            coords={LEV_STR: plev},
+            name="arr",
+        )
+        np.testing.assert_allclose(
+            int_dp_g(arr, dp).values, np.array([1200.0, 800.0, np.nan]) / GRAV_EARTH
+        )
+        # Scalar arr, the path col_avg uses for its denominator.
+        np.testing.assert_allclose(
+            int_dp_g(1.0, dp).values, np.array([600.0, 400.0, np.nan]) / GRAV_EARTH
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestIntDlogp
@@ -247,6 +306,18 @@ class TestColAvg:
         arr = _sample_arr_on_pfull(pfull)
         result = col_avg(arr, dp)
         assert isinstance(result, xr.DataArray)
+
+    def test_all_nan_column_is_nan(self) -> None:
+        """A column with no finite level averages to NaN, not 0 (#72)."""
+        pfull = _pfull_increasing()
+        dp = dp_from_pfull(pfull)
+        arr = xr.DataArray(
+            np.full(pfull.sizes[LEV_STR], np.nan),
+            dims=[LEV_STR],
+            coords={LEV_STR: pfull},
+            name="missing",
+        )
+        assert np.isnan(col_avg(arr, dp).item())
 
 
 # ---------------------------------------------------------------------------

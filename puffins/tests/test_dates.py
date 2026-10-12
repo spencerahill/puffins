@@ -1,5 +1,7 @@
 """Tests for dates module."""
 
+import calendar
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -53,6 +55,33 @@ class TestAnnSubsets:
         # the same months as a list would be an equivalent representation.
         assert not isinstance(ann_months, int)
         assert list(ann_months) == list(range(1, 13))
+
+    def test_months_are_calendar_months(self) -> None:
+        """The single-month entries are the 12 calendar months."""
+        singles = {k: v for k, v in ann_subsets.items() if isinstance(v, int)}
+        assert singles == {calendar.month_abbr[m].lower(): m for m in range(1, 13)}
+
+    def test_season_keys_spell_consecutive_months(self) -> None:
+        """Each multi-month key is the initials of consecutive months.
+
+        The oracle is independent of dates.py: the initials come from
+        `calendar.month_abbr`.
+        """
+        seasons = {
+            k: list(v)
+            for k, v in ann_subsets.items()
+            if not isinstance(v, int) and k != "ann"
+        }
+        # 2- through 6-month windows that do not wrap the year end.
+        assert len(seasons) == 11 + 10 + 9 + 8 + 7
+        for key, months_ in seasons.items():
+            assert months_ == list(range(months_[0], months_[0] + len(key))), key
+            initials = "".join(calendar.month_abbr[m][0].lower() for m in months_)
+            assert initials == key, key
+
+    def test_total_size(self) -> None:
+        """12 months, the 45 seasons and 'ann', with no key repeated."""
+        assert len(ann_subsets) == 12 + 11 + 10 + 9 + 8 + 7 + 1
 
 
 class TestSubsetAnn:
