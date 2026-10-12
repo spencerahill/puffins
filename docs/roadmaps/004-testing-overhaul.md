@@ -13,12 +13,12 @@ Take puffins from near-zero test coverage to near-comprehensive coverage
 with best-practice infrastructure, targeting at least one test per public
 function and enforced coverage thresholds in CI.
 
-## Current State (as of 2026-10-09)
+## Current State (as of 2026-10-12)
 
 - **26 test files** (25 module test files plus `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests), covering 25
   of 30 modules
-- **995 tests passing** (1 skipped, 10 xfailed)
+- **1000 tests passing** (1 skipped, 10 xfailed)
 - **91% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
