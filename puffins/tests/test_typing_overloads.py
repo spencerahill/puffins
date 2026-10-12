@@ -33,6 +33,11 @@ if TYPE_CHECKING:
         therm_ross_num,
         u_bci_2layer_qg,
     )
+    from puffins.eq_area import (
+        cell_edge_lin_ro_lata0_approx,
+        cell_edge_mean_ro,
+        eq_pot_temp_mean_ro,
+    )
     from puffins.grad_bal import grad_wind_bouss
     from puffins.held_hou_1980 import (
         dpot_temp_rce_hh80_dlat,
@@ -205,6 +210,57 @@ if TYPE_CHECKING:
     assert_type(grad_wind_bouss(_SC, _H, _T, _DA), xr.DataArray)
     assert_type(grad_wind_bouss(_SC, _H, _T, _ND), np.ndarray)
     assert_type(grad_wind_bouss(_SC, _H, _T, _SC), Scalar)
+
+    assert_type(cell_edge_mean_ro(_DA, _DA), xr.DataArray)
+    assert_type(cell_edge_mean_ro(_DA, _ND), xr.DataArray)
+    assert_type(cell_edge_mean_ro(_DA, _SC), xr.DataArray)
+    assert_type(cell_edge_mean_ro(_ND, _DA), xr.DataArray)
+    assert_type(cell_edge_mean_ro(_ND, _ND), np.ndarray)
+    assert_type(cell_edge_mean_ro(_ND, _SC), np.ndarray)
+    assert_type(cell_edge_mean_ro(_SC, _DA), xr.DataArray)
+    assert_type(cell_edge_mean_ro(_SC, _ND), np.ndarray)
+    assert_type(cell_edge_mean_ro(_SC, _SC), Scalar)
+
+    assert_type(eq_pot_temp_mean_ro(_DA, _DA, _DH), xr.DataArray)
+    assert_type(eq_pot_temp_mean_ro(_DA, _ND, _DH), xr.DataArray)
+    assert_type(eq_pot_temp_mean_ro(_DA, _SC, _DH), xr.DataArray)
+    assert_type(eq_pot_temp_mean_ro(_ND, _DA, _DH), xr.DataArray)
+    assert_type(eq_pot_temp_mean_ro(_ND, _ND, _DH), np.ndarray)
+    assert_type(eq_pot_temp_mean_ro(_ND, _SC, _DH), np.ndarray)
+    assert_type(eq_pot_temp_mean_ro(_SC, _DA, _DH), xr.DataArray)
+    assert_type(eq_pot_temp_mean_ro(_SC, _ND, _DH), np.ndarray)
+    assert_type(eq_pot_temp_mean_ro(_SC, _SC, _DH), Scalar)
+
+    # ------------------------------------------------------------------
+    # Ternary: all 27 input combinations, with the same precedence.
+    # ------------------------------------------------------------------
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _DA, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _DA, _ND), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _DA, _SC), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _ND, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _ND, _ND), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _ND, _SC), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _SC, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _SC, _ND), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_DA, _SC, _SC), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _DA, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _DA, _ND), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _DA, _SC), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _ND, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _ND, _ND), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _ND, _SC), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _SC, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _SC, _ND), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_ND, _SC, _SC), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _DA, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _DA, _ND), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _DA, _SC), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _ND, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _ND, _ND), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _ND, _SC), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _SC, _DA), xr.DataArray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _SC, _ND), np.ndarray)
+    assert_type(cell_edge_lin_ro_lata0_approx(_SC, _SC, _SC), Scalar)
 
     # ------------------------------------------------------------------
     # Two-way split: a 12-month cycle is never a scalar, so `Scalar` is not

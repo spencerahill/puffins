@@ -151,10 +151,10 @@ def pot_temp_avg_unif_ro_small_ang(
 
 def pot_temp_avg_unif_ro_small_ang_eq_ascent(
     lat: ArrayLike,
-    pot_temp_equator: float,
-    ross_num: float = 1,
+    pot_temp_equator: ArrayLike,
+    ross_num: ArrayLike = 1,
     theta_ref: float = THETA_REF,
-    burg_num: float | None = None,
+    burg_num: ArrayLike | None = None,
     height: float = 10e3,
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,

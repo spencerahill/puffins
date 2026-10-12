@@ -17,10 +17,12 @@ defaults invites silent inconsistencies.
 
 import types
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
 import scipy.optimize
+import xarray as xr
 
 from puffins.eq_area import (
     _eq_area_cqe_fixed_tt,
@@ -58,6 +60,22 @@ HEIGHT = 12.0e3
 TAU = 30.0 * 86400.0
 DRAG_COEFF = 0.008
 C_P = 1003.5
+
+HEAT_KWARGS = dict(
+    theta_ref=THETA_REF, radius=RADIUS, height=HEIGHT, delta_h=DELTA_H, tau=TAU
+)
+MOM_KWARGS = dict(
+    radius=RADIUS,
+    rot_rate=ROT_RATE,
+    height=HEIGHT,
+    delta_h=DELTA_H,
+    delta_v=DELTA_V,
+    tau=TAU,
+)
+USFC_KWARGS = dict(MOM_KWARGS, drag_coeff=DRAG_COEFF)
+# A Python list, typed Any so that mypy accepts passing it where an
+# ArrayLike is declared, which is the misuse under test.
+BAD_LIST: Any = [0.05, 0.1]
 
 _IGNORE_QUAD_WARNINGS = pytest.mark.filterwarnings(
     "ignore::scipy.integrate.IntegrationWarning"
@@ -152,6 +170,67 @@ class TestCellEdgeMeanRo:
             rtol=1e-13,
         )
 
+    def test_array_therm_ross_num(self) -> None:
+        """An array of thermal Rossby numbers gives an array of edges."""
+        ro = 0.5
+        therms = np.array([0.02, 0.1, 0.3])
+        result = cell_edge_mean_ro(ro, therms)
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_allclose(
+            result, np.rad2deg(np.sqrt(5 * therms / (3 * ro))), rtol=1e-13
+        )
+
+    def test_dataarrays_broadcast(self) -> None:
+        """DataArrays on separate dimensions broadcast to their outer product."""
+        ros = xr.DataArray([1.0, 0.5], dims=["ro"], coords={"ro": [1.0, 0.5]})
+        therms = xr.DataArray(
+            [0.05, 0.1, 0.2], dims=["therm"], coords={"therm": [0.05, 0.1, 0.2]}
+        )
+        result = cell_edge_mean_ro(ros, therms)
+        assert isinstance(result, xr.DataArray)
+        expected = np.rad2deg(
+            np.sqrt(5 * therms.values[None, :] / (3 * ros.values[:, None]))
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro", "therm").values, expected, rtol=1e-13
+        )
+        np.testing.assert_array_equal(result["therm"].values, therms["therm"].values)
+
+    def test_dataarrays_keep_both_coords(self) -> None:
+        """Both inputs' coordinates survive the broadcast."""
+        ros = xr.DataArray([1.0, 0.5], dims=["ro"], coords={"ro": [1.0, 0.5]})
+        therms = xr.DataArray(
+            [0.05, 0.1, 0.2], dims=["therm"], coords={"therm": [0.05, 0.1, 0.2]}
+        )
+        result = cell_edge_mean_ro(ros, therms)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_array_equal(result["ro"].values, ros["ro"].values)
+        np.testing.assert_array_equal(result["therm"].values, therms["therm"].values)
+
+    def test_scalar_inputs_return_float(self) -> None:
+        """Scalar Rossby numbers still give a 0-d float scalar."""
+        result = cell_edge_mean_ro(0.5, 0.1)
+        assert isinstance(result, float)
+        assert np.ndim(result) == 0
+
+    def test_list_with_numpy_scalar_raises(self) -> None:
+        """A list raises, where integer literals would have repeated it."""
+        with pytest.raises(TypeError):
+            cell_edge_mean_ro(np.float64(0.5), BAD_LIST)
+
+    @pytest.mark.parametrize(
+        "ro", [-0.5, np.float64(-0.5), np.array([-0.5, 0.5])], ids=str
+    )
+    def test_negative_ratio_gives_nan(self, ro: Any) -> None:
+        """A negative Rossby number gives NaN with numpy's warning."""
+        with pytest.warns(RuntimeWarning, match="invalid value"):
+            result = np.atleast_1d(cell_edge_mean_ro(ro, 0.1))
+        assert np.isnan(result[0])
+        if result.size == 2:
+            np.testing.assert_allclose(
+                result[1], np.rad2deg(np.sqrt(5 * 0.1 / (3 * 0.5))), rtol=1e-13
+            )
+
 
 class TestEqPotTempMeanRo:
     """Tests for eq_pot_temp_mean_ro."""
@@ -174,6 +253,26 @@ class TestEqPotTempMeanRo:
             [eq_pot_temp_mean_ro(ro, therm, DELTA_H, theta_ref=THETA_REF) for ro in ros]
         )
         assert np.all(np.diff(temps) < 0)
+
+    def test_dataarrays_broadcast(self) -> None:
+        """DataArrays of Ro and Ro_th broadcast to their outer product."""
+        ro_vals = np.array([1.0, 0.5])
+        therm_vals = np.array([0.05, 0.1, 0.2])
+        result = eq_pot_temp_mean_ro(
+            xr.DataArray(ro_vals, dims=["ro"]),
+            xr.DataArray(therm_vals, dims=["therm"]),
+            DELTA_H,
+            theta_ref=THETA_REF,
+        )
+        assert isinstance(result, xr.DataArray)
+        expected = THETA_REF * (
+            1
+            + DELTA_H / 3
+            - 5 * therm_vals[None, :] * DELTA_H / (18 * ro_vals[:, None])
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro", "therm").values, expected, rtol=1e-13
+        )
 
 
 class TestUniformRoEqualArea:
@@ -204,6 +303,28 @@ class TestUniformRoEqualArea:
         )
         actual = pot_temp_mean_ro(lats, ro, therm, DELTA_H, theta_ref=THETA_REF)
         np.testing.assert_allclose(actual, expected, rtol=1e-13)
+
+    def test_profile_array_ross_num(self) -> None:
+        """A DataArray of Rossby numbers broadcasts against latitude."""
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([0.0, 8.0, 15.0])
+        actual = pot_temp_mean_ro(
+            xr.DataArray(lat_vals, dims=["lat"]),
+            xr.DataArray(ro_vals, dims=["ro"]),
+            therm,
+            DELTA_H,
+            theta_ref=THETA_REF,
+        )
+        assert isinstance(actual, xr.DataArray)
+        ro = ro_vals[:, None]
+        theta_eq = THETA_REF * (1 + DELTA_H / 3 - 5 * therm * DELTA_H / (18 * ro))
+        expected = theta_eq - (
+            THETA_REF * 0.5 * ro * DELTA_H / therm * np.deg2rad(lat_vals[None, :]) ** 4
+        )
+        np.testing.assert_allclose(
+            actual.transpose("ro", "lat").values, expected, rtol=1e-13
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +412,137 @@ class TestHeatFluxMeanRo:
         flux_lo = heat_flux_mean_ro(lats, therm, ro_lo, **kwargs)
         assert np.all(flux_lo > flux_hi)
 
+    def test_zero_outside_cell(self) -> None:
+        """Zero poleward of the edge in both hemispheres; odd in latitude."""
+        ro, therm = 0.5, 0.1
+        edge = float(cell_edge_mean_ro(ro, therm))
+        outside = np.array([-2.0, -1.5, 1.5, 2.0]) * edge
+        inside = np.array([-0.5, 0.5]) * edge
+        out = heat_flux_mean_ro(outside, therm, ro, **HEAT_KWARGS)
+        ins = np.asarray(heat_flux_mean_ro(inside, therm, ro, **HEAT_KWARGS))
+        np.testing.assert_array_equal(out, 0.0)
+        assert ins[1] > 0
+        np.testing.assert_allclose(ins[0], -ins[1], rtol=1e-13)
+
+    def test_zero_outside_each_cell_for_array_ro(self) -> None:
+        """With an array of Ro, each latitude is masked by its own Ro's edge.
+
+        The edges for Ro = 1 and 0.5 at Ro_th = 0.1 are 23.4 and 33.1
+        degrees, so 28 degrees is outside the first cell and inside the
+        second, and 40 degrees is outside both.
+        """
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([10.0, 28.0, 40.0])
+        result = heat_flux_mean_ro(
+            xr.DataArray(lat_vals, dims=["lat"]),
+            therm,
+            xr.DataArray(ro_vals, dims=["ro"]),
+            **HEAT_KWARGS,
+        )
+        assert isinstance(result, xr.DataArray)
+        ro = ro_vals[:, None]
+        edge_rad = np.sqrt(5 * therm / (3 * ro))
+        x = np.deg2rad(lat_vals[None, :]) / edge_rad
+        prefac = (
+            (5 / 18)
+            * (5 / 3) ** 0.5
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / TAU
+            * (therm / ro) ** 1.5
+        )
+        expected = np.where(
+            np.abs(x) <= 1, THETA_REF * prefac * (x - 2 * x**3 + x**5), 0.0
+        )
+        assert np.count_nonzero(expected) == 3
+        np.testing.assert_allclose(
+            result.transpose("ro", "lat").values, expected, rtol=1e-12, atol=0.0
+        )
+
+    def test_scalar_inputs_return_float(self) -> None:
+        """Scalar latitude and Rossby numbers give a 0-d float scalar."""
+        result = heat_flux_mean_ro(10.0, 0.1, 0.5, **HEAT_KWARGS)
+        assert isinstance(result, float)
+        assert np.ndim(result) == 0
+
+    def test_array_therm_ross_num(self) -> None:
+        """A DataArray of thermal Rossby numbers broadcasts against latitude."""
+        ro = 0.5
+        therm_vals = np.array([0.05, 0.1, 0.2])
+        lat_vals = np.array([5.0, 12.0])
+        therms = xr.DataArray(therm_vals, dims=["therm"])
+        lats = xr.DataArray(lat_vals, dims=["lat"], coords={"lat": lat_vals})
+        result = heat_flux_mean_ro(lats, therms, ro, **HEAT_KWARGS)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_array_equal(result["lat"].values, lat_vals)
+        therm = therm_vals[:, None]
+        x = np.deg2rad(lat_vals[None, :]) / np.sqrt(5 * therm / (3 * ro))
+        prefac = (
+            (5 / 18)
+            * (5 / 3) ** 0.5
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / TAU
+            * (therm / ro) ** 1.5
+        )
+        expected = THETA_REF * prefac * (x - 2 * x**3 + x**5)
+        np.testing.assert_allclose(
+            result.transpose("therm", "lat").values, expected, rtol=1e-12
+        )
+
+    def test_numpy_positional_broadcast(self) -> None:
+        """Plain arrays broadcast by position: column j is the scalar-Ro field."""
+        therm = 0.1
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        ro_vals = np.array([1.0, 0.5])
+        result = np.asarray(
+            heat_flux_mean_ro(lat_vals[:, None], therm, ro_vals[None, :], **HEAT_KWARGS)
+        )
+        assert result.shape == (3, 2)
+        for j, ro in enumerate(ro_vals):
+            np.testing.assert_allclose(
+                result[:, j],
+                heat_flux_mean_ro(lat_vals, therm, float(ro), **HEAT_KWARGS),
+                rtol=1e-13,
+            )
+
+    def test_array_ross_num(self) -> None:
+        """A DataArray of Rossby numbers broadcasts against the latitudes."""
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        ros = xr.DataArray(ro_vals, dims=["ro"])
+        lats = xr.DataArray(lat_vals, dims=["lat"])
+        result = heat_flux_mean_ro(
+            lats,
+            therm,
+            ros,
+            theta_ref=THETA_REF,
+            radius=RADIUS,
+            height=HEIGHT,
+            delta_h=DELTA_H,
+            tau=TAU,
+        )
+        assert isinstance(result, xr.DataArray)
+        ro = ro_vals[:, None]
+        x = np.deg2rad(lat_vals[None, :]) / np.sqrt(5 * therm / (3 * ro))
+        prefac = (
+            (5 / 18)
+            * (5 / 3) ** 0.5
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / TAU
+            * (therm / ro) ** 1.5
+        )
+        expected = THETA_REF * prefac * (x - 2 * x**3 + x**5)
+        np.testing.assert_allclose(
+            result.transpose("ro", "lat").values, expected, rtol=1e-12
+        )
+
 
 class TestMomFluxMeanRo:
     """Tests for mom_flux_mean_ro."""
@@ -375,6 +627,56 @@ class TestMomFluxMeanRo:
         flux_lo = mom_flux_mean_ro(lats, therm, ro_lo, **kwargs)
         assert np.all(flux_lo > flux_hi)
 
+    def test_zero_outside_cell(self) -> None:
+        """Zero poleward of the edge in both hemispheres; odd in latitude."""
+        ro, therm = 0.5, 0.1
+        edge = float(cell_edge_mean_ro(ro, therm))
+        outside = np.array([-2.0, -1.5, 1.5, 2.0]) * edge
+        inside = np.array([-0.5, 0.5]) * edge
+        out = mom_flux_mean_ro(outside, therm, ro, **MOM_KWARGS)
+        ins = np.asarray(mom_flux_mean_ro(inside, therm, ro, **MOM_KWARGS))
+        np.testing.assert_array_equal(out, 0.0)
+        assert ins[1] > 0
+        np.testing.assert_allclose(ins[0], -ins[1], rtol=1e-13)
+
+    def test_consistent_with_heat_flux_beyond_edge(self) -> None:
+        """The ms Eq. (17) identity holds across and beyond the cell edge,
+        where both fluxes are zero, in both hemispheres."""
+        ro, therm = 0.5, 0.1
+        x = np.array([-1.5, -1.2, -0.9, -0.6, -0.3, 0.3, 0.6, 0.9, 1.2, 1.5])
+        lats = x * float(cell_edge_mean_ro(ro, therm))
+        heat = heat_flux_mean_ro(lats, therm, ro, **HEAT_KWARGS)
+        mom = np.asarray(mom_flux_mean_ro(lats, therm, ro, **MOM_KWARGS))
+        identity = (
+            ro * ROT_RATE * RADIUS * np.deg2rad(lats) ** 2 / DELTA_V * heat / THETA_REF
+        )
+        assert np.count_nonzero(mom) == 6
+        np.testing.assert_allclose(mom, identity, rtol=1e-12, atol=0.0)
+
+    def test_dataarray_ross_num(self) -> None:
+        """A DataArray of Rossby numbers broadcasts against latitude."""
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        result = mom_flux_mean_ro(
+            xr.DataArray(lat_vals, dims=["lat"]),
+            therm,
+            xr.DataArray(ro_vals, dims=["ro"]),
+            **MOM_KWARGS,
+        )
+        assert isinstance(result, xr.DataArray)
+        ro = ro_vals[:, None]
+        latrad = np.deg2rad(lat_vals[None, :])
+        prefac = ROT_RATE * RADIUS**2 * HEIGHT * DELTA_H / (6 * TAU * DELTA_V)
+        expected = (
+            prefac
+            * latrad**3
+            * (5 * therm / 3 - ro * latrad**2 * (2 - 3 * ro * latrad**2 / (5 * therm)))
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro", "lat").values, expected, rtol=1e-12
+        )
+
 
 class TestUSfcMeanRo:
     """Tests for u_sfc_mean_ro."""
@@ -440,6 +742,104 @@ class TestUSfcMeanRo:
         assert np.all(westerly > 0)
         np.testing.assert_allclose(at_zero, 0.0, atol=1e-10 * typical)
 
+    def test_zero_outside_cell(self) -> None:
+        """Zero poleward of the edge in both hemispheres; even in latitude."""
+        ro, therm = 0.5, 0.1
+        edge = float(cell_edge_mean_ro(ro, therm))
+        outside = np.array([-2.0, -1.5, 1.5, 2.0]) * edge
+        inside = np.array([-0.5, 0.5]) * edge
+        out = u_sfc_mean_ro(outside, therm, ro, **USFC_KWARGS)
+        ins = np.asarray(u_sfc_mean_ro(inside, therm, ro, **USFC_KWARGS))
+        np.testing.assert_array_equal(out, 0.0)
+        assert ins[1] < 0
+        np.testing.assert_allclose(ins[0], ins[1], rtol=1e-13)
+
+    def test_scalar_inputs_return_float(self) -> None:
+        """Scalar latitude and Rossby numbers give a 0-d float scalar."""
+        result = u_sfc_mean_ro(10.0, 0.1, 0.5, **USFC_KWARGS)
+        assert isinstance(result, float)
+        assert np.ndim(result) == 0
+
+    def test_array_ross_num(self) -> None:
+        """A DataArray of Rossby numbers broadcasts against latitude."""
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        ros = xr.DataArray(ro_vals, dims=["ro"])
+        lats = xr.DataArray(lat_vals, dims=["lat"], coords={"lat": lat_vals})
+        result = u_sfc_mean_ro(lats, therm, ros, **USFC_KWARGS)
+        assert isinstance(result, xr.DataArray)
+        np.testing.assert_array_equal(result["lat"].values, lat_vals)
+        ro = ro_vals[:, None]
+        x = lat_vals[None, :] / np.rad2deg(np.sqrt(5 * therm / (3 * ro)))
+        prefac = (
+            -25
+            * ROT_RATE
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / (18 * DRAG_COEFF * TAU * DELTA_V)
+        )
+        expected = (
+            prefac * (therm / ro) ** 2 * (x**2 - (10 / 3) * x**4 + (7 / 3) * x**6)
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro", "lat").values, expected, rtol=1e-12
+        )
+
+    def test_numpy_positional_broadcast(self) -> None:
+        """Plain arrays broadcast by position: column j is the scalar-Ro field."""
+        therm = 0.1
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        ro_vals = np.array([1.0, 0.5])
+        result = np.asarray(
+            u_sfc_mean_ro(lat_vals[:, None], therm, ro_vals[None, :], **USFC_KWARGS)
+        )
+        assert result.shape == (3, 2)
+        for j, ro in enumerate(ro_vals):
+            np.testing.assert_allclose(
+                result[:, j],
+                u_sfc_mean_ro(lat_vals, therm, float(ro), **USFC_KWARGS),
+                rtol=1e-13,
+            )
+
+    def test_array_therm_ross_num(self) -> None:
+        """A DataArray of thermal Rossby numbers broadcasts against latitude."""
+        ro = 0.5
+        therm_vals = np.array([0.05, 0.1, 0.2])
+        lat_vals = np.array([5.0, 12.0])
+        therms = xr.DataArray(therm_vals, dims=["therm"])
+        lats = xr.DataArray(lat_vals, dims=["lat"])
+        result = u_sfc_mean_ro(
+            lats,
+            therms,
+            ro,
+            radius=RADIUS,
+            rot_rate=ROT_RATE,
+            height=HEIGHT,
+            delta_h=DELTA_H,
+            delta_v=DELTA_V,
+            tau=TAU,
+            drag_coeff=DRAG_COEFF,
+        )
+        assert isinstance(result, xr.DataArray)
+        therm = therm_vals[:, None]
+        x = lat_vals[None, :] / np.rad2deg(np.sqrt(5 * therm / (3 * ro)))
+        prefac = (
+            -25
+            * ROT_RATE
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / (18 * DRAG_COEFF * TAU * DELTA_V)
+        )
+        expected = (
+            prefac * (therm / ro) ** 2 * (x**2 - (10 / 3) * x**4 + (7 / 3) * x**6)
+        )
+        np.testing.assert_allclose(
+            result.transpose("therm", "lat").values, expected, rtol=1e-12
+        )
+
 
 # ---------------------------------------------------------------------------
 # Linear-Ro closed forms
@@ -468,6 +868,64 @@ class TestCellEdgeLinRo:
             expected,
             rtol=1e-12,
         )
+
+    def test_approx_array_inputs(self) -> None:
+        """Arrays of the thermal or the descent Rossby number give arrays of edges."""
+        therms = np.array([0.02, 0.1, 0.3])
+        ro_ds = np.array([0.0, 0.3, 0.6])
+        ro_a = 0.7
+        np.testing.assert_allclose(
+            cell_edge_lin_ro_lata0_approx(therms, ro_a, 0.3),
+            np.rad2deg(np.sqrt(15 * therms / (4 * ro_a + 5 * 0.3))),
+            rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            cell_edge_lin_ro_lata0_approx(0.1, ro_a, ro_ds),
+            np.rad2deg(np.sqrt(15 * 0.1 / (4 * ro_a + 5 * ro_ds))),
+            rtol=1e-12,
+        )
+
+    def test_approx_array_ross_ascent(self) -> None:
+        """An array of ascent Rossby numbers gives an array of edges."""
+        ro_as = np.array([0.4, 0.7, 1.0])
+        np.testing.assert_allclose(
+            cell_edge_lin_ro_lata0_approx(0.1, ro_as, 0.3),
+            np.rad2deg(np.sqrt(15 * 0.1 / (4 * ro_as + 5 * 0.3))),
+            rtol=1e-12,
+        )
+
+    def test_approx_dataarrays_broadcast(self) -> None:
+        """DataArrays of Ro_a and Ro_d broadcast to their outer product."""
+        ro_a_vals = np.array([0.4, 0.7, 1.0])
+        ro_d_vals = np.array([0.0, 0.3])
+        ro_as = xr.DataArray(ro_a_vals, dims=["ro_a"], coords={"ro_a": ro_a_vals})
+        ro_ds = xr.DataArray(ro_d_vals, dims=["ro_d"], coords={"ro_d": ro_d_vals})
+        result = cell_edge_lin_ro_lata0_approx(0.1, ro_as, ro_ds)
+        assert isinstance(result, xr.DataArray)
+        expected = np.rad2deg(
+            np.sqrt(15 * 0.1 / (4 * ro_a_vals[:, None] + 5 * ro_d_vals[None, :]))
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro_a", "ro_d").values, expected, rtol=1e-12
+        )
+        np.testing.assert_array_equal(result["ro_a"].values, ro_a_vals)
+
+    def test_approx_scalar_inputs_return_float(self) -> None:
+        """Scalar Rossby numbers still give a 0-d float scalar."""
+        result = cell_edge_lin_ro_lata0_approx(0.1, 0.7, 0.3)
+        assert isinstance(result, float)
+        assert np.ndim(result) == 0
+
+    def test_approx_list_with_numpy_scalar_raises(self) -> None:
+        """A list raises, where integer literals would have repeated it."""
+        with pytest.raises(TypeError):
+            cell_edge_lin_ro_lata0_approx(BAD_LIST, np.float64(0.7), 0.3)
+
+    def test_approx_negative_gives_nan(self) -> None:
+        """A negative thermal Rossby number gives NaN with numpy's warning."""
+        with pytest.warns(RuntimeWarning, match="invalid value"):
+            result = cell_edge_lin_ro_lata0_approx(-0.1, 0.7, 0.3)
+        assert np.isnan(result)
 
     def test_approx_reduces_to_uniform_when_flat(self) -> None:
         """delta_Ro = 0 recovers the uniform-Ro edge exactly."""
@@ -504,7 +962,7 @@ class TestCellEdgeLinRo:
             for delro in (0.0, 0.3, 0.6, 1.0)
         ]
         edges_approx = [
-            cell_edge_lin_ro_lata0_approx(therm, ro_a, ro_a - delro)
+            float(cell_edge_lin_ro_lata0_approx(therm, ro_a, ro_a - delro))
             for delro in (0.0, 0.3, 0.6, 1.0)
         ]
         assert np.all(np.diff(edges_full) > 0)
@@ -656,7 +1114,7 @@ class TestEqualAreaBouss:
         at small Ro_th it must agree with the small-angle closed forms for
         the cell edge and equatorial temperature."""
         therm = 0.005
-        edge_analytic = cell_edge_mean_ro(ro, therm)
+        edge_analytic = float(cell_edge_mean_ro(ro, therm))
         theta_eq_analytic = eq_pot_temp_mean_ro(ro, therm, DELTA_H, theta_ref=THETA_REF)
         guess_edge = np.sin(np.deg2rad(edge_analytic))
         init = [-guess_edge, 0.0, guess_edge, THETA_REF * (1 + DELTA_H / 3)]
