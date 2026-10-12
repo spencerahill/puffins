@@ -19,13 +19,14 @@ References
 """
 
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import cast, overload
 
 import numpy as np
 import scipy.integrate
 import scipy.optimize
+import xarray as xr
 
-from ._typing import ArrayLike
+from ._typing import ArrayLike, Scalar
 from .constants import (
     C_P,
     DELTA_H,
@@ -52,19 +53,54 @@ from .nb_utils import sin2deg
 
 
 # Analytical solutions for annual-mean, uniform-Ro, small-angle case
+@overload
 def eq_pot_temp_mean_ro(
-    ross_num: float,
-    therm_ross_num: float,
+    ross_num: xr.DataArray,
+    therm_ross_num: ArrayLike,
+    delta_h: float,
+    theta_ref: float = ...,
+) -> xr.DataArray: ...
+@overload
+def eq_pot_temp_mean_ro(
+    ross_num: ArrayLike,
+    therm_ross_num: xr.DataArray,
+    delta_h: float,
+    theta_ref: float = ...,
+) -> xr.DataArray: ...
+@overload
+def eq_pot_temp_mean_ro(
+    ross_num: np.ndarray,
+    therm_ross_num: np.ndarray | Scalar,
+    delta_h: float,
+    theta_ref: float = ...,
+) -> np.ndarray: ...
+@overload
+def eq_pot_temp_mean_ro(
+    ross_num: Scalar,
+    therm_ross_num: np.ndarray,
+    delta_h: float,
+    theta_ref: float = ...,
+) -> np.ndarray: ...
+@overload
+def eq_pot_temp_mean_ro(
+    ross_num: Scalar,
+    therm_ross_num: Scalar,
+    delta_h: float,
+    theta_ref: float = ...,
+) -> Scalar: ...
+def eq_pot_temp_mean_ro(
+    ross_num: ArrayLike,
+    therm_ross_num: ArrayLike,
     delta_h: float,
     theta_ref: float = THETA_REF,
-) -> float:
+) -> ArrayLike:
     """Equatorial potential temperature for the fixed-Ro, small-angle, equal-area solution.
 
     Parameters
     ----------
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
     delta_h : float
         Fractional horizontal temperature difference.
@@ -73,18 +109,21 @@ def eq_pot_temp_mean_ro(
 
     Returns
     -------
-    float
-        Equatorial potential temperature (K).
+    float or array-like
+        Equatorial potential temperature (K), broadcast over the Rossby
+        numbers: numpy arrays by position, DataArrays by dimension name.
     """
-    return theta_ref * (
-        1 + delta_h / 3 - 5 * therm_ross_num * delta_h / (18 * ross_num)
+    return cast(
+        ArrayLike,
+        theta_ref
+        * (1 + delta_h / 3 - 5.0 * therm_ross_num * delta_h / (18.0 * ross_num)),
     )
 
 
 def pot_temp_mean_ro(
     lat: ArrayLike,
-    ross_num: float,
-    therm_ross_num: float,
+    ross_num: ArrayLike,
+    therm_ross_num: ArrayLike,
     delta_h: float,
     theta_ref: float = THETA_REF,
 ) -> ArrayLike:
@@ -94,9 +133,9 @@ def pot_temp_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
     delta_h : float
         Fractional horizontal temperature difference.
@@ -107,6 +146,12 @@ def pot_temp_mean_ro(
     -------
     array-like
         Potential temperature at each latitude (K).
+
+    Notes
+    -----
+    Array inputs broadcast against one another: numpy arrays by position
+    (pass ``ross_num[:, np.newaxis]`` for a latitude-by-Rossby-number
+    table), DataArrays by dimension name.
     """
     pot_temp_eq = eq_pot_temp_mean_ro(
         ross_num,
@@ -123,6 +168,22 @@ def pot_temp_mean_ro(
     )
 
 
+@overload
+def cell_edge_mean_ro(
+    ross_num: xr.DataArray, therm_ross_num: ArrayLike
+) -> xr.DataArray: ...
+@overload
+def cell_edge_mean_ro(
+    ross_num: ArrayLike, therm_ross_num: xr.DataArray
+) -> xr.DataArray: ...
+@overload
+def cell_edge_mean_ro(
+    ross_num: np.ndarray, therm_ross_num: np.ndarray | Scalar
+) -> np.ndarray: ...
+@overload
+def cell_edge_mean_ro(ross_num: Scalar, therm_ross_num: np.ndarray) -> np.ndarray: ...
+@overload
+def cell_edge_mean_ro(ross_num: Scalar, therm_ross_num: Scalar) -> Scalar: ...
 def cell_edge_mean_ro(
     ross_num: ArrayLike,
     therm_ross_num: ArrayLike,
@@ -132,16 +193,19 @@ def cell_edge_mean_ro(
     Parameters
     ----------
     ross_num : float or array-like
-        Rossby number.
+        Rossby number, positive.
     therm_ross_num : float or array-like
-        Thermal Rossby number.
+        Thermal Rossby number, positive.
 
     Returns
     -------
     float or array-like
-        Cell edge latitude (degrees), broadcast over the inputs.
+        Cell edge latitude (degrees), broadcast over the inputs: numpy
+        arrays by position, DataArrays by dimension name.  NaN where the
+        ratio of the two Rossby numbers is negative.
     """
-    return cast(ArrayLike, np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5))
+    # Float literals, so that a Python list raises instead of being repeated.
+    return cast(ArrayLike, np.rad2deg(np.sqrt(5.0 * therm_ross_num / (3.0 * ross_num))))
 
 
 def heat_flux_mean_ro(
@@ -178,7 +242,14 @@ def heat_flux_mean_ro(
     Returns
     -------
     array-like
-        Meridional heat flux (K m^2/s), broadcast over the inputs.
+        Meridional heat flux (K m^2/s), zero poleward of the cell edge
+        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+
+    Notes
+    -----
+    Array inputs broadcast against one another: numpy arrays by position
+    (pass ``ross_num[:, np.newaxis]`` for a latitude-by-Rossby-number
+    table), DataArrays by dimension name.
     """
     prefac = (
         (5 / 18)
@@ -190,18 +261,22 @@ def heat_flux_mean_ro(
         * (therm_ross_num / ross_num) ** 1.5
     )
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    # The circulation, and with it the flux, vanishes poleward of the cell
+    # edge, where the polynomial would otherwise extrapolate.
+    in_cell = abs(lat_div_lat_ro) <= 1
     return cast(
         ArrayLike,
         theta_ref
         * prefac
-        * (lat_div_lat_ro - 2 * lat_div_lat_ro**3 + lat_div_lat_ro**5),
+        * (lat_div_lat_ro - 2 * lat_div_lat_ro**3 + lat_div_lat_ro**5)
+        * in_cell,
     )
 
 
 def mom_flux_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: float,
-    ross_num: float,
+    therm_ross_num: ArrayLike,
+    ross_num: ArrayLike,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
     height: float = HEIGHT_TROPO,
@@ -215,9 +290,9 @@ def mom_flux_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
     radius : float, optional
         Planetary radius (m). Default: Earth.
@@ -235,11 +310,21 @@ def mom_flux_mean_ro(
     Returns
     -------
     array-like
-        Meridional momentum flux (m^3/s^2).
+        Meridional momentum flux (m^3/s^2), zero poleward of the cell edge
+        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+
+    Notes
+    -----
+    Array inputs broadcast against one another: numpy arrays by position
+    (pass ``ross_num[:, np.newaxis]`` for a latitude-by-Rossby-number
+    table), DataArrays by dimension name.
     """
     prefac = rot_rate * radius**2 * height * delta_h / (6 * tau * delta_v)
     latrad = np.deg2rad(lat)
     latrad2 = latrad**2
+    # The circulation, and with it the flux, vanishes poleward of the cell
+    # edge, where the polynomial would otherwise extrapolate.
+    in_cell = abs(lat / cell_edge_mean_ro(ross_num, therm_ross_num)) <= 1
     return cast(
         ArrayLike,
         prefac
@@ -247,7 +332,8 @@ def mom_flux_mean_ro(
         * (
             5 * therm_ross_num / 3
             - ross_num * latrad2 * (2 - 3 * ross_num * latrad2 / (5 * therm_ross_num))
-        ),
+        )
+        * in_cell,
     )
 
 
@@ -291,12 +377,22 @@ def u_sfc_mean_ro(
     Returns
     -------
     array-like
-        Surface zonal wind (m/s), broadcast over the inputs.
+        Surface zonal wind (m/s), zero poleward of the cell edge
+        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+
+    Notes
+    -----
+    Array inputs broadcast against one another: numpy arrays by position
+    (pass ``ross_num[:, np.newaxis]`` for a latitude-by-Rossby-number
+    table), DataArrays by dimension name.
     """
     prefac = (
         -25 * rot_rate * radius * height * delta_h / (18 * drag_coeff * tau * delta_v)
     )
     lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    # The circulation, and with it the surface wind, vanishes poleward of
+    # the cell edge, where the polynomial would otherwise extrapolate.
+    in_cell = abs(lat_div_lat_ro) <= 1
     return cast(
         ArrayLike,
         prefac
@@ -305,7 +401,8 @@ def u_sfc_mean_ro(
             lat_div_lat_ro**2
             - (10 / 3) * lat_div_lat_ro**4
             + (7 / 3) * lat_div_lat_ro**6
-        ),
+        )
+        * in_cell,
     )
 
 
@@ -363,6 +460,36 @@ def cell_edge_lin_ro_lata0_full(
     return float(np.rad2deg(max(real_roots.max(), 0.0) ** 0.5))
 
 
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: xr.DataArray, ross_ascent: ArrayLike, ross_descent: ArrayLike
+) -> xr.DataArray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: ArrayLike, ross_ascent: xr.DataArray, ross_descent: ArrayLike
+) -> xr.DataArray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: ArrayLike, ross_ascent: ArrayLike, ross_descent: xr.DataArray
+) -> xr.DataArray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: np.ndarray,
+    ross_ascent: np.ndarray | Scalar,
+    ross_descent: np.ndarray | Scalar,
+) -> np.ndarray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: Scalar, ross_ascent: np.ndarray, ross_descent: np.ndarray | Scalar
+) -> np.ndarray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: Scalar, ross_ascent: Scalar, ross_descent: np.ndarray
+) -> np.ndarray: ...
+@overload
+def cell_edge_lin_ro_lata0_approx(
+    therm_ross: Scalar, ross_ascent: Scalar, ross_descent: Scalar
+) -> Scalar: ...
 def cell_edge_lin_ro_lata0_approx(
     therm_ross: ArrayLike, ross_ascent: ArrayLike, ross_descent: ArrayLike
 ) -> ArrayLike:
@@ -371,25 +498,28 @@ def cell_edge_lin_ro_lata0_approx(
     Parameters
     ----------
     therm_ross : float or array-like
-        Thermal Rossby number.
+        Thermal Rossby number, positive.
     ross_ascent : float or array-like
-        Rossby number at the ascent latitude.
+        Rossby number at the ascent latitude, positive.
     ross_descent : float or array-like
-        Rossby number at the descent (cell edge) latitude.
+        Rossby number at the descent (cell edge) latitude, positive.
 
     Returns
     -------
     float or array-like
-        Approximate cell edge latitude (degrees), broadcast over the inputs.
+        Approximate cell edge latitude (degrees), broadcast over the inputs:
+        numpy arrays by position, DataArrays by dimension name.  NaN where
+        the argument of the square root is negative.
 
     See Also
     --------
     cell_edge_lin_ro_lata0_full : Full (non-approximate) solution.
     """
     delta_ross = ross_ascent - ross_descent
+    # Float literals, so that a Python list raises instead of being repeated.
     return cast(
         ArrayLike,
-        np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5),
+        np.rad2deg(np.sqrt(15.0 * therm_ross / (9.0 * ross_ascent - 5.0 * delta_ross))),
     )
 
 
