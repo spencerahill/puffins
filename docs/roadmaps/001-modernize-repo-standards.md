@@ -38,7 +38,8 @@ Modernize the build system and local developer tooling.
 
 Automate quality checks and releases.
 
-- [x] GitHub Actions CI: lint + test matrix (Python 3.10–3.13)
+- [x] GitHub Actions CI: lint + test matrix (Python 3.11–3.14; 3.10 dropped
+  at its end of life, 2026-10-01)
 - [x] GitHub Actions publish workflow (PyPI trusted publishing)
 - [x] Dependabot for monthly dependency and Actions updates
 - [x] `windspharm` moved to optional `[fortran]` extra (requires conda)
@@ -47,9 +48,9 @@ Automate quality checks and releases.
 
 Update documentation to reflect the new tooling.
 
-- [ ] Update README badges (Python 3.10+, add CI status badge)
+- [x] Update README badges (Python 3.11+, PyPI, docs, and CI status badges)
 - [ ] Add `uv` installation instructions alongside pip
-- [ ] Note windspharm's move to optional `[fortran]` extra
+- [x] Note windspharm's move to optional `[fortran]` extra
 - [ ] Add "Contributing" section covering dev setup, pre-commit, and CI
 
 ## Phase 4: Type Hints

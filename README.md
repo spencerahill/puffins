@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/puffins)](https://pypi.org/project/puffins/)
 [![Docs](https://readthedocs.org/projects/puffins/badge/?version=latest)](https://puffins.readthedocs.io)
 [![CI](https://github.com/spencerahill/puffins/actions/workflows/ci.yml/badge.svg)](https://github.com/spencerahill/puffins/actions/workflows/ci.yml)
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 
@@ -91,7 +91,7 @@ pip install -e .
 
 ### Dependencies
 
-puffins requires Python 3.10+ and the following packages (installed
+puffins requires Python 3.11+ and the following packages (installed
 automatically):
 
 - [xarray](https://xarray.dev)
