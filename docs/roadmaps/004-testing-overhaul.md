@@ -18,7 +18,7 @@ function and enforced coverage thresholds in CI.
 - **26 test files** (25 module test files plus `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests), covering 25
   of 30 modules
-- **1000 tests passing** (1 skipped, 10 xfailed)
+- **1025 tests passing** (1 skipped, 10 xfailed)
 - **91% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
@@ -117,7 +117,7 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 |--------|-------------|-------|
 | `vert_coords.py` | 17 | Vertical coordinate transforms; test round-trip consistency |
 | `interp.py` | 11 | Interpolation; test against scipy directly and known profiles |
-| `eq_area.py` | 15 | Equal-area transforms; test invertibility and area conservation |
+| `eq_area.py` | 15 | Equal-area Hadley cell model (Held-Hou 1980 and extensions); test closed forms against the equal-area constraints |
 | `lcl.py` | 6 | LCL calculations; test against published tables |
 
 ### Testing strategy

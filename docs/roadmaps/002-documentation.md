@@ -215,7 +215,7 @@ Suggested notebooks:
 | Computing Hadley cell diagnostics from reanalysis data | `had_cell`, `dynamics`, `vert_coords` |
 | The Held-Hou 1980 model: theory and code | `held_hou_1980`, `constants`, `plotting` |
 | Gradient wind balance and thermal wind | `grad_bal`, `dynamics`, `thermodynamics` |
-| Working with equal-area coordinates | `eq_area`, `calculus` |
+| The equal-area Hadley cell model (Held-Hou 1980 and extensions) | `eq_area`, `held_hou_1980` |
 | Plotting with `puffins` | `plotting`, `nb_utils` |
 | Multi-planet calculations | `constants`, `dynamics`, `thermodynamics` |
 
