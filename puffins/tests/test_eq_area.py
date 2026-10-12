@@ -21,6 +21,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 import scipy.optimize
+import xarray as xr
 
 from puffins.eq_area import (
     _eq_area_cqe_fixed_tt,
@@ -151,6 +152,32 @@ class TestCellEdgeMeanRo:
             2 * cell_edge_mean_ro(1.0, therm),
             rtol=1e-13,
         )
+
+    def test_array_therm_ross_num(self) -> None:
+        """An array of thermal Rossby numbers gives an array of edges."""
+        ro = 0.5
+        therms = np.array([0.02, 0.1, 0.3])
+        result = cell_edge_mean_ro(ro, therms)
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_allclose(
+            result, np.rad2deg(np.sqrt(5 * therms / (3 * ro))), rtol=1e-13
+        )
+
+    def test_dataarrays_broadcast(self) -> None:
+        """DataArrays on separate dimensions broadcast to their outer product."""
+        ros = xr.DataArray([1.0, 0.5], dims=["ro"], coords={"ro": [1.0, 0.5]})
+        therms = xr.DataArray(
+            [0.05, 0.1, 0.2], dims=["therm"], coords={"therm": [0.05, 0.1, 0.2]}
+        )
+        result = cell_edge_mean_ro(ros, therms)
+        assert isinstance(result, xr.DataArray)
+        expected = np.rad2deg(
+            np.sqrt(5 * therms.values[None, :] / (3 * ros.values[:, None]))
+        )
+        np.testing.assert_allclose(
+            result.transpose("ro", "therm").values, expected, rtol=1e-13
+        )
+        np.testing.assert_array_equal(result["therm"].values, therms["therm"].values)
 
 
 class TestEqPotTempMeanRo:
@@ -290,6 +317,40 @@ class TestHeatFluxMeanRo:
         flux_hi = heat_flux_mean_ro(lats, therm, ro_hi, **kwargs)
         flux_lo = heat_flux_mean_ro(lats, therm, ro_lo, **kwargs)
         assert np.all(flux_lo > flux_hi)
+
+    def test_array_ross_num(self) -> None:
+        """A DataArray of Rossby numbers broadcasts against the latitudes."""
+        therm = 0.1
+        ro_vals = np.array([1.0, 0.5])
+        lat_vals = np.array([5.0, 12.0, 20.0])
+        ros = xr.DataArray(ro_vals, dims=["ro"])
+        lats = xr.DataArray(lat_vals, dims=["lat"])
+        result = heat_flux_mean_ro(
+            lats,
+            therm,
+            ros,
+            theta_ref=THETA_REF,
+            radius=RADIUS,
+            height=HEIGHT,
+            delta_h=DELTA_H,
+            tau=TAU,
+        )
+        assert isinstance(result, xr.DataArray)
+        ro = ro_vals[:, None]
+        x = np.deg2rad(lat_vals[None, :]) / np.sqrt(5 * therm / (3 * ro))
+        prefac = (
+            (5 / 18)
+            * (5 / 3) ** 0.5
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / TAU
+            * (therm / ro) ** 1.5
+        )
+        expected = THETA_REF * prefac * (x - 2 * x**3 + x**5)
+        np.testing.assert_allclose(
+            result.transpose("ro", "lat").values, expected, rtol=1e-12
+        )
 
 
 class TestMomFluxMeanRo:
@@ -440,6 +501,43 @@ class TestUSfcMeanRo:
         assert np.all(westerly > 0)
         np.testing.assert_allclose(at_zero, 0.0, atol=1e-10 * typical)
 
+    def test_array_therm_ross_num(self) -> None:
+        """A DataArray of thermal Rossby numbers broadcasts against latitude."""
+        ro = 0.5
+        therm_vals = np.array([0.05, 0.1, 0.2])
+        lat_vals = np.array([5.0, 12.0])
+        therms = xr.DataArray(therm_vals, dims=["therm"])
+        lats = xr.DataArray(lat_vals, dims=["lat"])
+        result = u_sfc_mean_ro(
+            lats,
+            therms,
+            ro,
+            radius=RADIUS,
+            rot_rate=ROT_RATE,
+            height=HEIGHT,
+            delta_h=DELTA_H,
+            delta_v=DELTA_V,
+            tau=TAU,
+            drag_coeff=DRAG_COEFF,
+        )
+        assert isinstance(result, xr.DataArray)
+        therm = therm_vals[:, None]
+        x = lat_vals[None, :] / np.rad2deg(np.sqrt(5 * therm / (3 * ro)))
+        prefac = (
+            -25
+            * ROT_RATE
+            * RADIUS
+            * HEIGHT
+            * DELTA_H
+            / (18 * DRAG_COEFF * TAU * DELTA_V)
+        )
+        expected = (
+            prefac * (therm / ro) ** 2 * (x**2 - (10 / 3) * x**4 + (7 / 3) * x**6)
+        )
+        np.testing.assert_allclose(
+            result.transpose("therm", "lat").values, expected, rtol=1e-12
+        )
+
 
 # ---------------------------------------------------------------------------
 # Linear-Ro closed forms
@@ -466,6 +564,22 @@ class TestCellEdgeLinRo:
         np.testing.assert_allclose(
             cell_edge_lin_ro_lata0_approx(therm, ro_a, ro_d),
             expected,
+            rtol=1e-12,
+        )
+
+    def test_approx_array_inputs(self) -> None:
+        """Arrays of any of the three Rossby numbers give arrays of edges."""
+        therms = np.array([0.02, 0.1, 0.3])
+        ro_ds = np.array([0.0, 0.3, 0.6])
+        ro_a = 0.7
+        np.testing.assert_allclose(
+            cell_edge_lin_ro_lata0_approx(therms, ro_a, 0.3),
+            np.rad2deg(np.sqrt(15 * therms / (4 * ro_a + 5 * 0.3))),
+            rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            cell_edge_lin_ro_lata0_approx(0.1, ro_a, ro_ds),
+            np.rad2deg(np.sqrt(15 * 0.1 / (4 * ro_a + 5 * ro_ds))),
             rtol=1e-12,
         )
 
@@ -504,7 +618,7 @@ class TestCellEdgeLinRo:
             for delro in (0.0, 0.3, 0.6, 1.0)
         ]
         edges_approx = [
-            cell_edge_lin_ro_lata0_approx(therm, ro_a, ro_a - delro)
+            float(cell_edge_lin_ro_lata0_approx(therm, ro_a, ro_a - delro))
             for delro in (0.0, 0.3, 0.6, 1.0)
         ]
         assert np.all(np.diff(edges_full) > 0)
@@ -656,7 +770,7 @@ class TestEqualAreaBouss:
         at small Ro_th it must agree with the small-angle closed forms for
         the cell edge and equatorial temperature."""
         therm = 0.005
-        edge_analytic = cell_edge_mean_ro(ro, therm)
+        edge_analytic = float(cell_edge_mean_ro(ro, therm))
         theta_eq_analytic = eq_pot_temp_mean_ro(ro, therm, DELTA_H, theta_ref=THETA_REF)
         guess_edge = np.sin(np.deg2rad(edge_analytic))
         init = [-guess_edge, 0.0, guess_edge, THETA_REF * (1 + DELTA_H / 3)]

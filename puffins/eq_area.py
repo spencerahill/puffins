@@ -124,30 +124,30 @@ def pot_temp_mean_ro(
 
 
 def cell_edge_mean_ro(
-    ross_num: float,
-    therm_ross_num: float,
-) -> float:
+    ross_num: ArrayLike,
+    therm_ross_num: ArrayLike,
+) -> ArrayLike:
     """Hadley cell edge for the fixed-Ro, small-angle, equatorial-ascent case.
 
     Parameters
     ----------
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
 
     Returns
     -------
-    float
-        Cell edge latitude (degrees).
+    float or array-like
+        Cell edge latitude (degrees), broadcast over the inputs.
     """
-    return float(np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5))
+    return cast(ArrayLike, np.rad2deg((5 * therm_ross_num / (3 * ross_num)) ** 0.5))
 
 
 def heat_flux_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: float,
-    ross_num: float,
+    therm_ross_num: ArrayLike,
+    ross_num: ArrayLike,
     theta_ref: float = THETA_REF,
     radius: float = RAD_EARTH,
     height: float = HEIGHT_TROPO,
@@ -160,9 +160,9 @@ def heat_flux_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
     theta_ref : float, optional
         Reference potential temperature (K). Default: THETA_REF.
@@ -178,7 +178,7 @@ def heat_flux_mean_ro(
     Returns
     -------
     array-like
-        Meridional heat flux (K m^2/s).
+        Meridional heat flux (K m^2/s), broadcast over the inputs.
     """
     prefac = (
         (5 / 18)
@@ -253,8 +253,8 @@ def mom_flux_mean_ro(
 
 def u_sfc_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: float,
-    ross_num: float,
+    therm_ross_num: ArrayLike,
+    ross_num: ArrayLike,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
     height: float = HEIGHT_TROPO,
@@ -269,9 +269,9 @@ def u_sfc_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float
+    therm_ross_num : float or array-like
         Thermal Rossby number.
-    ross_num : float
+    ross_num : float or array-like
         Rossby number.
     radius : float, optional
         Planetary radius (m). Default: Earth.
@@ -291,7 +291,7 @@ def u_sfc_mean_ro(
     Returns
     -------
     array-like
-        Surface zonal wind (m/s).
+        Surface zonal wind (m/s), broadcast over the inputs.
     """
     prefac = (
         -25 * rot_rate * radius * height * delta_h / (18 * drag_coeff * tau * delta_v)
@@ -364,31 +364,32 @@ def cell_edge_lin_ro_lata0_full(
 
 
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: float, ross_ascent: float, ross_descent: float
-) -> float:
+    therm_ross: ArrayLike, ross_ascent: ArrayLike, ross_descent: ArrayLike
+) -> ArrayLike:
     """Leading-order approximation for cell edge with a linear Rossby number profile.
 
     Parameters
     ----------
-    therm_ross : float
+    therm_ross : float or array-like
         Thermal Rossby number.
-    ross_ascent : float
+    ross_ascent : float or array-like
         Rossby number at the ascent latitude.
-    ross_descent : float
+    ross_descent : float or array-like
         Rossby number at the descent (cell edge) latitude.
 
     Returns
     -------
-    float
-        Approximate cell edge latitude (degrees).
+    float or array-like
+        Approximate cell edge latitude (degrees), broadcast over the inputs.
 
     See Also
     --------
     cell_edge_lin_ro_lata0_full : Full (non-approximate) solution.
     """
     delta_ross = ross_ascent - ross_descent
-    return float(
-        np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5)
+    return cast(
+        ArrayLike,
+        np.rad2deg((15 * therm_ross / (9 * ross_ascent - 5 * delta_ross)) ** 0.5),
     )
 
 
