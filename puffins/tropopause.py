@@ -68,9 +68,8 @@ def tropo_wmo(
     if do_interp:
         if interp_vals is None:
             interp_vals = np.arange(max_pressure, 20, -0.1)
-        dict_interp = {p_str: interp_vals, "method": "cubic"}
-        t_interp = temp_arr.interp(**dict_interp)
-        z_interp = z_arr.interp(**dict_interp)
+        t_interp = temp_arr.interp({p_str: interp_vals}, method="cubic")
+        z_interp = z_arr.interp({p_str: interp_vals}, method="cubic")
     else:
         t_interp = temp_arr
         z_interp = z_arr
@@ -104,7 +103,7 @@ def _tropo_wmo(
     dtemp_dz = dtemp_dz.where(z_arr[p_str] < max_pressure, drop=True)
     above_thresh = dtemp_dz[p_str].where(dtemp_dz > threshold)
     p_tropo_ind = above_thresh.dropna(p_str, how="all").argmax(p_str)
-    arr = temp_arr[{p_str: p_tropo_ind}].interp(**{lat_str: temp[lat_str]})
+    arr = temp_arr[{p_str: p_tropo_ind}].interp({lat_str: temp[lat_str]})
     arr.name = "tropopause_wmo"
     return cast(xr.DataArray, arr)
 
@@ -169,7 +168,7 @@ def _tropo_cold_point(
     cold_point = temp_arr.min(p_str)
     cold_point_lev = temp_arr[p_str][temp_arr.argmin(p_str)]
     cold_point[p_str] = cold_point_lev
-    return cast(xr.DataArray, cold_point.interp(**{lat_str: temp[lat_str]}))
+    return cast(xr.DataArray, cold_point.interp({lat_str: temp[lat_str]}))
 
 
 def tropopause_cold_point(
@@ -224,7 +223,7 @@ def _tropo_max_vert_curv(
     d2temp_dz2_max_ind = d2temp_dz2.argmax(p_str)
     return cast(
         xr.DataArray,
-        temp_arr[{p_str: d2temp_dz2_max_ind}].interp(**{lat_str: temp[lat_str]}),
+        temp_arr[{p_str: d2temp_dz2_max_ind}].interp({lat_str: temp[lat_str]}),
     )
 
 
@@ -288,10 +287,10 @@ def _tropo_fixed_temp(
 ) -> xr.DataArray:
     """Tropopause defined as a fixed temperature."""
     (temp_arr,) = drop_nans_and_interp([temp], do_interp=interpolate, p_str=p_str)
-    temp_closest_ind = np.abs(temp_arr - temp_tropo).argmin(p_str)
+    temp_closest_ind = abs(temp_arr - temp_tropo).argmin(p_str)
     return cast(
         xr.DataArray,
-        temp_arr[{p_str: temp_closest_ind}].interp(**{lat_str: temp[lat_str]}),
+        temp_arr[{p_str: temp_closest_ind}].interp({lat_str: temp[lat_str]}),
     )
 
 
@@ -347,10 +346,10 @@ def _tropo_fixed_height(
     temp_arr, z_arr = drop_nans_and_interp(
         [temp, z], do_interp=interpolate, p_str=p_str
     )
-    z_closest_ind = np.abs(z_arr - height_tropo).argmin(p_str)
+    z_closest_ind = abs(z_arr - height_tropo).argmin(p_str)
     return cast(
         xr.DataArray,
-        temp_arr[{p_str: z_closest_ind}].interp(**{lat_str: temp[lat_str]}),
+        temp_arr[{p_str: z_closest_ind}].interp({lat_str: temp[lat_str]}),
     )
 
 

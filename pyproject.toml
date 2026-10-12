@@ -7,7 +7,7 @@ name = "puffins"
 dynamic = ["version"]
 description = "Functions for computing things in climate science"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Spencer A. Hill", email = "shill1@ccny.cuny.edu" }]
 keywords = ["climate", "science"]
@@ -17,16 +17,18 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Natural Language :: English",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 dependencies = [
   "eofs",
   "faceted",
-  "matplotlib",
+  # 3.11 is the first release to register the bold and italic faces of
+  # macOS's Helvetica collection, which plotting.plt_rc_params_custom uses.
+  "matplotlib>=3.11",
   "numpy",
   "pymannkendall",
   "scipy",
@@ -77,7 +79,7 @@ version = "2.0.0"
 requires-dist = ["numpy", "pyspharm"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 88
 
 [tool.ruff.lint]
@@ -116,7 +118,7 @@ addopts = "-v --tb=short"
 
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

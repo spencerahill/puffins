@@ -398,7 +398,7 @@ def pfull_from_phalf_avg(
     dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
     return cast(
         xr.DataArray,
-        (phalf.isel({phalf_str: slice(None, -1)}).values + 0.5 * dp).rename(pfull_str),
+        (0.5 * dp + phalf.isel({phalf_str: slice(None, -1)}).values).rename(pfull_str),
     )
 
 
@@ -651,7 +651,7 @@ def col_extrema(arr: xr.DataArray, p_str: str = LEV_STR) -> xr.DataArray:
         Values of ``arr`` at extrema locations; NaN elsewhere.
     """
     darr_dp = arr.differentiate(p_str)
-    sign_change = np.sign(darr_dp).diff(p_str)
+    sign_change = cast(xr.DataArray, np.sign(darr_dp)).diff(p_str)
     return cast(xr.DataArray, arr.where(sign_change))
 
 
