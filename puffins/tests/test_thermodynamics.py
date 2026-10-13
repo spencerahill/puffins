@@ -529,16 +529,48 @@ class TestColRelHum:
         np.testing.assert_allclose(result.values, [0.7, 0.7], rtol=1e-12)
 
     def test_pressure_in_hpa_raises(self) -> None:
-        """Pressure in hPa puts every level below p_top = 1e4, which raises
-        instead of returning NaN in every column."""
+        """Pressure in hPa raises instead of returning NaN in every column."""
         pfull, dp, temp = _climlab_column()
         q_s = _sat_spec_hum_raw(pfull, temp)
-        with pytest.raises(ValueError, match="p_top or greater"):
+        with pytest.raises(ValueError, match="is pressure in hPa"):
             col_rel_hum(
                 _on_lev(0.7 * q_s, pfull, "spec_hum"),
                 _on_lev(q_s, pfull, "q_s"),
                 _on_lev(pfull / 100.0, pfull, "pressure"),
                 _on_lev(dp / 100.0, pfull, "dp"),
+            )
+
+    def test_pressure_in_hpa_raises_with_zero_p_top_column(self) -> None:
+        """Pressure in hPa raises even when one column's p_top is 0, which puts
+        every level of that column at or below p_top, so a test of whether any
+        level qualifies would pass and leave the other column NaN."""
+        pfull, dp, temp = _climlab_column()
+        q_s = np.tile(_sat_spec_hum_raw(pfull, temp), (2, 1))
+        dims = ["lat", LEV_STR]
+        coords = {"lat": [0.0, 60.0], LEV_STR: pfull}
+        with pytest.raises(ValueError, match="is pressure in hPa"):
+            col_rel_hum(
+                xr.DataArray(0.7 * q_s, dims=dims, coords=coords, name="spec_hum"),
+                xr.DataArray(q_s, dims=dims, coords=coords, name="q_s"),
+                _on_lev(pfull / 100.0, pfull, "pressure"),
+                _on_lev(dp / 100.0, pfull, "dp"),
+                p_top=xr.DataArray(
+                    [0.0, 1e4], dims=["lat"], coords={"lat": [0.0, 60.0]}
+                ),
+            )
+
+    def test_no_level_at_or_below_p_top_raises(self) -> None:
+        """Pressure in Pa with every level above p_top raises its own error,
+        distinct from the hPa check."""
+        pfull, dp, temp = _climlab_column()
+        strat = pfull < 1e4
+        q_s = _sat_spec_hum_raw(pfull[strat], temp[strat])
+        with pytest.raises(ValueError, match="No level in any column"):
+            col_rel_hum(
+                _on_lev(0.7 * q_s, pfull[strat], "spec_hum"),
+                _on_lev(q_s, pfull[strat], "q_s"),
+                _on_lev(pfull[strat], pfull[strat], "pressure"),
+                _on_lev(dp[strat], pfull[strat], "dp"),
             )
 
     def test_mismatched_level_coords_raise(self) -> None:
@@ -549,12 +581,77 @@ class TestColRelHum:
         q_s = _sat_spec_hum_raw(pfull, temp)
         pfull32 = pfull.astype(np.float32).astype(np.float64)
         assert (pfull32 != pfull).sum() == 20
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="cannot align"):
             col_rel_hum(
                 _on_lev(0.7 * q_s, pfull32, "spec_hum"),
                 _on_lev(q_s, pfull32, "q_s"),
                 _on_lev(pfull, pfull, "pressure"),
                 _on_lev(dp, pfull, "dp"),
+            )
+
+    def test_mismatched_lat_coords_raise(self) -> None:
+        """Latitudes that differ by float32 round-off between the two humidity
+        fields raise, where an inner join would drop the unmatched columns."""
+        pfull, dp, temp = _climlab_column()
+        q_s = np.tile(_sat_spec_hum_raw(pfull, temp), (3, 1))
+        lat = np.array([0.1, 30.3, 60.7])
+        lat32 = lat.astype(np.float32).astype(np.float64)
+        assert (lat32 != lat).all()
+        dims = ["lat", LEV_STR]
+        with pytest.raises(ValueError, match="cannot align"):
+            col_rel_hum(
+                xr.DataArray(0.7 * q_s, dims=dims, coords={"lat": lat, LEV_STR: pfull}),
+                xr.DataArray(q_s, dims=dims, coords={"lat": lat32, LEV_STR: pfull}),
+                _on_lev(pfull, pfull, "pressure"),
+                _on_lev(dp, pfull, "dp"),
+            )
+
+    @pytest.mark.parametrize(
+        "lat",
+        [
+            pytest.param(
+                np.array([0.1, 60.7], dtype=np.float32).astype(np.float64),
+                id="float32",
+            ),
+            pytest.param(np.array([0.1]), id="subset"),
+        ],
+    )
+    def test_mismatched_p_top_coords_raise(self, lat: np.ndarray) -> None:
+        """A per-column p_top raises when its latitudes differ from the data's,
+        whether by float32 round-off or by covering only some of the columns,
+        where an inner join would drop the unmatched columns."""
+        pfull, dp, temp = _climlab_column()
+        q_s = np.tile(_sat_spec_hum_raw(pfull, temp), (2, 1))
+        dims = ["lat", LEV_STR]
+        coords = {"lat": [0.1, 60.7], LEV_STR: pfull}
+        with pytest.raises(ValueError, match="cannot align"):
+            col_rel_hum(
+                xr.DataArray(0.7 * q_s, dims=dims, coords=coords, name="spec_hum"),
+                xr.DataArray(q_s, dims=dims, coords=coords, name="q_s"),
+                _on_lev(pfull, pfull, "pressure"),
+                _on_lev(dp, pfull, "dp"),
+                p_top=xr.DataArray(
+                    np.full(lat.size, 1e4), dims=["lat"], coords={"lat": lat}
+                ),
+            )
+
+    @pytest.mark.parametrize("field", ["spec_hum", "sat_spec_hum", "pressure", "dp"])
+    def test_input_without_dim_raises(self, field: str) -> None:
+        """An input whose vertical dimension has another name raises, where it
+        would otherwise be broadcast against the others and its vertical
+        dimension left in the result."""
+        pfull, dp, temp = _climlab_column()
+        q_s = _sat_spec_hum_raw(pfull, temp)
+        args = {
+            "spec_hum": _on_lev(0.7 * q_s, pfull, "spec_hum"),
+            "sat_spec_hum": _on_lev(q_s, pfull, "q_s"),
+            "pressure": _on_lev(pfull, pfull, "pressure"),
+            "dp": _on_lev(dp, pfull, "dp"),
+        }
+        args[field] = args[field].rename({LEV_STR: "level"})
+        with pytest.raises(ValueError, match=f"{field} has no dimension"):
+            col_rel_hum(
+                args["spec_hum"], args["sat_spec_hum"], args["pressure"], args["dp"]
             )
 
     def test_hybrid_levels_cut_per_column(self) -> None:

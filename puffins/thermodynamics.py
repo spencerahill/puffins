@@ -302,6 +302,9 @@ def col_rel_hum(
     pressure : xarray.DataArray
         Pressure of each level (Pa): the vertical coordinate of data on
         pressure levels, or a full-level pressure field on hybrid levels.
+        A maximum below 1200 Pa is taken to mean pressure in hPa and raises,
+        as in :func:`puffins.vert_coords.to_pascal`, so an atmosphere whose
+        surface pressure is below 1200 Pa, such as that of Mars, is rejected.
     dp : xarray.DataArray
         Pressure thickness of each level (Pa), e.g. from
         :func:`puffins.vert_coords.dp_from_pfull`.  Over topography, the
@@ -322,23 +325,39 @@ def col_rel_hum(
     Raises
     ------
     ValueError
-        If no level in any column has a pressure of ``p_top`` or greater, as
-        when pressure is given in hPa, or if the inputs' coordinates differ
-        along a shared dimension, which would otherwise drop the unmatched
-        levels silently.
+        If ``dim`` is not a dimension of each of ``spec_hum``,
+        ``sat_spec_hum``, ``pressure`` and ``dp``; if the maximum of
+        ``pressure`` is below 1200 Pa, as when pressure is given in hPa; if no
+        level in any column has a pressure of ``p_top`` or greater; or if two
+        inputs, ``p_top`` included, have different coordinates along a shared
+        dimension, which would otherwise drop the unmatched levels or columns
+        silently.
     """
-    spec_hum, sat_spec_hum, pressure, dp = xr.align(
-        spec_hum, sat_spec_hum, pressure, dp, join="exact"
-    )
-    below_top = pressure >= p_top
-    if not bool(below_top.any()):
-        raise ValueError(
-            "No level has a pressure of p_top or greater; is pressure in Pa?"
-        )
-    in_col = below_top & spec_hum.notnull() & sat_spec_hum.notnull()
-    col_wv = int_dp_g(spec_hum.where(in_col), dp, dim=dim)
-    col_wv_sat = int_dp_g(sat_spec_hum.where(in_col), dp, dim=dim)
-    return cast(xr.DataArray, (col_wv / col_wv_sat).rename("col_rel_hum"))
+    for name, arr in [
+        ("spec_hum", spec_hum),
+        ("sat_spec_hum", sat_spec_hum),
+        ("pressure", pressure),
+        ("dp", dp),
+    ]:
+        if dim not in arr.dims:
+            raise ValueError(
+                f"{name} has no dimension {dim!r}; its dimensions are {arr.dims}"
+            )
+    if float(pressure.max()) < 1200.0:
+        raise ValueError("The maximum pressure is below 1200 Pa; is pressure in hPa?")
+    # Under the exact join, every binary operation raises on mismatched
+    # coordinates, p_top's included, where xarray's default inner join would
+    # silently drop the unmatched levels or columns.
+    with xr.set_options(arithmetic_join="exact"):
+        below_top = pressure >= p_top
+        if not bool(below_top.any()):
+            raise ValueError(
+                "No level in any column has a pressure of p_top or greater."
+            )
+        in_col = below_top & spec_hum.notnull() & sat_spec_hum.notnull()
+        col_wv = int_dp_g(spec_hum.where(in_col), dp, dim=dim)
+        col_wv_sat = int_dp_g(sat_spec_hum.where(in_col), dp, dim=dim)
+        return cast(xr.DataArray, (col_wv / col_wv_sat).rename("col_rel_hum"))
 
 
 def kinetic_energy(

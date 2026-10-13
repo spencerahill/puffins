@@ -19,7 +19,7 @@ function and enforced coverage thresholds in CI.
   compile-time type-contract file that yields no runtime tests), covering 26
   of 31 modules
 - **1025 tests passing** (1 skipped, 10 xfailed)
-- **91% total line coverage**
+- **92% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
   (issue #57: the 239 xarray FutureWarning/PendingDeprecationWarnings from
   `nb_utils`'s bare `DataArray.argmax()` and `GroupBy.apply` were fixed).
@@ -34,7 +34,7 @@ Meets the ≥80% success criterion (24 modules): `bootstrap` 100, `calculus`
 98, `constants` 100, `dates` 99, `dynamics` 99, `enso` 100, `eofs` 100, `eq_area` 99,
 `grad_bal` 97, `had_cell` 87, `held_hou_1980` 97, `hides` 96, `interp` 99,
 `lcl` 100, `longitude` 88, `names` 100, `num_solver` 98, `polar_amp` 100,
-`radiation` 100, `stats` 95, `therm_inert` 100, `thermodynamics` 96,
+`radiation` 100, `stats` 95, `therm_inert` 100, `thermodynamics` 97,
 `tropopause` 83, `vert_coords` 99.
 
 Below the bar — the remaining work (5 modules): `budget_adj` 16, `kuo_el` 19,
@@ -95,7 +95,7 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 | `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write | — (no functions) |
 | `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent | — (no functions) |
 | `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (59 tests, 99% cov) |
-| `thermodynamics.py` | 24 | Pure math; heavily used downstream | **Done** (88 tests, 96% cov) |
+| `thermodynamics.py` | 25 | Pure math; heavily used downstream | **Done** (109 tests, 97% cov) |
 | `calculus.py` | 17 | Differentiation/integration — easy to validate against analytical solutions | **Done** (116 tests, 98% cov) |
 | `num_solver.py` | 5 | Small module, testable against known roots | **Done** (25 tests, 98% cov) |
 | `dates.py` | 5 | Small, pure utilities | **Done** (20 tests, 2026-03-19) |
