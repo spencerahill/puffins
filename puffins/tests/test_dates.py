@@ -34,6 +34,18 @@ def monthly_ts_2d() -> xr.DataArray:
     return xr.DataArray(data, dims=["time", "x"], coords={"time": time, "x": [0, 1]})
 
 
+@pytest.fixture
+def noisy_ts() -> xr.DataArray:
+    """4-year monthly series of random values.
+
+    A ramp's mean equals its median over any run of months, so the ramp
+    fixtures cannot tell an equal-weight mean from a median; these values can.
+    """
+    time = xr.date_range("2000-01-01", periods=48, freq="MS")
+    vals = np.random.default_rng(0).normal(size=48)
+    return xr.DataArray(vals, dims=["time"], coords={"time": time}, name="noisy")
+
+
 class TestAnnSubsets:
     """Tests for the ann_subsets dictionary."""
 
@@ -119,6 +131,10 @@ class TestSubsetAnn:
         result = subset_ann(monthly_ts, [1, 3], drop=True)
         np.testing.assert_array_equal(result.values, [0, 2, 12, 14, 24, 26])
 
+    def test_custom_time_dim(self, monthly_ts: xr.DataArray) -> None:
+        result = subset_ann(monthly_ts.rename(time="t"), "jja", dim_time="t", drop=True)
+        np.testing.assert_array_equal(result.values, [5, 6, 7, 17, 18, 19, 29, 30, 31])
+
 
 # The fixture's value is its index, so index i is month i % 12 + 1 of year
 # 2000 + i // 12, and each expected mean below is written by index.
@@ -192,6 +208,29 @@ class TestAnnSubsetTs:
         result = ann_subset_ts(monthly_ts.isel(time=slice(None, 31)), "jja")
         want = [VALS[5:8].mean(), VALS[17:20].mean(), np.nan]
         np.testing.assert_allclose(result, want, rtol=1e-14)
+
+    def test_calendar_year_without_any_season_month(
+        self, monthly_ts: xr.DataArray
+    ) -> None:
+        # Starts in September 2000, so 2000 holds no JJA month at all; it still
+        # gets an entry, NaN.
+        result = ann_subset_ts(monthly_ts.isel(time=slice(8, None)), "jja")
+        np.testing.assert_array_equal(result["year"], [2000, 2001, 2002])
+        want = [np.nan, VALS[17:20].mean(), VALS[29:32].mean()]
+        np.testing.assert_allclose(result, want, rtol=1e-14)
+
+    def test_default_reduction_is_equal_weight_mean(
+        self, noisy_ts: xr.DataArray
+    ) -> None:
+        vals = noisy_ts.to_numpy()
+        result = ann_subset_ts(noisy_ts, "jja")
+        want = [vals[s : s + 3].mean() for s in (5, 17, 29, 41)]
+        np.testing.assert_allclose(result, want, rtol=1e-13)
+
+    def test_upper_case_key(self, monthly_ts: xr.DataArray) -> None:
+        xr.testing.assert_identical(
+            ann_subset_ts(monthly_ts, "JJA"), ann_subset_ts(monthly_ts, [6, 7, 8])
+        )
 
     def test_record_starting_in_december(self) -> None:
         time = xr.date_range("1999-12-01", periods=37, freq="MS")
@@ -348,6 +387,38 @@ class TestMonthlyAnom:
         holed = monthly_ts.drop_sel(time=np.datetime64("2001-07-01"))
         with pytest.raises(ValueError, match="base years 2000-2001"):
             monthly_anom(holed, base=(2000, 2001))
+
+    def test_climatology_is_mean_of_all_years(self, noisy_ts: xr.DataArray) -> None:
+        vals = noisy_ts.to_numpy()
+        clim = vals.reshape(4, 12).mean(axis=0)
+        np.testing.assert_allclose(
+            monthly_anom(noisy_ts), vals - np.tile(clim, 4), rtol=0, atol=1e-12
+        )
+
+    def test_custom_time_dim_without_base(self, noisy_ts: xr.DataArray) -> None:
+        vals = noisy_ts.to_numpy()
+        clim = vals.reshape(4, 12).mean(axis=0)
+        result = monthly_anom(noisy_ts.rename(time="t"), "t")
+        np.testing.assert_allclose(result, vals - np.tile(clim, 4), rtol=0, atol=1e-12)
+
+    def test_base_climatology_is_mean_of_base_years(
+        self, noisy_ts: xr.DataArray
+    ) -> None:
+        # Three base years, so a median would differ from the mean, and the
+        # fourth year (2003) is left out of the climatology.
+        vals = noisy_ts.to_numpy()
+        clim = vals[:36].reshape(3, 12).mean(axis=0)
+        result = monthly_anom(noisy_ts, base=(2000, 2002))
+        np.testing.assert_allclose(result, vals - np.tile(clim, 4), rtol=0, atol=1e-12)
+
+    def test_base_on_daily_data(self) -> None:
+        time = xr.date_range("2000-01-01", "2001-12-31", freq="D")
+        vals = np.random.default_rng(1).normal(size=time.size)
+        daily = xr.DataArray(vals, dims=["time"], coords={"time": time})
+        month = daily["time"].dt.month.to_numpy()
+        clim = np.array([vals[month == m].mean() for m in range(1, 13)])
+        result = monthly_anom(daily, base=(2000, 2001))
+        np.testing.assert_allclose(result, vals - clim[month - 1], rtol=0, atol=1e-12)
 
 
 class TestAnnHarm:

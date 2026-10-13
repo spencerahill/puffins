@@ -17,6 +17,10 @@ whole tropical ocean shares, which is what makes the index "relative"; the idea
 is van Oldenborgh et al. (2021, Environ. Res. Lett. 16, 044003), and the
 rescaling by a ratio is L'Heureux et al.'s simplification of it.
 
+CPC's main RONI is computed from ERSSTv6 SST (as of 2026-10), and CPC also
+posts an ERSSTv5 version, so compare this module's output with the CPC table
+built from the same SST product as its input.
+
 ``relative_nino34`` is the same quantity month by month, without the running
 mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 ``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
@@ -29,7 +33,8 @@ All box means are cos(latitude)-weighted over the gridpoint centers inside
 inclusive bounds, with land (NaN in an SST product) dropped from the weights as
 well as from the sum.  Longitudes are compared on 0-360, whichever convention
 the field and the bounds use.  A box that selects no gridpoint, or only NaN
-cells, raises a ValueError.
+cells, raises a ValueError, as does a field that repeats a longitude, such as
+a copy of the 0E column at 360E.
 
 These functions moved here on 2026-09-30 from the lps-enso-grl project's
 ``enso_indices.py``, so that the projects using them share one definition.
@@ -78,8 +83,9 @@ def box_mean(
         with the field's longitudes on 0-360, whichever convention either
         uses, so (190, 240) and (-170, -120) select the same box.  A western
         bound east of the eastern one, such as (350, 10), wraps through 0E.
-        With None, or bounds 360 degrees or more apart, the mean spans every
-        longitude.
+        So reversing the bounds selects the complementary arc: (240, 190) is
+        the 310-degree arc from 240E east through 0E to 190E.  With None, or
+        bounds 360 degrees or more apart, the mean spans every longitude.
     lat_str, lon_str : str
         Names of the latitude and longitude dimensions.
 
@@ -92,21 +98,27 @@ def box_mean(
     Raises
     ------
     ValueError
-        If no gridpoint center falls inside the box, or every cell inside it
-        is NaN.
+        If no gridpoint center falls inside the box, if every cell inside it
+        is NaN, or if two of the field's longitudes coincide on 0-360.
     """
+    lon360 = np.asarray(lon_to_0360(sst[lon_str]))
+    repeated, counts = np.unique(lon360, return_counts=True)
+    if (counts > 1).any():
+        raise ValueError(
+            f"longitudes {repeated[counts > 1].tolist()} (on 0-360) appear more "
+            "than once; drop the duplicated column, such as a copy of 0E at 360E"
+        )
     lat = sst[lat_str]
     lat_lo, lat_hi = sorted(lat_bounds)
     sub = sst.isel({lat_str: (lat >= lat_lo) & (lat <= lat_hi)})
     if sub.sizes[lat_str] == 0:
         raise ValueError(f"no gridpoint inside lat {lat_bounds}")
     if lon_bounds is not None and lon_bounds[1] - lon_bounds[0] < 360:
-        lon = lon_to_0360(sub[lon_str])
         west, east = lon_to_0360(lon_bounds[0]), lon_to_0360(lon_bounds[1])
         if west <= east:
-            in_box = (lon >= west) & (lon <= east)
+            in_box = (lon360 >= west) & (lon360 <= east)
         else:
-            in_box = (lon >= west) | (lon <= east)
+            in_box = (lon360 >= west) | (lon360 <= east)
         sub = sub.isel({lon_str: in_box})
         if sub.sizes[lon_str] == 0:
             raise ValueError(f"no gridpoint inside lon {lon_bounds}")

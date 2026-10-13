@@ -5,6 +5,7 @@ from the module's own helpers, so that each test pins a coefficient, a bound or
 an offset rather than restating the code.
 """
 
+from collections.abc import Callable
 from typing import cast
 
 import numpy as np
@@ -26,8 +27,16 @@ from puffins.enso import (
 )
 from puffins.longitude import lon_to_pm180
 
-LATS = np.arange(-24.0, 25.0, 2.0)
-LONS = np.arange(40.0, 250.0, 10.0)
+# Gridpoints sit on each box bound (5 and 20 degrees; 50, 110, 190 and 240E)
+# and just outside it (5.5 and 20.5; 45, 115, 185 and 245E), on a full ring of
+# longitudes, so a box drawn one gridpoint too wide or too narrow changes the
+# mean.
+LATS = np.sort(
+    np.concatenate([np.arange(-24.0, 25.0, 2.0), [-20.5, -5.5, -5.0, 5.0, 5.5, 20.5]])
+)
+LONS = np.sort(
+    np.concatenate([np.arange(0.0, 360.0, 10.0), [45.0, 115.0, 185.0, 245.0]])
+)
 N_MONTHS = 12 * (2022 - 1946 + 1)
 NINO34_BOX = ((-5.0, 5.0), (190.0, 240.0))
 ATOL = 1e-12
@@ -227,9 +236,30 @@ class TestBoxMean:
             got, numpy_box_mean(s32, (-20.0, 20.0), None), rtol=1e-13
         )
 
-    def test_no_longitude_inside_raises(self, sst: xr.DataArray) -> None:
+    def test_equal_bounds_select_one_meridian(self, ring: xr.DataArray) -> None:
+        got = box_mean(ring, (-1.0, 1.0), (60.0, 60.0))
+        np.testing.assert_allclose(got, [2.0], rtol=1e-14)
+
+    def test_reversed_bounds_select_the_complementary_arc(
+        self, ring: xr.DataArray
+    ) -> None:
+        # (180, 240) holds 180, 210 and 240E; (240, 180) runs from 240E east
+        # through 0E to 180E, so it holds every column except 210E (index 7).
+        got = box_mean(ring, (-1.0, 1.0), (240.0, 180.0))
+        np.testing.assert_allclose(got, [np.delete(np.arange(12.0), 7).mean()])
+
+    @pytest.mark.parametrize("bounds", [None, (330.0, 30.0)])
+    def test_repeated_longitude_raises(
+        self, ring: xr.DataArray, bounds: tuple[float, float] | None
+    ) -> None:
+        # A copy of the 0E column at 360E, as some regridded products carry.
+        cyclic = xr.concat([ring, ring.isel(lon=[0]).assign_coords(lon=[360.0])], "lon")
+        with pytest.raises(ValueError, match=r"longitudes \[0.0\]"):
+            box_mean(cyclic, (-1.0, 1.0), bounds)
+
+    def test_no_longitude_inside_raises(self, ring: xr.DataArray) -> None:
         with pytest.raises(ValueError, match="no gridpoint inside lon"):
-            box_mean(sst, (-5.0, 5.0), (245.0, 255.0))
+            box_mean(ring, (-1.0, 1.0), (5.0, 25.0))
 
     def test_no_latitude_inside_raises(self, sst: xr.DataArray) -> None:
         with pytest.raises(ValueError, match="no gridpoint inside lat"):
@@ -268,6 +298,30 @@ class TestBoxes:
         np.testing.assert_allclose(
             tio(renamed, lat_str="latitude", lon_str="longitude"), tio(sst), rtol=1e-14
         )
+
+
+class TestOutputNames:
+    @pytest.mark.parametrize(
+        ("func", "name"),
+        [
+            (nino34, "nino34"),
+            (tropical_mean, "tropical_mean"),
+            (tio, "tio"),
+            (roni, "roni"),
+            (relative_nino34, "relative_nino34"),
+            (relative_nino34_jjas, "relative_nino34_jjas"),
+        ],
+    )
+    def test_name_and_no_month_coordinate(
+        self, sst: xr.DataArray, func: Callable[..., xr.DataArray], name: str
+    ) -> None:
+        got = func(sst)
+        assert got.name == name
+        assert "month" not in got.coords
+
+    def test_roni_ratio_name(self, sst: xr.DataArray) -> None:
+        got = roni_ratio(anomaly(nino34(sst)), anomaly(tropical_mean(sst)))
+        assert got.name == "roni_ratio"
 
 
 class TestRoniRatio:
