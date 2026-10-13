@@ -122,6 +122,8 @@ Before considering a module's tests complete, enumerate every parameter that aff
 ### Status Documents
 The four roadmaps (`docs/roadmaps/001-004`) cite shared status metrics: total test count, test-file count, line-coverage percentage, module-annotation count, mypy CI-blocking status, and module count. When a change moves any such metric, update every occurrence across all of these documents in the same PR, not only the document most on-topic. Scope the doc edits by which metric moved, not by which document is nearest the change. (Promoting mypy to blocking in PR #64 moved metrics in all four roadmaps, but the first pass updated only roadmaps 001 and 003.)
 
+The total test count is the exception. Feature PRs leave it alone, and one commit updates it in every roadmap just before each release tag, with the count measured by pytest on the commit to be tagged. Nearly every PR changes the count, so updating it per PR made every pair of open PRs conflict on the same lines: #76, #77, #81 and #84 during the 0.3.0 cycle.
+
 ## Important Notes
 
 - This is a personal research tool with no official support
