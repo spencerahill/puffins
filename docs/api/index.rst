@@ -43,6 +43,7 @@ Climate Dynamics
    grad_bal
    eq_area
    eofs
+   enso
    stats
    budget_adj
 

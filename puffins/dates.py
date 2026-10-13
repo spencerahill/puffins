@@ -5,7 +5,7 @@ from typing import cast, overload
 import numpy as np
 import xarray as xr
 
-from .names import TIME_STR
+from .names import TIME_STR, YEAR_STR
 
 months = dict(
     jan=1,
@@ -91,29 +91,54 @@ ann_subsets: dict[str, int | list[int] | range] = {
 }
 
 
+def _months_list(months: str | list[int] | int) -> list[int]:
+    """The calendar months that ``months`` names, as a list."""
+    vals = ann_subsets[months.lower()] if isinstance(months, str) else months
+    return [vals] if isinstance(vals, int) else list(vals)
+
+
 def subset_ann(
     arr: xr.DataArray,
     months: str | list[int] | int,
     dim_time: str = TIME_STR,
     drop: bool = False,
 ) -> xr.DataArray:
-    """Restrict array values to a subset of each calendar year."""
-    months_vals: int | list[int] | range
-    if isinstance(months, str):
-        if months == "ann":
-            return arr
-        months_vals = ann_subsets[months.lower()]
-    else:
-        months_vals = months
-    time = arr[dim_time]
-    return cast(
-        xr.DataArray,
-        arr.where(
-            (time.dt.month >= np.min(months_vals))
-            & (time.dt.month <= np.max(months_vals)),
-            drop=drop,
-        ),
-    )
+    """Restrict array values to a subset of each calendar year.
+
+    Exactly the listed months are kept, so ``[12, 1, 2]`` keeps December,
+    January and February, and ``[1, 3]`` keeps January and March.  With
+    ``drop`` False the other months are set to NaN; with ``drop`` True they
+    are removed.
+    """
+    if months == "ann":
+        return arr
+    in_months = arr[dim_time].dt.month.isin(_months_list(months))
+    return cast(xr.DataArray, arr.where(in_months, drop=drop))
+
+
+def _season_start(months: list[int]) -> int | None:
+    """First month of the unbroken run ``months``, or None for all twelve.
+
+    The run is cyclic, so ``[11, 12, 1]`` starts in November.
+
+    Raises
+    ------
+    ValueError
+        If ``months`` repeats a month, holds a value outside 1-12, or is not
+        one unbroken run of consecutive months.
+    """
+    month_set = set(months)
+    if len(month_set) != len(months) or not month_set <= set(range(1, 13)):
+        raise ValueError(f"months must be distinct calendar months 1-12, got {months}")
+    if len(month_set) == 12:
+        return None
+    # A month whose predecessor is absent begins a run; one run has one.
+    starts = [m for m in month_set if (m - 2) % 12 + 1 not in month_set]
+    if len(starts) != 1:
+        raise ValueError(
+            f"months must be one unbroken run of consecutive months, got {months}"
+        )
+    return starts[0]
 
 
 def ann_subset_ts(
@@ -122,65 +147,117 @@ def ann_subset_ts(
     reduction: str = "mean",
     dim_time: str = TIME_STR,
 ) -> xr.DataArray:
-    """Annually resolved timeseries of array reduced over the given month.
+    """Annually resolved timeseries of array reduced over the given months.
 
-    Default reduction is an average.
+    Default reduction is an average, with every month weighted equally.
 
+    A year's value is NaN wherever any of the season's months is missing,
+    whether the month lies outside the record or its value is NaN, and this
+    holds for every reduction.  A season that crosses the year end belongs to
+    the year of its January: with ``months=[12, 1, 2]`` the 2001 value is
+    December 2000 through February 2001.  The output has one entry per
+    calendar year of ``arr``.
+
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Monthly data, with one time step per calendar month.
+    months : str, int or list of int
+        A key of ``ann_subsets``, one month, or a list of months forming one
+        unbroken run, in any order.  The run is cyclic, so ``[11, 12, 1]`` is
+        allowed.
+    reduction : str
+        Name of the groupby reduction, such as "mean" or "max".
+    dim_time : str
+        Name of the time dimension.
+
+    Returns
+    -------
+    xarray.DataArray
+        The reduced values, with a ``year`` dimension in place of ``dim_time``.
+
+    Raises
+    ------
+    ValueError
+        If ``months`` is not one unbroken run of distinct months, if ``arr``
+        has more than one time step in a calendar month, or if ``arr`` holds
+        none of the months.
     """
-    grouped = subset_ann(arr, months, dim_time).groupby(dim_time + ".year")
-    func = getattr(grouped, reduction)
-    return cast(xr.DataArray, func())
+    month_list = _months_list(months)
+    start = _season_start(month_list)
+    time = arr[dim_time]
+    year_month = time.dt.year * 12 + time.dt.month
+    if np.unique(year_month).size != year_month.size:
+        raise ValueError("arr must be monthly, with one time step per calendar month")
+    sub = arr.isel({dim_time: time.dt.month.isin(month_list)})
+    if sub.sizes[dim_time] == 0:
+        raise ValueError(f"arr holds none of the months {month_list}")
+    sub_month = sub[dim_time].dt.month
+    season_year = sub[dim_time].dt.year
+    if start is not None and start + len(month_list) - 1 > 12:
+        # The season crosses the year end: its months from `start` through
+        # December belong to the following year's season.
+        season_year = season_year + (sub_month >= start)
+    season_year = season_year.rename(YEAR_STR)
+    reduced = getattr(sub.groupby(season_year), reduction)(dim_time)
+    n_valid = sub.notnull().groupby(season_year).sum(dim_time)
+    complete = reduced.where(n_valid == len(month_list))
+    return cast(xr.DataArray, complete.reindex({YEAR_STR: np.unique(time.dt.year)}))
 
 
 def ann_ts_djf(arr: xr.DataArray) -> xr.DataArray:
-    """Annual timeseries of DJF values, accounting for year wrapping.
+    """Annual timeseries of December-February means.
 
-    Simple grouping by year would put the J, F, and D values in the same
-    calendar year together, when what is desired is the December of one year
-    grouped with the January and February of the following year.
-
+    Each winter belongs to the year of its January, so the 2001 value is the
+    mean of December 2000, January 2001 and February 2001, each month weighted
+    equally.  A winter missing any of the three months is NaN, which includes
+    the first year of a record that starts in January.  See ``ann_subset_ts``.
     """
-    arr_dec = ann_subset_ts(arr, 12)
-    arr_jf = ann_subset_ts(arr, "jf")
-
-    # Want previous year's December and this year's Jan-Feb.  So first year is
-    # just Jan-Feb.  Accomplish this by just shifting the December years by 1,
-    # then averaging.
-    years_for_dec = arr_dec["year"].copy()
-    years_for_dec = years_for_dec + 1
-    arr_dec.coords["year"] = years_for_dec
-
-    weights_dec = 31 * xr.ones_like(arr_dec["year"])
-    weights_jf = (31 + 28.25) * xr.ones_like(arr_jf["year"])
-
-    arr_djf_no_yr1 = (weights_dec * arr_dec + weights_jf * arr_jf) / (
-        weights_dec + weights_jf
-    )
-
-    arr_djf = cast(
-        xr.DataArray,
-        xr.concat([arr_jf.isel(year=0), arr_djf_no_yr1], dim="year"),
-    )
-    if arr.ndim > 1:
-        ind_time = arr.dims.index("time")
-        dims_out = list(arr.dims)
-        dims_out[ind_time] = "year"
-        return cast(xr.DataArray, arr_djf.transpose(*dims_out))
-    return arr_djf
+    return ann_subset_ts(arr, [12, 1, 2])
 
 
-def monthly_anom(arr: xr.DataArray, dim_time: str = TIME_STR) -> xr.DataArray:
+def monthly_anom(
+    arr: xr.DataArray,
+    dim_time: str = TIME_STR,
+    base: tuple[int, int] | None = None,
+) -> xr.DataArray:
     """Anomaly of each month from its calendar-month climatology.
 
-    For each calendar month, the climatological mean across all years of that
-    month is subtracted from every occurrence of that month, removing the mean
-    seasonal cycle.  Any non-time dimensions are retained, with the
+    For each calendar month, the climatological mean of that month is
+    subtracted from every occurrence of that month, removing the mean seasonal
+    cycle.  The climatology spans every year of ``arr``, or the years of
+    ``base`` when it is given.  Any non-time dimensions are retained, with the
     climatology computed separately at each of their points.  The output
     gains a ``month`` coordinate along ``dim_time``.
 
+    Parameters
+    ----------
+    arr : xarray.DataArray
+        Data along a datetime ``dim_time`` dimension.
+    dim_time : str
+        Name of the time dimension.
+    base : tuple of int, optional
+        First and last years of the climatology, inclusive.
+
+    Raises
+    ------
+    ValueError
+        If ``base`` is given and ``arr`` lacks any month of any of its years.
     """
     grouped = arr.groupby(dim_time + ".month")
-    clim = grouped.mean(dim_time)
+    if base is None:
+        clim = grouped.mean(dim_time)
+    else:
+        years = arr[dim_time].dt.year
+        in_base = (years >= base[0]) & (years <= base[1])
+        base_times = arr[dim_time][in_base]
+        n_months = np.unique(base_times.dt.year * 12 + base_times.dt.month).size
+        if n_months != 12 * (base[1] - base[0] + 1):
+            raise ValueError(
+                f"the data do not cover every month of the base years "
+                f"{base[0]}-{base[1]}"
+            )
+        clim = arr.isel({dim_time: in_base}).groupby(dim_time + ".month").mean(dim_time)
     return cast(xr.DataArray, grouped - clim)
 
 
