@@ -18,9 +18,8 @@ is van Oldenborgh et al. (2021, Environ. Res. Lett. 16, 044003), and the
 rescaling by a ratio is L'Heureux et al.'s simplification of it.
 
 ``relative_nino34`` is the same quantity month by month, without the running
-mean, and ``season_mean`` averages any monthly series over a season, so a
-June-September mean of the monthly relative index is
-``season_mean(relative_nino34(sst), JJAS)``.
+mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
+``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
@@ -28,9 +27,9 @@ and 50-110E, as their Figure 3a caption states it.
 
 All box means are cos(latitude)-weighted over the gridpoint centers inside
 inclusive bounds, with land (NaN in an SST product) dropped from the weights as
-well as from the sum.  Longitudes must be on the same 0-360 or -180-180
-convention as the bounds given; a box that selects no gridpoint raises rather
-than returning an all-NaN series.
+well as from the sum.  Longitudes are compared on 0-360, whichever convention
+the field and the bounds use.  A box that selects no gridpoint, or only NaN
+cells, raises a ValueError.
 
 These functions moved here on 2026-09-30 from the lps-enso-grl project's
 ``enso_indices.py``, so that the projects using them share one definition.
@@ -41,7 +40,9 @@ from typing import cast
 import numpy as np
 import xarray as xr
 
-from .names import LAT_STR, LON_STR, TIME_STR, YEAR_STR
+from .dates import ann_subset_ts, monthly_anom
+from .longitude import lon_to_0360
+from .names import LAT_STR, LON_STR, TIME_STR
 
 NINO34_LAT: tuple[float, float] = (-5.0, 5.0)
 NINO34_LON: tuple[float, float] = (190.0, 240.0)
@@ -54,9 +55,6 @@ RONI_BASE: tuple[int, int] = (1991, 2020)
 
 RONI_SIGMA_YEARS: tuple[int, int] = (1950, 2020)
 """The years over which RONI's rescaling ratio is computed."""
-
-JJAS: tuple[int, ...] = (6, 7, 8, 9)
-DJF: tuple[int, ...] = (12, 1, 2)
 
 
 def box_mean(
@@ -73,39 +71,52 @@ def box_mean(
     sst : xarray.DataArray
         Field with latitude and longitude dimensions, plus any others.  NaN
         cells (land) are left out of both the sum and the weights.
-    lat_bounds, lon_bounds : tuple of float
-        Inclusive bounds, in the field's own coordinate convention.  With
-        ``lon_bounds`` None the mean spans every longitude.
+    lat_bounds : tuple of float
+        Inclusive latitude bounds, in either order.
+    lon_bounds : tuple of float, optional
+        Inclusive western and eastern longitude bounds.  They are compared
+        with the field's longitudes on 0-360, whichever convention either
+        uses, so (190, 240) and (-170, -120) select the same box.  A western
+        bound east of the eastern one, such as (350, 10), wraps through 0E.
+        With None, or bounds 360 degrees or more apart, the mean spans every
+        longitude.
     lat_str, lon_str : str
         Names of the latitude and longitude dimensions.
 
     Returns
     -------
     xarray.DataArray
-        The box mean, with the latitude and longitude dimensions removed.
+        The box mean, with the latitude and longitude dimensions removed.  It
+        is float64 whatever the input dtype.
 
     Raises
     ------
     ValueError
-        If no gridpoint center falls inside the box.
+        If no gridpoint center falls inside the box, or every cell inside it
+        is NaN.
     """
     lat = sst[lat_str]
-    sub = sst.isel({lat_str: (lat >= lat_bounds[0]) & (lat <= lat_bounds[1])})
-    if lon_bounds is not None:
-        lon = sub[lon_str]
-        sub = sub.isel({lon_str: (lon >= lon_bounds[0]) & (lon <= lon_bounds[1])})
-    if sub.sizes[lat_str] == 0 or sub.sizes[lon_str] == 0:
-        raise ValueError(
-            f"no gridpoint inside lat {lat_bounds}, lon {lon_bounds}; check the "
-            "longitude convention against the bounds"
-        )
-    # Float64 weights make the products and sums float64.  SST products are
+    lat_lo, lat_hi = sorted(lat_bounds)
+    sub = sst.isel({lat_str: (lat >= lat_lo) & (lat <= lat_hi)})
+    if sub.sizes[lat_str] == 0:
+        raise ValueError(f"no gridpoint inside lat {lat_bounds}")
+    if lon_bounds is not None and lon_bounds[1] - lon_bounds[0] < 360:
+        lon = lon_to_0360(sub[lon_str])
+        west, east = lon_to_0360(lon_bounds[0]), lon_to_0360(lon_bounds[1])
+        if west <= east:
+            in_box = (lon >= west) & (lon <= east)
+        else:
+            in_box = (lon >= west) | (lon <= east)
+        sub = sub.isel({lon_str: in_box})
+        if sub.sizes[lon_str] == 0:
+            raise ValueError(f"no gridpoint inside lon {lon_bounds}")
+    if not sub.notnull().any():
+        raise ValueError(f"every cell inside lat {lat_bounds}, lon {lon_bounds} is NaN")
+    # Float64 weights make the weighted sums float64.  SST products are
     # stored as float32, whose summation order otherwise shows up at the 1e-6
     # relative level.
     coslat = cast(xr.DataArray, np.cos(np.deg2rad(sub[lat_str].astype(np.float64))))
-    weights = coslat.broadcast_like(sub).where(sub.notnull())
-    dims = (lat_str, lon_str)
-    return cast(xr.DataArray, (sub * weights).sum(dims) / weights.sum(dims))
+    return cast(xr.DataArray, sub.weighted(coslat).mean((lat_str, lon_str)))
 
 
 def nino34(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
@@ -130,32 +141,52 @@ def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     return cast(xr.DataArray, box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio"))
 
 
-def monthly_anomaly(
-    series: xr.DataArray,
-    base: tuple[int, int] = RONI_BASE,
-    time_str: str = TIME_STR,
-) -> xr.DataArray:
-    """Departure from the ``base`` years' mean for the same calendar month.
+def _box_anomalies(
+    sst: xr.DataArray, base: tuple[int, int], time_str: str, **kwargs: str
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """NINO3.4 and tropical-mean SST anomalies from the ``base`` climatology."""
+    n34 = monthly_anom(nino34(sst, **kwargs), time_str, base)
+    trop = monthly_anom(tropical_mean(sst, **kwargs), time_str, base)
+    return n34.drop_vars("month"), trop.drop_vars("month")
 
-    Parameters
-    ----------
-    series : xarray.DataArray
-        Monthly values along a datetime ``time_str`` dimension.
-    base : tuple of int
-        First and last years of the climatology, inclusive.
+
+def _running_means(
+    nino34_anom: xr.DataArray, tropical_anom: xr.DataArray, time_str: str
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """ONI and the running mean of the relative anomaly, centered 3-month.
 
     Raises
     ------
     ValueError
-        If the base years do not cover all twelve calendar months.
+        If the time axis is not monthly or has a gap, since the running mean
+        takes its neighbors by position.
     """
-    years = series[time_str].dt.year
-    in_base = series.isel({time_str: (years >= base[0]) & (years <= base[1])})
-    if np.unique(in_base[time_str].dt.month).size != 12:
-        raise ValueError(f"base period {base} does not cover all twelve months")
-    clim = in_base.groupby(f"{time_str}.month").mean(time_str)
-    month = series[time_str].dt.month
-    return cast(xr.DataArray, series - clim.sel(month=month).drop_vars("month"))
+    times = nino34_anom[time_str]
+    year_month = (times.dt.year * 12 + times.dt.month).to_numpy()
+    if not np.all(np.diff(year_month) == 1):
+        raise ValueError(
+            "the time axis must be monthly with no gaps, since the 3-month "
+            "running mean takes its neighbors by position"
+        )
+    oni = nino34_anom.rolling({time_str: 3}, center=True).mean()
+    diff = (nino34_anom - tropical_anom).rolling({time_str: 3}, center=True).mean()
+    return oni, diff
+
+
+def _ratio(
+    oni: xr.DataArray, diff: xr.DataArray, years: tuple[int, int], time_str: str
+) -> xr.DataArray:
+    """sigma(oni) / sigma(diff) by calendar month, over ``years`` inclusive."""
+    year = oni[time_str].dt.year
+    keep = (year >= years[0]) & (year <= years[1])
+    # The axis is gap-free monthly here, so a count of 12 per year is coverage.
+    if keep.sum().item() != 12 * (years[1] - years[0] + 1):
+        raise ValueError(
+            f"the data do not cover every month of sigma_years {years[0]}-{years[1]}"
+        )
+    sd_oni = oni.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
+    sd_diff = diff.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
+    return cast(xr.DataArray, (sd_oni / sd_diff).rename("roni_ratio"))
 
 
 def roni_ratio(
@@ -168,21 +199,24 @@ def roni_ratio(
 
     ONI is the 3-month running mean of the NINO3.4 anomaly, centered on the
     month, and the tropical mean is smoothed the same way.  Each month's two
-    standard deviations (``ddof=1``) are taken over the running means centered
-    on that calendar month within ``years``, inclusive.
+    standard deviations are taken over the running means centered on that
+    calendar month within ``years``, inclusive.  With no NaN in either
+    anomaly, both are taken over the same running means, so the n/(n-1) factor
+    of ``ddof=1`` cancels in the ratio.
 
     Returns
     -------
     xarray.DataArray
         Ratio along a ``month`` dimension, 1 through 12.
+
+    Raises
+    ------
+    ValueError
+        If the time axis is not monthly or has a gap, or does not cover every
+        month of ``years``.
     """
-    oni = nino34_anom.rolling({time_str: 3}, center=True).mean()
-    diff = oni - tropical_anom.rolling({time_str: 3}, center=True).mean()
-    year = oni[time_str].dt.year
-    keep = (year >= years[0]) & (year <= years[1])
-    sd_oni = oni.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
-    sd_diff = diff.isel({time_str: keep}).groupby(f"{time_str}.month").std(ddof=1)
-    return cast(xr.DataArray, (sd_oni / sd_diff).rename("roni_ratio"))
+    oni, diff = _running_means(nino34_anom, tropical_anom, time_str)
+    return _ratio(oni, diff, years, time_str)
 
 
 def _ratio_by_month(ratio: xr.DataArray, times: xr.DataArray) -> xr.DataArray:
@@ -204,20 +238,24 @@ def roni(
     Parameters
     ----------
     sst : xarray.DataArray
-        Monthly SST field on a contiguous monthly ``time_str`` axis, since the
+        Monthly SST field on a gap-free monthly ``time_str`` axis, since the
         running mean takes neighbors by position.
     base, sigma_years : tuple of int
         Climatology years and the years of the rescaling ratio.
+    time_str : str
+        Name of the time dimension.
     kwargs
         Coordinate names passed to ``box_mean``.
+
+    Raises
+    ------
+    ValueError
+        If the time axis is not monthly or has a gap, or does not cover every
+        month of ``base`` or of ``sigma_years``.
     """
-    n34 = monthly_anomaly(nino34(sst, **kwargs), base, time_str)
-    trop = monthly_anomaly(tropical_mean(sst, **kwargs), base, time_str)
-    ratio = roni_ratio(n34, trop, sigma_years, time_str)
-    diff = (
-        n34.rolling({time_str: 3}, center=True).mean()
-        - trop.rolling({time_str: 3}, center=True).mean()
-    )
+    n34, trop = _box_anomalies(sst, base, time_str, **kwargs)
+    oni, diff = _running_means(n34, trop, time_str)
+    ratio = _ratio(oni, diff, sigma_years, time_str)
     return cast(
         xr.DataArray, (diff * _ratio_by_month(ratio, diff[time_str])).rename("roni")
     )
@@ -225,10 +263,11 @@ def roni(
 
 def relative_nino34(
     sst: xr.DataArray,
-    scaled: bool = True,
     base: tuple[int, int] = RONI_BASE,
     sigma_years: tuple[int, int] = RONI_SIGMA_YEARS,
     time_str: str = TIME_STR,
+    *,
+    scaled: bool = True,
     **kwargs: str,
 ) -> xr.DataArray:
     """The monthly relative NINO3.4 anomaly: RONI without the running mean.
@@ -236,11 +275,19 @@ def relative_nino34(
     The NINO3.4 anomaly minus the tropical-mean anomaly, month by month.  With
     ``scaled``, each month is multiplied by RONI's ratio for its calendar
     month (``roni_ratio``, which is computed from running means, exactly as in
-    ``roni``).  A seasonal mean of this series carries no month from outside
+    ``roni``).  A seasonal mean of this series includes no month from outside
     the season, where a mean of ``roni`` would.
+
+    The positional parameters match ``roni``'s; ``scaled`` is keyword-only.
+
+    Raises
+    ------
+    ValueError
+        If the time axis does not cover every month of ``base``, or, with
+        ``scaled``, is not monthly, has a gap, or does not cover every month
+        of ``sigma_years``.
     """
-    n34 = monthly_anomaly(nino34(sst, **kwargs), base, time_str)
-    trop = monthly_anomaly(tropical_mean(sst, **kwargs), base, time_str)
+    n34, trop = _box_anomalies(sst, base, time_str, **kwargs)
     rel = n34 - trop
     if scaled:
         ratio = roni_ratio(n34, trop, sigma_years, time_str)
@@ -248,39 +295,21 @@ def relative_nino34(
     return cast(xr.DataArray, rel.rename("relative_nino34"))
 
 
-def season_mean(
-    monthly: xr.DataArray,
-    months: tuple[int, ...],
+def relative_nino34_jjas(
+    sst: xr.DataArray,
+    base: tuple[int, int] = RONI_BASE,
+    sigma_years: tuple[int, int] = RONI_SIGMA_YEARS,
     time_str: str = TIME_STR,
-    year_str: str = YEAR_STR,
+    *,
+    scaled: bool = True,
+    **kwargs: str,
 ) -> xr.DataArray:
-    """Mean over ``months`` by year, for seasons with every month finite.
+    """June-September mean of ``relative_nino34``: RONI's summer counterpart.
 
-    A season that crosses the new year belongs to the year of its last
-    months: with ``months=(12, 1, 2)`` the 1998 value is December 1997 through
-    February 1998.  Months listed before the point where the sequence wraps
-    are the ones moved forward a year.
-
-    Returns
-    -------
-    xarray.DataArray
-        Season means along a ``year_str`` dimension.  A season missing any
-        month, or holding a NaN month, is left out.
+    One value per calendar year of ``sst``, NaN for a year missing any of the
+    four months (see ``dates.ann_subset_ts``).  The arguments are those of
+    ``relative_nino34``.
     """
-    month = monthly[time_str].dt.month
-    sub = monthly.isel({time_str: month.isin(months)})
-    wrap = next((i for i in range(1, len(months)) if months[i] < months[i - 1]), None)
-    sub_month = sub[time_str].dt.month
-    season_year = sub[time_str].dt.year
-    if wrap is not None:
-        season_year = season_year + sub_month.isin(months[:wrap]).astype(int)
-    season_year = season_year.rename(year_str)
-    mean = sub.groupby(season_year).mean(time_str)
-    count = sub.notnull().groupby(season_year).sum(time_str)
-    return cast(xr.DataArray, mean.where(count == len(months), drop=True))
-
-
-def relative_nino34_jjas(sst: xr.DataArray, scaled: bool = True) -> xr.DataArray:
-    """June-September mean of ``relative_nino34``: RONI's summer counterpart."""
-    out = season_mean(relative_nino34(sst, scaled=scaled), JJAS)
+    rel = relative_nino34(sst, base, sigma_years, time_str, scaled=scaled, **kwargs)
+    out = ann_subset_ts(rel, "jjas", dim_time=time_str)
     return cast(xr.DataArray, out.rename("relative_nino34_jjas"))
