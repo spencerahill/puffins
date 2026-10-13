@@ -44,8 +44,8 @@ The package is structured into several functional groups:
 
 ### Climate Dynamics
 - `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent)
-- `grad_bal.py`: Gradient balance and thermal wind balance, plus the angular-momentum-conserving and uniform-Rossby-number wind and potential temperature expressions
-- `eq_area.py`: Equal-area model analytical solutions and numerical solvers (Held-Hou 1980, Lindzen-Hou 1988 variants); belongs conceptually with the Theoretical Models below
+- `grad_bal.py`: Gradient balance and thermal wind balance (Boussinesq, CQE, and pressure-coordinate forms), plus the angular-momentum-conserving, uniform-Rossby-number, and linear-Rossby-number wind and potential temperature expressions
+- `eq_area.py`: Equal-area Hadley cell model (Held-Hou 1980, Lindzen-Hou 1988, and extensions): closed forms for the small-angle uniform- and linear-Rossby-number cases; numerical solvers for Lindzen-Hou 1988 (standard Boussinesq and fixed-tropopause-temperature forms) and for a user-supplied RCE potential-temperature profile under Boussinesq, convective quasi-equilibrium (CQE), or CQE with fixed tropopause temperature; belongs conceptually with the Theoretical Models below
 - `eofs.py`: Empirical Orthogonal Function analysis
 - `stats.py`: Statistical analysis tools
 - `budget_adj.py`: Column budget adjustment via spherical harmonic wind inversion
@@ -73,7 +73,7 @@ Use constants from `constants.py` as default parameters. Functions typically acc
 
 ### Coordinate Conventions
 - Latitude: degrees, -90 to 90
-- Pressure levels: typically Pascal, but functions often have `hpa_to_pa` flags
+- Pressure levels: typically Pascal. `vert_coords.to_pascal` converts hPa input to Pa, detecting hPa from magnitude; `dynamics.ross_num_gen` takes an `hpa_to_pa` flag
 - Streamfunctions: signed such that counter-clockwise circulation in meridional plane is positive
 
 ### Working-Tree Roles and Consumption by Other Projects

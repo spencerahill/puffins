@@ -38,8 +38,8 @@ Most functions operate on :class:`xarray.DataArray` objects with standardized
 dimension names. Key conventions:
 
 * **Latitude**: degrees, -90 to 90.
-* **Pressure levels**: typically Pascal (many functions accept an
-  ``hpa_to_pa`` flag).
+* **Pressure levels**: typically Pascal. :func:`puffins.vert_coords.to_pascal`
+  converts hPa input to Pa, detecting hPa from magnitude.
 * **Streamfunctions**: signed such that counter-clockwise circulation in the
   meridional plane is positive.
 * Many calculations assume axisymmetric (zonally-averaged) conditions.
