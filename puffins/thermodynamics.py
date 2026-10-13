@@ -22,6 +22,8 @@ from .constants import (
     R_V,
     REL_HUM,
 )
+from .names import LEV_STR
+from .vert_coords import int_dp_g
 
 
 @overload
@@ -246,6 +248,116 @@ def rel_hum_from_temp_dewpoint(
 
     """
     return sat_vap_press_tetens_kelvin(temp_dew) / sat_vap_press_tetens_kelvin(temp)
+
+
+def col_rel_hum(
+    spec_hum: xr.DataArray,
+    sat_spec_hum: xr.DataArray,
+    pressure: xr.DataArray,
+    dp: xr.DataArray,
+    p_top: float | xr.DataArray = 1e4,
+    dim: str = LEV_STR,
+) -> xr.DataArray:
+    """Column relative humidity: column water vapor over its saturation value.
+
+    The ratio W / W_s of the mass-weighted vertical integrals of specific
+    humidity (W, the column water vapor or precipitable water) and of
+    saturation specific humidity (W_s), as in Bretherton et al. (2004, J.
+    Climate).  Both integrals are taken over the same levels: those at
+    pressures of ``p_top`` or greater where neither ``spec_hum`` nor
+    ``sat_spec_hum`` is NaN.  Levels are included or excluded whole; a level
+    straddling ``p_top`` is not split.  A column with no such level gives NaN.
+
+    The upper limit matters.  At fixed temperature, saturation specific
+    humidity varies approximately inversely with pressure (as eps e_s / p,
+    where e_s is much smaller than p), so a warm level above the tropopause,
+    such as the top level of many models, adds saturation water vapor that
+    the actual water vapor does not match, which lowers the ratio.  The
+    default ``p_top`` of 100 hPa keeps the tropical stratosphere out of both
+    integrals; outside the tropics it includes the lower stratosphere between
+    the tropopause and 100 hPa, which a per-column ``p_top`` such as the
+    tropopause pressure excludes.  ``p_top=0`` integrates over every level.
+    Near the stratopause, around 1 hPa, the saturation vapor pressure can
+    approach or exceed the pressure, and saturation specific humidity is then
+    undefined, so ``p_top=0`` is meaningful only for grids whose top level
+    lies well below the stratopause.
+
+    Saturation specific humidity is an argument, as saturation vapor pressure
+    is in :func:`relative_humidity`, because it should come from the formula
+    and the phase (liquid, ice, or a blend below 0 C) that the data were
+    produced with.  :func:`saturation_specific_humidity` gives the Tetens
+    value over liquid water.  For model output, use the model's own formula:
+    the Tetens saturation vapor pressure is lower than that of Bolton (1980),
+    which climlab uses, by 1% at 253 K, 5% at 220 K and 10% at 200 K, so a
+    cold column saturated by climlab's formula has a Tetens-based column
+    relative humidity above 1.
+
+    Parameters
+    ----------
+    spec_hum : xarray.DataArray
+        Specific humidity (kg/kg).
+    sat_spec_hum : xarray.DataArray
+        Saturation specific humidity (kg/kg), e.g. from
+        :func:`saturation_specific_humidity`.
+    pressure : xarray.DataArray
+        Pressure of each level (Pa): the vertical coordinate of data on
+        pressure levels, or a full-level pressure field on hybrid levels.
+        A maximum below 1200 Pa is taken to mean pressure in hPa and raises,
+        as in :func:`puffins.vert_coords.to_pascal`, so an atmosphere whose
+        surface pressure is below 1200 Pa, such as that of Mars, is rejected.
+    dp : xarray.DataArray
+        Pressure thickness of each level (Pa), e.g. from
+        :func:`puffins.vert_coords.dp_from_pfull`.  Over topography, the
+        thickness of the lowest level above the ground should end at the
+        surface pressure.
+    p_top : float or xarray.DataArray, optional
+        Levels at pressures below this value (Pa) are excluded from both
+        integrals.  A DataArray, such as the tropopause pressure, sets a
+        separate limit for each column.  Default: 1e4 (100 hPa).
+    dim : str, optional
+        Name of the vertical dimension.  Default: 'plev'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Column relative humidity (dimensionless), named 'col_rel_hum'.
+
+    Raises
+    ------
+    ValueError
+        If ``dim`` is not a dimension of each of ``spec_hum``,
+        ``sat_spec_hum``, ``pressure`` and ``dp``; if the maximum of
+        ``pressure`` is below 1200 Pa, as when pressure is given in hPa; if no
+        level in any column has a pressure of ``p_top`` or greater; or if two
+        inputs, ``p_top`` included, have different coordinates along a shared
+        dimension, which would otherwise drop the unmatched levels or columns
+        silently.
+    """
+    for name, arr in [
+        ("spec_hum", spec_hum),
+        ("sat_spec_hum", sat_spec_hum),
+        ("pressure", pressure),
+        ("dp", dp),
+    ]:
+        if dim not in arr.dims:
+            raise ValueError(
+                f"{name} has no dimension {dim!r}; its dimensions are {arr.dims}"
+            )
+    if float(pressure.max()) < 1200.0:
+        raise ValueError("The maximum pressure is below 1200 Pa; is pressure in hPa?")
+    # Under the exact join, every binary operation raises on mismatched
+    # coordinates, p_top's included, where xarray's default inner join would
+    # silently drop the unmatched levels or columns.
+    with xr.set_options(arithmetic_join="exact"):
+        below_top = pressure >= p_top
+        if not bool(below_top.any()):
+            raise ValueError(
+                "No level in any column has a pressure of p_top or greater."
+            )
+        in_col = below_top & spec_hum.notnull() & sat_spec_hum.notnull()
+        col_wv = int_dp_g(spec_hum.where(in_col), dp, dim=dim)
+        col_wv_sat = int_dp_g(sat_spec_hum.where(in_col), dp, dim=dim)
+        return cast(xr.DataArray, (col_wv / col_wv_sat).rename("col_rel_hum"))
 
 
 def kinetic_energy(
