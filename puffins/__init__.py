@@ -1,6 +1,8 @@
 """puffins: tools for large-scale atmospheric and climate dynamics research"""
 
 import contextlib
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
 
 from . import (
     bootstrap,
@@ -37,3 +39,10 @@ from .longitude import Longitude
 
 with contextlib.suppress(ImportError):  # windspharm not installed
     from . import budget_adj
+
+# The version recorded when puffins was installed. An editable install records
+# it once, so a later `git pull` changes the code but not this string.
+try:
+    __version__ = _version("puffins")
+except _PackageNotFoundError:  # imported from a source tree never installed
+    __version__ = "0+unknown"

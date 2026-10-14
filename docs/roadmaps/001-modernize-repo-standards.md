@@ -65,8 +65,8 @@ The per-module checklist lives there to avoid duplication.
 
 Status (2026-09-30): **26 of 32 modules fully annotated** under the
 `pyproject.toml` mypy strict overrides (the count excludes `__init__.py`).
-**mypy is now blocking in CI**, with 0 errors across all 61 files it checks:
-the 33 source files plus the 28 test modules. The 62 test-file errors that
+**mypy is now blocking in CI**, with 0 errors across all 62 files it checks:
+the 33 source files plus the 29 test modules. The 62 test-file errors that
 previously blocked the promotion were cleared by adding `@overload` stacks to
 the `ArrayLike`-returning functions the tests exercise (51 errors) plus
 narrowing on the test side (11). That figure is specific to the mypy target
@@ -82,7 +82,7 @@ mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
 **Now tracked in detail by [Roadmap 004 — Testing Overhaul](004-testing-overhaul.md).**
 The per-module checklist and testing strategies live there.
 
-Status (2026-10-13): from effectively 0% to **1140 tests passing across 27 test
+Status (2026-10-13): from effectively 0% to **1140 tests passing across 28 test
 files, 92% total line coverage** (1 skipped, 10 xfailed). 24 modules meet the
 ≥80% target. The remaining gap is the theoretical-model cluster
 (`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
