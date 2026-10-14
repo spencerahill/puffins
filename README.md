@@ -130,7 +130,10 @@ a clone that is also used for development. The intended arrangement:
 - **To freeze an analysis** (e.g., when a paper is submitted), replace
   the editable install with one pinned to a commit or tag:
   `pip install git+https://github.com/spencerahill/puffins@<sha-or-tag>`.
-  The setuptools-scm version string records the exact commit.
+  The setuptools-scm version string records the exact commit, and
+  `puffins.__version__` reports it. Under an editable install,
+  `puffins.__version__` is the version recorded at install time, and a
+  later `git pull` does not change it.
 
 Earlier versions of puffins instead switched a single shared clone
 between branches from the top of each notebook

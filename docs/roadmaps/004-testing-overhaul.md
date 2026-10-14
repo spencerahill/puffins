@@ -15,9 +15,9 @@ function and enforced coverage thresholds in CI.
 
 ## Current State (as of 2026-10-13)
 
-- **27 test files** (26 module test files plus `test_typing_overloads.py`, a
-  compile-time type-contract file that yields no runtime tests), covering 26
-  of 31 modules
+- **28 test files** (26 module test files; `test_typing_overloads.py`, a
+  compile-time type-contract file that yields no runtime tests; and
+  `test_init.py`, for package-level attributes), covering 26 of 31 modules
 - **1140 tests passing** (1 skipped, 10 xfailed)
 - **92% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
