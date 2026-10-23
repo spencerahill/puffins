@@ -179,7 +179,7 @@ These modules are more complex, with internal state and multi-step pipelines.
 
 | Module | Public funcs | Notes |
 |--------|-------------|-------|
-| `plotting.py` | 25 | Matplotlib helpers |
+| `plotting.py` | 30 | Matplotlib helpers |
 | `nb_utils.py` | 21 | Notebook utilities, git helpers |
 
 ### Testing strategy
