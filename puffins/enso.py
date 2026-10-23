@@ -24,7 +24,8 @@ built from the same SST product as its input.
 ``relative_nino34`` is the same quantity month by month, without the running
 mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 ``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
-``enso_phase`` labels each value of such an index El Niño, La Niña or neutral.
+``enso_phase`` labels each value of such an index El Niño, La Niña or neutral,
+by CPC's rules.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
@@ -175,17 +176,17 @@ def enso_phase(
     threshold: float = ENSO_THRESHOLD,
     *,
     inclusive: bool = True,
-    decimals: int | None = None,
-    min_run: int = 1,
+    decimals: int | None = 1,
+    min_run: int = 5,
     time_str: str = TIME_STR,
 ) -> xr.DataArray:
     """The ENSO phase of each value of an index: El Niño, La Niña or neutral.
 
     1 marks El Niño, a value at or above ``threshold``; -1 marks La Niña, a
     value at or below ``-threshold``; 0 marks neutral; and NaN stays NaN.  By
-    default each value is labeled alone and as given.  CPC adds two rules,
-    which ``decimals`` and ``min_run`` apply, so
-    ``enso_phase(index, decimals=1, min_run=5)`` gives CPC's labels.
+    default the function also applies CPC's two further rules, described
+    below, and so gives CPC's labels.  ``decimals=None, min_run=1`` labels
+    each value alone and as given.
 
     CPC's operational definitions are inclusive: El Niño is "a positive RONI
     greater than or equal to +0.5ºC" and La Niña "a negative RONI less than
@@ -211,9 +212,9 @@ def enso_phase(
     ``min_run`` is neutral, including one at the end of the index's record
     that later values may lengthen.
 
-    With both rules, the function reproduces CPC's coloring of all 912 seasons from
-    DJF 1950 to NDJ 2025 in its RONI and ONI tables, as downloaded on 23
-    October 2026, from the one-decimal values the tables show.  From the
+    With its defaults, the function reproduces CPC's coloring of all 912
+    seasons from DJF 1950 to NDJ 2025 in its RONI and ONI tables, as downloaded
+    on 23 October 2026, from the one-decimal values the tables show.  From the
     two-decimal text files it reproduces every ONI season, and every RONI
     season but four, FMA to MJJ 1984: CPC shows FMA's -0.45 as -0.5, which
     joins the three seasons after it to the La Niña run before it.
@@ -230,13 +231,15 @@ def enso_phase(
         Whether a value exactly at ``threshold`` or ``-threshold`` counts as
         El Niño or La Niña rather than neutral.
     decimals : int, optional
-        If given, the index is rounded to this many decimals, halves up,
-        before it is compared with the threshold; CPC rounds to 1.
+        The index is rounded to this many decimals, halves up, before it is
+        compared with the threshold.  The default, 1, is CPC's; None leaves
+        the index as given.
     min_run : int
         The fewest consecutive values along ``time_str`` that must all pass
-        the same threshold for any of them to count; CPC requires 5.  A NaN
-        ends a run, and the values along ``time_str`` are taken to be
-        consecutive, with no gaps.  The default, 1, labels each value alone.
+        the same threshold for any of them to count.  The default, 5, is
+        CPC's, for an index of overlapping 3-month seasons, one per month; 1
+        labels each value alone.  A NaN ends a run, and the values along
+        ``time_str`` are taken to be consecutive, with no gaps.
     time_str : str
         Name of the time dimension, used only when ``min_run`` exceeds 1.
 
@@ -250,12 +253,18 @@ def enso_phase(
     Raises
     ------
     ValueError
-        If ``threshold`` is not positive, or ``min_run`` is less than 1.
+        If ``threshold`` is not positive, if ``min_run`` is less than 1, or if
+        ``min_run`` exceeds 1 and ``index`` has no ``time_str`` dimension.
     """
     if not threshold > 0:
         raise ValueError(f"threshold must be positive; got {threshold}")
     if min_run < 1:
         raise ValueError(f"min_run must be at least 1; got {min_run}")
+    if min_run > 1 and time_str not in index.dims:
+        raise ValueError(
+            f"index has no {time_str!r} dimension to count runs along; pass "
+            "time_str, or min_run=1 to label each value alone"
+        )
     value = index
     if decimals is not None:
         value = np.floor(index * 10**decimals + 0.5) / 10**decimals

@@ -313,15 +313,19 @@ class TestEnsoPhase:
         return xr.DataArray(values, dims=["time"], coords={"time": time}, name="roni")
 
     def test_inclusive_by_default(self) -> None:
-        got = enso_phase(self.index(self.VALUES))
+        got = enso_phase(self.index(self.VALUES), decimals=None, min_run=1)
         np.testing.assert_array_equal(got, [-1, -1, 0, 0, 0, 1, 1, 1, np.nan])
 
     def test_strict(self) -> None:
-        got = enso_phase(self.index(self.VALUES), inclusive=False)
+        got = enso_phase(
+            self.index(self.VALUES), inclusive=False, decimals=None, min_run=1
+        )
         np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 1, 1, np.nan])
 
     def test_threshold(self) -> None:
-        got = enso_phase(self.index(self.VALUES), threshold=1.0)
+        got = enso_phase(
+            self.index(self.VALUES), threshold=1.0, decimals=None, min_run=1
+        )
         np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 0, 1, np.nan])
 
     def test_strict_with_threshold(self) -> None:
@@ -329,6 +333,7 @@ class TestEnsoPhase:
             self.index([-1.5, -1.0, -0.7, 0.7, 1.0, 1.5]),
             threshold=1.0,
             inclusive=False,
+            min_run=1,
         )
         np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 1])
 
@@ -360,9 +365,16 @@ class TestEnsoPhase:
     def test_any_shape(self) -> None:
         """A field of indices, such as one per ensemble member, keeps its shape."""
         index = xr.DataArray([[0.7, -0.2], [-0.6, np.nan]], dims=["year", "member"])
-        got = enso_phase(index)
+        got = enso_phase(index, min_run=1)
         assert got.dims == ("year", "member")
         np.testing.assert_array_equal(got, [[1, 0], [-1, np.nan]])
+
+    @pytest.mark.parametrize("min_run", [2, 5])
+    def test_no_time_dimension_raises(self, min_run: int) -> None:
+        """A run of two or more needs a time dimension to count along."""
+        index = xr.DataArray([0.7, -0.6], dims=["member"])
+        with pytest.raises(ValueError, match="no 'time' dimension"):
+            enso_phase(index, min_run=min_run)
 
     def test_inclusive_is_keyword_only(self) -> None:
         with pytest.raises(TypeError):
@@ -376,32 +388,39 @@ class TestEnsoPhase:
     def test_decimals_round_halves_up(self) -> None:
         """0.45 rounds to 0.5 and -0.45 to -0.4, as CPC's tables round."""
         got = enso_phase(
-            self.index([-0.46, -0.45, -0.44, 0.44, 0.45, 0.46]), decimals=1
+            self.index([-0.46, -0.45, -0.44, 0.44, 0.45, 0.46]), decimals=1, min_run=1
         )
         np.testing.assert_array_equal(got, [-1, 0, 0, 0, 1, 1])
 
     def test_decimals_with_strict(self) -> None:
         got = enso_phase(
-            self.index([-0.56, -0.55, 0.54, 0.55]), decimals=1, inclusive=False
+            self.index([-0.56, -0.55, 0.54, 0.55]),
+            decimals=1,
+            inclusive=False,
+            min_run=1,
         )
         np.testing.assert_array_equal(got, [-1, 0, 0, 1])
 
     def test_decimals_leave_rounded_values(self) -> None:
         """CPC's one-decimal values come through rounding unchanged."""
         index = self.index([k / 10 for k in range(-10, 11)])
-        np.testing.assert_array_equal(enso_phase(index, decimals=1), enso_phase(index))
+        np.testing.assert_array_equal(
+            enso_phase(index), enso_phase(index, decimals=None)
+        )
 
     def test_other_decimals(self) -> None:
-        got = enso_phase(self.index([-0.51, -0.5, 0.49, 0.5]), 1.0, decimals=0)
+        got = enso_phase(
+            self.index([-0.51, -0.5, 0.49, 0.5]), 1.0, decimals=0, min_run=1
+        )
         np.testing.assert_array_equal(got, [-1, 0, 0, 1])
 
     def test_min_run(self) -> None:
-        """A run shorter than min_run is neutral, at either end of the record too.
+        """By default a run shorter than five is neutral, at either end too.
 
         The runs here are 4 warm, 6 warm, 5 cold right after them, and 4 cold.
         """
         values = [0.6] * 4 + [0.0] + [0.6] * 6 + [-0.6] * 5 + [0.0] + [-0.6] * 4
-        got = enso_phase(self.index(values), min_run=5)
+        got = enso_phase(self.index(values))
         np.testing.assert_array_equal(got, [0] * 5 + [1] * 6 + [-1] * 5 + [0] * 5)
 
     def test_min_run_two(self) -> None:
@@ -427,7 +446,7 @@ class TestEnsoPhase:
             enso_phase(self.index([0.5]), min_run=min_run)
 
     def test_reproduces_cpcs_roni_table(self) -> None:
-        """CPC's coloring of RONI for 1951 and 1952, from its two-decimal values.
+        """The defaults give CPC's coloring of RONI for 1951 and 1952.
 
         From ``RONI.ascii.txt`` and CPC's RONI table, downloaded 2026-10-23.
         FMA 1951, 0.48, is shown as 0.5 and colored El Niño; FMA 1952, 0.46, is
@@ -440,9 +459,9 @@ class TestEnsoPhase:
         ]  # fmt: skip
         cpc = [0, 0] + [1] * 11 + [0] * 11
         index = self.index(roni)
-        np.testing.assert_array_equal(enso_phase(index, decimals=1, min_run=5), cpc)
-        assert not np.array_equal(enso_phase(index, decimals=1), cpc)
-        assert not np.array_equal(enso_phase(index, min_run=5), cpc)
+        np.testing.assert_array_equal(enso_phase(index), cpc)
+        assert not np.array_equal(enso_phase(index, min_run=1), cpc)
+        assert not np.array_equal(enso_phase(index, decimals=None), cpc)
 
 
 class TestOutputNames:
