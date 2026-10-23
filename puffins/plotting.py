@@ -645,7 +645,7 @@ def band_colors_about_center(
 
 
 def _increasing_levels(levels: ArrayLike | Sequence[float]) -> np.ndarray:
-    """``levels`` as a float array, checked to hold two or more increasing values."""
+    """``levels`` as a float array, checked to have two or more increasing values."""
     level_vals = np.asarray(levels, dtype=float)
     if level_vals.size < 2:
         raise ValueError(f"need at least 2 levels; got {level_vals.size}")
@@ -786,8 +786,8 @@ def _finite_values(
     """Each field's finite values, flattened, and the smallest and largest of
     them all.
 
-    The values come one array per field that has any.  A list or tuple holds
-    one field per item, except that one whose items are all scalars is a
+    The values come one array per field that has any.  Each item of a list or
+    tuple is one field, except that a list or tuple of scalars alone is a
     single field.  The masked cells of a masked array are dropped with the
     NaNs and infinities.  No finite value in any field raises a
     ``ValueError``.
@@ -877,7 +877,7 @@ def _long_side_step(cover: float, largest: float, num_bands: int) -> float:
 
     The smallest nice width whose bands reach ``cover``, unless ``largest``,
     the side's extreme, does not pass ``num_bands - 1`` of those widths, so
-    that the outermost band would hold nothing.  Then it is the next smaller
+    that no value would fall in the outermost band.  Then it is the next smaller
     nice width, and the rest of that side runs into an arrow tip.  Reaching
     and passing are judged as ``tight_levels`` judges them, with a value
     within ``_GRID_SNAP_TOL`` of a band edge counted as on it.
@@ -955,10 +955,10 @@ def tight_scale(
     longer side's covered extent would leave its outermost band empty, the
     next smaller width is taken, and the rest of that side runs into a tip
     even if its extreme is within ``tip_ratio`` of its reference.  On a field
-    whose values reach their extreme in a broad plateau, that tip can hold
+    whose values reach their extreme in a broad plateau, that tip can contain
     many cells: for 10.4 sin(x) over one period, whose extreme is 1.003 times
     its 95th percentile on each side, the bar spans -8 to 8 and each tip
-    holds 22% of all the cells.
+    contains 22% of all the cells.
 
     A sequential bar takes up to ``num_bands`` bands from the smallest value
     to its covered top, chosen by the same tip test on the values themselves,
@@ -967,7 +967,7 @@ def tight_scale(
     its departure from a baseline instead.
 
     The levels are evenly spaced, which suits a field spanning orders of
-    magnitude, such as precipitation, poorly.  Where most cells hold values
+    magnitude, such as precipitation, poorly.  Where most cells have values
     near zero, the reference falls among them, so the bands cover only those
     values and every larger one lands in the tip.  For 960 values from 0 to
     0.01 and 40 from 0.5 to 40, the 95th percentile is 0.0099, and the
@@ -1020,9 +1020,9 @@ def tight_scale(
     ------
     ValueError
         If ``kind`` is neither ``"diverging"`` nor ``"sequential"``; if a
-        parameter lies outside the range given above; if the fields hold no
+        parameter lies outside the range given above; if the fields have no
         finite values, or, with no ``step``, only one value or values that
-        differ only by rounding; or if a sequential field holds a negative
+        differ only by rounding; or if a sequential field has a negative
         value beyond rounding.
 
     """
@@ -1046,7 +1046,7 @@ def tight_scale(
         raise ValueError(f"tip_ratio must be positive; got {tip_ratio}")
     parts, lo, hi = _finite_values(arrs)
     if step is None and lo == hi:
-        raise ValueError("the fields hold a single value; pass `step`")
+        raise ValueError("the fields have a single value; pass `step`")
     if kind == "sequential":
         if lo < -1e-9 * max(abs(lo), abs(hi)):
             raise ValueError(

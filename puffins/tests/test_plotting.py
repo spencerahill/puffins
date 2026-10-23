@@ -503,7 +503,7 @@ class TestTightScale:
         """Eight bands on the longer side, as many as reach the shorter's extreme.
 
         The longer, negative side covers 31.1: the smallest nice width whose
-        eight bands reach it is 4, and its outermost band, -32 to -28, holds
+        eight bands reach it is 4, and its outermost band, -32 to -28, contains
         -31.1.  The positive side needs ceil(14 / 4) = 4 bands.
 
         """
@@ -717,7 +717,7 @@ class TestTightScale:
         np.testing.assert_array_equal(tight_scale(field).levels, np.arange(-8, 5) * 4.0)
 
     def test_masked_cells_ignored(self) -> None:
-        """A masked array's masked cells, here holding 1e20, are left out."""
+        """A masked array's masked cells, here set to 1e20, are left out."""
         field = np.linspace(-3.0, 2.0, 1000)
         masked = np.ma.masked_array(field, mask=np.arange(1000) % 3 == 0)
         masked.data[masked.mask] = 1e20
@@ -968,7 +968,7 @@ class TestTightScale:
         """An extreme past seven bands of 4 by rounding alone counts as at them.
 
         Taken as past them, it would get an eighth band of 4, from -32 to -28,
-        holding no value visibly different from -28.
+        containing no value visibly different from -28.
 
         """
         scale = tight_scale(np.array([np.nextafter(-28.0, -np.inf), 1.0]))
