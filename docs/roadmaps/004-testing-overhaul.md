@@ -55,7 +55,7 @@ future work. The remaining theoretical-model cluster
 main untested frontier and overlaps with the untyped modules in
 [Roadmap 003](003-type-hints.md).
 
-Exempt per the success criterion: `plotting` 45, `nb_utils` 47.
+Exempt per the success criterion: `plotting` 46, `nb_utils` 47.
 `test_plotting.py` covers `panel_label`, `tight_levels`, `tight_scale`,
 `colorbar_ticks`, `band_colors_about_center`, `sequential_band_colors`,
 `truncate_cmap`, and `trunc_cmap_about_center`; the axis and faceting helpers
