@@ -312,6 +312,23 @@ class TestEnsoPhase:
         time = xr.date_range("2000-01-01", periods=len(values), freq="MS")
         return xr.DataArray(values, dims=["time"], coords={"time": time}, name="roni")
 
+    @staticmethod
+    def assert_rounds_to(
+        index: xr.DataArray, rounded: list[float], decimals: int = 1
+    ) -> None:
+        """Each value of ``index`` rounds to the one in ``rounded``.
+
+        The rounded value is read back through ``enso_phase``: a value that
+        rounds to r meets a threshold of abs(r), and not one a step larger.
+        """
+        step = 10.0**-decimals
+        for i, r in enumerate(rounded):
+            one = index.isel(time=[i])
+            for threshold, want in ((abs(r), np.sign(r)), (abs(r) + step, 0.0)):
+                if threshold > 0:
+                    got = enso_phase(one, threshold, decimals=decimals, min_run=1)
+                    assert got.item() == want, (float(one.item()), r, threshold)
+
     def test_inclusive_by_default(self) -> None:
         got = enso_phase(self.index(self.VALUES), decimals=None, min_run=1)
         np.testing.assert_array_equal(got, [-1, -1, 0, 0, 0, 1, 1, 1, np.nan])
@@ -373,8 +390,44 @@ class TestEnsoPhase:
     def test_no_time_dimension_raises(self, min_run: int) -> None:
         """A run of two or more needs a time dimension to count along."""
         index = xr.DataArray([0.7, -0.6], dims=["member"])
-        with pytest.raises(ValueError, match="no 'time' dimension"):
+        with pytest.raises(ValueError, match="no 'time' dimension.*min_run=1"):
             enso_phase(index, min_run=min_run)
+
+    def test_gap_in_time_raises(self) -> None:
+        """Dropping a month would join the runs on either side of it."""
+        index = self.index([0.6, 0.6, 0.6, np.nan, 0.6, 0.6]).dropna("time")
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index)
+        np.testing.assert_array_equal(enso_phase(index, min_run=1), [1] * 5)
+
+    def test_yearly_time_raises(self) -> None:
+        """A run of five is CPC's rule for monthly seasons, not for years."""
+        time = xr.date_range("2000-01-01", periods=5, freq="YS")
+        index = xr.DataArray([0.6] * 5, dims=["time"], coords={"time": time})
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index)
+
+    def test_gap_in_cftime_time_raises(self) -> None:
+        pytest.importorskip("cftime")
+        time = xr.date_range(
+            "2000-01-01", periods=6, freq="MS", calendar="noleap", use_cftime=True
+        )
+        index = xr.DataArray([0.6] * 6, dims=["time"], coords={"time": time})
+        np.testing.assert_array_equal(enso_phase(index), [1] * 6)
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index.isel(time=[0, 1, 2, 4, 5]))
+
+    def test_time_axis_shorter_than_min_run(self) -> None:
+        """No run of min_run fits, so every value is neutral, or there is none."""
+        np.testing.assert_array_equal(enso_phase(self.index([0.6] * 3)), [0] * 3)
+        assert enso_phase(self.index([])).sizes == {"time": 0}
+
+    def test_non_integer_decimals_or_min_run_raises(self) -> None:
+        index = self.index([0.6] * 6)
+        with pytest.raises(TypeError, match="decimals must be an integer"):
+            enso_phase(index, decimals=1.5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="min_run must be an integer"):
+            enso_phase(index, min_run=2.5)  # type: ignore[arg-type]
 
     def test_inclusive_is_keyword_only(self) -> None:
         with pytest.raises(TypeError):
@@ -403,10 +456,45 @@ class TestEnsoPhase:
 
     def test_decimals_leave_rounded_values(self) -> None:
         """CPC's one-decimal values come through rounding unchanged."""
-        index = self.index([k / 10 for k in range(-10, 11)])
-        np.testing.assert_array_equal(
-            enso_phase(index), enso_phase(index, decimals=None)
+        values = [k / 10 for k in range(-15, 16)]
+        self.assert_rounds_to(self.index(values), values)
+
+    def test_decimals_round_values_below_a_half_down(self) -> None:
+        """Only a value within 1e-4 of a step below a half rounds up."""
+        self.assert_rounds_to(self.index([-0.4501, 0.4499]), [-0.5, 0.4])
+
+    @pytest.mark.parametrize("to_float64", [False, True])
+    def test_decimals_round_float32_halves_up(self, to_float64: bool) -> None:
+        """A half stored in float32, as 0.45 is stored as 0.44999999, rounds up,
+        and so does one cast from float32 to float64."""
+        hundredths = range(-195, 200, 10)
+        index = self.index([k / 100 for k in hundredths]).astype(np.float32)
+        if to_float64:
+            index = index.astype(np.float64)
+        self.assert_rounds_to(index, [(k + 5) / 100 for k in hundredths])
+
+    def test_two_decimals_round_halves_up(self) -> None:
+        """In float64, -2.555 times 100 is -255.50000000000003, just below -255.5."""
+        self.assert_rounds_to(
+            self.index([-2.555, -2.365, -2.345, -0.455, 0.455, 2.345, 2.555]),
+            [-2.55, -2.36, -2.34, -0.45, 0.46, 2.35, 2.56],
+            decimals=2,
         )
+
+    def test_float32_index_meets_a_float64_threshold(self) -> None:
+        """The rounded index is float64, so 0.7 in float32 equals 0.7 in float64."""
+        index = self.index([-0.7, 0.7]).astype(np.float32)
+        got = enso_phase(index, np.float64(0.7), min_run=1)
+        np.testing.assert_array_equal(got, [-1, 1])
+
+    def test_threshold_off_the_rounding_grid_raises(self) -> None:
+        """Rounding to one decimal would move a threshold of 0.37."""
+        index = self.index([-0.37, -0.36, 0.36, 0.37])
+        with pytest.raises(ValueError, match="not a multiple of 10"):
+            enso_phase(index, 0.37, min_run=1)
+        for decimals in (None, 2):
+            got = enso_phase(index, 0.37, decimals=decimals, min_run=1)
+            np.testing.assert_array_equal(got, [-1, 0, 0, 1])
 
     def test_other_decimals(self) -> None:
         got = enso_phase(

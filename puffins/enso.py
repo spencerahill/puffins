@@ -24,8 +24,10 @@ built from the same SST product as its input.
 ``relative_nino34`` is the same quantity month by month, without the running
 mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 ``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
-``enso_phase`` labels each value of such an index El Niño, La Niña or neutral,
-by CPC's rules.
+``enso_phase`` labels each value of an index El Niño, La Niña or neutral.  Its
+defaults are CPC's rules for an index of overlapping 3-month seasons, one per
+month, such as RONI; with ``min_run=1`` it labels each value of a monthly or
+yearly index, such as these two, alone.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
@@ -42,6 +44,7 @@ These functions moved here on 2026-09-30 from the lps-enso-grl project's
 ``enso_indices.py``, so that the projects using them share one definition.
 """
 
+import numbers
 from typing import cast
 
 import numpy as np
@@ -62,6 +65,15 @@ RONI_BASE: tuple[int, int] = (1991, 2020)
 
 RONI_SIGMA_YEARS: tuple[int, int] = (1950, 2020)
 """The years over which RONI's rescaling ratio is computed."""
+
+ENSO_THRESHOLD: float = 0.5
+"""The index magnitude, in K, that CPC's thresholds for El Niño and La Niña use."""
+
+_ROUND_TOL = 1e-4
+"""How far below a half a value may sit and still round up in ``enso_phase``,
+in units of the last decimal kept.  Stored in float32, a two-decimal half
+below 4 in magnitude sits up to 1e-6 below it in those units; 0.45, stored as
+0.44999999, sits 1.2e-7 below."""
 
 
 def box_mean(
@@ -157,6 +169,8 @@ def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
 
 def _in_long_run(flag: xr.DataArray, min_run: int, time_str: str) -> xr.DataArray:
     """Whether each value lies in a run of ``min_run`` or more True values."""
+    if flag.sizes[time_str] < min_run:
+        return xr.zeros_like(flag)
     # True at the last value of each window of min_run values that are all True.
     ends = flag.rolling({time_str: min_run}).sum() == min_run
     # A value is in such a window if one ends at it or at one of the next
@@ -167,8 +181,11 @@ def _in_long_run(flag: xr.DataArray, min_run: int, time_str: str) -> xr.DataArra
     return covered
 
 
-ENSO_THRESHOLD: float = 0.5
-"""The index magnitude, in K, that CPC's thresholds for El Niño and La Niña use."""
+def _require_monthly(times: xr.DataArray, why: str) -> None:
+    """Raise a ValueError, ending with ``why``, unless ``times`` steps by one month."""
+    year_month = (times.dt.year * 12 + times.dt.month).to_numpy()
+    if not np.all(np.diff(year_month) == 1):
+        raise ValueError(f"the time axis must be monthly with no gaps, since {why}")
 
 
 def enso_phase(
@@ -226,20 +243,25 @@ def enso_phase(
     threshold : float
         The positive magnitude separating neutral from El Niño and La Niña, in
         the units of ``index``; for a standardized index, pass it in standard
-        deviations.
+        deviations.  With ``decimals``, it must be a multiple of
+        ``10**-decimals``, the only values the rounded index takes; pass
+        ``decimals=None`` for any other threshold.
     inclusive : bool
         Whether a value exactly at ``threshold`` or ``-threshold`` counts as
         El Niño or La Niña rather than neutral.
     decimals : int, optional
         The index is rounded to this many decimals, halves up, before it is
         compared with the threshold.  The default, 1, is CPC's; None leaves
-        the index as given.
+        the index as given.  The rounding is done in float64, and a value
+        less than 1e-4 of a step below a half, as a half stored in float32
+        is, also rounds up.
     min_run : int
         The fewest consecutive values along ``time_str`` that must all pass
         the same threshold for any of them to count.  The default, 5, is
         CPC's, for an index of overlapping 3-month seasons, one per month; 1
-        labels each value alone.  A NaN ends a run, and the values along
-        ``time_str`` are taken to be consecutive, with no gaps.
+        labels each value alone.  A NaN ends a run.  Where ``time_str`` has a
+        coordinate of dates, they must step by one month, with no gaps;
+        otherwise the values along it are taken to be consecutive months.
     time_str : str
         Name of the time dimension, used only when ``min_run`` exceeds 1.
 
@@ -253,21 +275,52 @@ def enso_phase(
     Raises
     ------
     ValueError
-        If ``threshold`` is not positive, if ``min_run`` is less than 1, or if
-        ``min_run`` exceeds 1 and ``index`` has no ``time_str`` dimension.
+        If ``threshold`` is not positive, or is off the grid of
+        ``10**-decimals``; if ``min_run`` is less than 1; or if ``min_run``
+        exceeds 1 and ``index`` has no ``time_str`` dimension, or has dates
+        along it that do not step by one month.
+    TypeError
+        If ``decimals`` is not an integer or None, or ``min_run`` is not an
+        integer.
     """
     if not threshold > 0:
         raise ValueError(f"threshold must be positive; got {threshold}")
+    if not isinstance(min_run, numbers.Integral):
+        raise TypeError(f"min_run must be an integer; got {min_run!r}")
     if min_run < 1:
         raise ValueError(f"min_run must be at least 1; got {min_run}")
-    if min_run > 1 and time_str not in index.dims:
-        raise ValueError(
-            f"index has no {time_str!r} dimension to count runs along; pass "
-            "time_str, or min_run=1 to label each value alone"
-        )
+    if min_run > 1:
+        if time_str not in index.dims:
+            raise ValueError(
+                f"index has no {time_str!r} dimension to count runs along; pass "
+                "min_run=1 to label each value alone, as for a yearly index, or "
+                "time_str to name a monthly time dimension"
+            )
+        times = index.coords.get(time_str)
+        if times is not None and (
+            np.issubdtype(times.dtype, np.datetime64)
+            or isinstance(index.indexes.get(time_str), xr.CFTimeIndex)
+        ):
+            _require_monthly(
+                times,
+                "min_run counts runs of consecutive months; pass min_run=1 to "
+                "label each value alone",
+            )
     value = index
     if decimals is not None:
-        value = np.floor(index * 10**decimals + 0.5) / 10**decimals
+        if not isinstance(decimals, numbers.Integral):
+            raise TypeError(f"decimals must be an integer or None; got {decimals!r}")
+        steps = threshold * 10**decimals
+        if abs(steps - round(steps)) > _ROUND_TOL:
+            raise ValueError(
+                f"threshold {threshold} is not a multiple of 10**-{decimals}, so "
+                f"rounding the index to {decimals} decimals would move it; pass "
+                "decimals=None, or a threshold on that grid"
+            )
+        # In float64, so that the rounded value equals a float64 threshold on
+        # the same grid exactly.
+        scaled = index.astype(np.float64) * 10**decimals
+        value = np.floor(scaled + 0.5 + _ROUND_TOL) / 10**decimals
     if inclusive:
         warm, cold = value >= threshold, value <= -threshold
     else:
@@ -299,13 +352,10 @@ def _running_means(
         If the time axis is not monthly or has a gap, since the running mean
         takes its neighbors by position.
     """
-    times = nino34_anom[time_str]
-    year_month = (times.dt.year * 12 + times.dt.month).to_numpy()
-    if not np.all(np.diff(year_month) == 1):
-        raise ValueError(
-            "the time axis must be monthly with no gaps, since the 3-month "
-            "running mean takes its neighbors by position"
-        )
+    _require_monthly(
+        nino34_anom[time_str],
+        "the 3-month running mean takes its neighbors by position",
+    )
     oni = nino34_anom.rolling({time_str: 3}, center=True).mean()
     diff = (nino34_anom - tropical_anom).rolling({time_str: 3}, center=True).mean()
     return oni, diff
