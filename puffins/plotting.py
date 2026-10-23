@@ -17,6 +17,8 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
+from matplotlib.text import Text
+from matplotlib.transforms import Bbox
 
 from ._typing import ArrayLike
 from .names import LAT_STR
@@ -469,6 +471,154 @@ def panel_label(
     if bold:
         text_kwargs.setdefault("fontweight", "bold")
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
+
+
+# Curve labeling.
+def _span_extreme(
+    px: np.ndarray, heights: np.ndarray, left: float, right: float
+) -> float:
+    """The largest of ``heights`` over display x from ``left`` to ``right``.
+
+    Includes the curve's values interpolated at both ends of the span, so a
+    segment entering the span between two points is counted.  NaN points are
+    skipped; with no finite point the result is minus infinity.
+    """
+    finite = np.isfinite(px) & np.isfinite(heights)
+    if not finite.any():
+        return -np.inf
+    xs, hs = px[finite], heights[finite]
+    inside = hs[(xs >= left) & (xs <= right)]
+    ends = np.interp([left, right], xs, hs)
+    return float(np.max(np.concatenate([inside, ends])))
+
+
+def label_curve(
+    ax: Axes,
+    x: ArrayLike | Sequence[float],
+    ys: Sequence[ArrayLike | Sequence[float]],
+    which: int,
+    text: str,
+    *,
+    side: str = "above",
+    gap: float = 2.0,
+    avoid: Sequence[Text] = (),
+    **text_kwargs: Any,
+) -> Text | None:
+    """Label one of several curves directly, beside it, in place of a legend.
+
+    Implements Spencer Hill's rules for direct labels (2026-07-22 and
+    2026-09-09): a label sits beside its curve and never on it, nearer to it
+    than to any other curve, at the x where its curve stands farthest from
+    the nearest other curve, on the side away from that curve.
+
+    Each candidate puts the label's left edge at one of the labeled curve's
+    points.  Across the label's width the labeled curve must reach further to
+    ``side`` than every other curve, and the label then sits ``gap`` points
+    beyond the labeled curve's extreme there, so it is clear of every curve and
+    nearer the labeled one.  Of the candidates lying wholly inside the axes
+    and overlapping no text in ``avoid``, the one where the labeled curve
+    reaches furthest past the others is taken, the leftmost on a tie.
+
+    Distances are measured in display coordinates after a draw, so they hold
+    on the rendered figure whatever the axis scales.  Draw every curve and set
+    the axis limits and the figure size first, since a later change to any of
+    them moves the curves and not the label.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes holding the curves.
+    x : array-like
+        The curves' shared x values, one-dimensional.
+    ys : sequence of array-like
+        Every curve on the axes that the label must keep clear of, each with
+        one value per ``x``; NaN marks a missing point.
+    which : int
+        Index in ``ys`` of the curve to label.
+    text : str
+        The label.
+    side : {"above", "below"}
+        Which side of its curve the label goes on.
+    gap : float
+        Distance, in points, from the labeled curve to the label's near edge.
+    avoid : sequence of matplotlib.text.Text
+        Labels already placed, which this one must not overlap.
+    **text_kwargs
+        Passed to ``Axes.text``, such as ``color`` and ``fontsize``.
+        Alignment is set here and must not be passed.
+
+    Returns
+    -------
+    matplotlib.text.Text or None
+        The label, or None when no position satisfies the rules, in which case
+        nothing is added to the axes.
+
+    """
+    if side not in ("above", "below"):
+        raise ValueError(f"side must be 'above' or 'below'; got {side!r}")
+    x_vals = np.asarray(x, dtype=float)
+    curves = [np.asarray(y, dtype=float) for y in ys]
+    if x_vals.ndim != 1 or any(c.shape != x_vals.shape for c in curves):
+        raise ValueError("x must be one-dimensional and each curve must match it")
+    if not 0 <= which < len(curves):
+        raise ValueError(f"which must index ys, of length {len(curves)}; got {which}")
+    sign = 1.0 if side == "above" else -1.0
+    fig = ax.figure
+    fig.canvas.draw()
+    label = ax.text(
+        0.0,
+        0.0,
+        text,
+        ha="left",
+        va="bottom" if side == "above" else "top",
+        **text_kwargs,
+    )
+    extent = label.get_window_extent()
+    width, height = extent.width, extent.height
+    gap_px = gap * fig.dpi / 72.0
+    # Display x from x alone: a NaN y makes the transform's x NaN as well, which
+    # would drop the other curves' points wherever the labeled one is missing.
+    y_ref = np.full_like(x_vals, float(np.mean(ax.get_ylim())))
+    px = ax.transData.transform(np.column_stack([x_vals, y_ref]))[:, 0]
+    order = np.argsort(px)
+    px = px[order]
+    heights = [
+        sign * ax.transData.transform(np.column_stack([x_vals, c]))[order, 1]
+        for c in curves
+    ]
+    frame = ax.bbox
+    best: tuple[float, float, float] | None = None
+    for left in px[np.isfinite(heights[which])]:
+        right = left + width
+        if left < frame.x0 or right > frame.x1:
+            continue
+        own = _span_extreme(px, heights[which], left, right)
+        others = [
+            _span_extreme(px, h, left, right)
+            for k, h in enumerate(heights)
+            if k != which
+        ]
+        nearest = max(others, default=-np.inf)
+        if not own > nearest:
+            continue
+        near_edge = own + gap_px
+        if side == "above":
+            y_lo, y_hi = near_edge, near_edge + height
+        else:
+            y_lo, y_hi = -near_edge - height, -near_edge
+        if y_lo < frame.y0 or y_hi > frame.y1:
+            continue
+        box = Bbox([[left, y_lo], [right, y_hi]])
+        if any(box.overlaps(t.get_window_extent()) for t in avoid):
+            continue
+        if best is None or own - nearest > best[0]:
+            best = (own - nearest, left, y_lo if side == "above" else y_hi)
+    if best is None:
+        label.remove()
+        return None
+    x_data, y_data = ax.transData.inverted().transform((best[1], best[2]))
+    label.set_position((float(x_data), float(y_data)))
+    return label
 
 
 # Contour levels.
