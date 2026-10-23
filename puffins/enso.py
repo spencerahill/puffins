@@ -27,7 +27,9 @@ mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
-and 50-110E, as their Figure 3a caption states it.
+and 50-110E, as their Figure 3a caption states it.  ``read_cpc_index`` reads
+CPC's published tables of 3-month-season indices, such as its ONI and RONI,
+onto the same time axis as ``roni``.
 
 All box means are cos(latitude)-weighted over the gridpoint centers inside
 inclusive bounds, with land (NaN in an SST product) dropped from the weights as
@@ -40,6 +42,8 @@ These functions moved here on 2026-09-30 from the lps-enso-grl project's
 ``enso_indices.py``, so that the projects using them share one definition.
 """
 
+import os
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -325,3 +329,103 @@ def relative_nino34_jjas(
     rel = relative_nino34(sst, base, sigma_years, time_str, scaled=scaled, **kwargs)
     out = ann_subset_ts(rel, "jjas", dim_time=time_str)
     return cast(xr.DataArray, out.rename("relative_nino34_jjas"))
+
+
+CPC_SEASONS: tuple[str, ...] = (
+    "DJF",
+    "JFM",
+    "FMA",
+    "MAM",
+    "AMJ",
+    "MJJ",
+    "JJA",
+    "JAS",
+    "ASO",
+    "SON",
+    "OND",
+    "NDJ",
+)
+"""CPC's 3-month season labels, in calendar order of their center months, so
+the season at index ``k`` is centered on month ``k + 1``."""
+
+
+def read_cpc_index(
+    path: str | os.PathLike[str], column: str = "ANOM", time_str: str = TIME_STR
+) -> xr.DataArray:
+    """A 3-month-season index from one of NOAA CPC's text tables.
+
+    Reads tables such as ``oni.ascii.txt``, whose columns are ``SEAS YR TOTAL
+    ANOM``, and ``RONI.ascii.txt``, whose columns are ``SEAS YR ANOM``, from
+    https://www.cpc.ncep.noaa.gov/data/indices/.  Each row is one 3-month
+    season, labeled by its months' initials and a year.
+
+    Each value is placed at the first day of its season's center month, which
+    is how ``roni`` indexes its running means, so a table read here and
+    ``roni`` of a field stamped at the start of each month share a time axis.
+    The year is that of the center month: DJF 1950 is December 1949 through
+    February 1950, and NDJ 1950 is November 1950 through January 1951.  CPC's
+    pages do not state this.  It is what CPC's own ``TOTAL`` column of
+    ``oni.ascii.txt`` gives: 3-month means of ERSSTv5 NINO3.4 SST centered
+    this way match it as closely for DJF and NDJ as for the other ten seasons,
+    and centered a year off they do not.
+
+    Parameters
+    ----------
+    path : str or path-like
+        The table: a header line beginning ``SEAS YR``, then one row per
+        season, in order, with no season missing.
+    column : str
+        The header name of the column to read, such as ``"ANOM"`` or
+        ``"TOTAL"``.
+    time_str : str
+        Name of the returned time dimension.
+
+    Returns
+    -------
+    xarray.DataArray
+        The column's values along ``time_str``, named after the column in
+        lower case.
+
+    Raises
+    ------
+    ValueError
+        If the header does not begin ``SEAS YR`` or lacks ``column``; if a row
+        has the wrong number of fields or an unknown season; if the table has
+        no rows; or if the rows do not run one season after another, as when
+        a row is repeated, missing or out of order.
+    """
+    lines = [line.split() for line in Path(path).read_text().splitlines()]
+    rows = [fields for fields in lines if fields]
+    if not rows or rows[0][:2] != ["SEAS", "YR"]:
+        raise ValueError(f"{path}: the header must begin 'SEAS YR'")
+    header = rows[0]
+    if column not in header[2:]:
+        raise ValueError(f"{path}: no column {column!r} in the header {header}")
+    ind = header.index(column)
+    if len(rows) == 1:
+        raise ValueError(f"{path}: the table has no rows")
+    months: list[int] = []
+    values: list[float] = []
+    for fields in rows[1:]:
+        if len(fields) != len(header):
+            raise ValueError(f"{path}: row {fields} does not match the header {header}")
+        if fields[0] not in CPC_SEASONS:
+            raise ValueError(f"{path}: unknown season {fields[0]!r} in row {fields}")
+        months.append(12 * int(fields[1]) + CPC_SEASONS.index(fields[0]))
+        values.append(float(fields[ind]))
+    month_index = np.array(months)
+    if not np.all(np.diff(month_index) == 1):
+        raise ValueError(
+            f"{path}: the rows must run one season after another, with none "
+            "repeated, missing or out of order"
+        )
+    time = np.array(
+        [f"{m // 12:04d}-{m % 12 + 1:02d}-01" for m in month_index],
+        dtype="datetime64[ns]",
+    )
+    return xr.DataArray(
+        np.array(values, dtype=float),
+        dims=[time_str],
+        coords={time_str: time},
+        name=column.lower(),
+    )
