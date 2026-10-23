@@ -4,6 +4,7 @@
 import os.path
 from collections import namedtuple
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
@@ -582,6 +583,7 @@ def band_colors_about_center(
     cmap: Colormap,
     levels: ArrayLike | Sequence[float],
     central_val: float = 0.0,
+    extend: str = "neither",
 ) -> list[tuple[float, float, float, float]]:
     """Colors for filled contour bands diverging about a central value.
 
@@ -606,27 +608,467 @@ def band_colors_about_center(
         bracket the data and include ``central_val`` when the data span it.
     central_val : float
         Field value to place at the colormap's midpoint color.
+    extend : {"neither", "min", "max", "both"}
+        Which ends of the colorbar carry an arrow tip, as matplotlib's
+        ``extend`` takes it.  Each tip takes the color one band further along
+        its side of the colormap than that side's outermost band, clipped to
+        the colormap's end.  So the longer side's tip is the colormap's end
+        color, and the shorter side's tip continues its sequence and stays
+        paler than the longer side's colors of the same magnitude.
 
     Returns
     -------
     list
-        One RGBA tuple per band, i.e. ``len(levels) - 1`` of them, to pass to
-        ``contourf`` as ``colors``.
+        One RGBA tuple per band, i.e. ``len(levels) - 1`` of them, with the
+        lower tip's color before them and the upper tip's after them, as
+        ``extend`` asks.  That is the order ``ListedColormap`` and
+        ``BoundaryNorm(levels, len(colors), extend=extend)`` take them in; with
+        no tips, pass them to ``contourf`` as ``colors``.
 
     """
-    level_vals = np.asarray(levels, dtype=float)
-    if level_vals.size < 2:
-        raise ValueError(f"need at least 2 levels; got {level_vals.size}")
-    if not np.all(np.diff(level_vals) > 0):
-        raise ValueError(
-            "levels must increase and contain no NaNs; otherwise the band "
-            f"nearest `central_val` is not well defined.  Got {level_vals}"
-        )
+    level_vals = _increasing_levels(levels)
+    if extend not in _EXTENDS:
+        raise ValueError(f"extend must be one of {_EXTENDS}; got {extend!r}")
     ind_center = int(np.argmin(np.abs(level_vals - central_val)))
     num_below, num_above = ind_center, level_vals.size - 1 - ind_center
     num_long = max(num_below, num_above)
     band_centers = np.arange(-num_below, num_above) + 0.5
-    return [cmap(0.5 + center / (2 * num_long)) for center in band_centers]
+    colors_out = [cmap(0.5 + center / (2 * num_long)) for center in band_centers]
+    if extend in ("min", "both"):
+        position = 0.5 + (-num_below - 0.5) / (2 * num_long)
+        colors_out.insert(0, cmap(float(np.clip(position, 0.0, 1.0))))
+    if extend in ("max", "both"):
+        position = 0.5 + (num_above + 0.5) / (2 * num_long)
+        colors_out.append(cmap(float(np.clip(position, 0.0, 1.0))))
+    return colors_out
+
+
+def _increasing_levels(levels: ArrayLike | Sequence[float]) -> np.ndarray:
+    """``levels`` as a float array, checked to hold two or more increasing values."""
+    level_vals = np.asarray(levels, dtype=float)
+    if level_vals.size < 2:
+        raise ValueError(f"need at least 2 levels; got {level_vals.size}")
+    if not np.all(np.diff(level_vals) > 0):
+        raise ValueError(f"levels must increase and contain no NaNs; got {level_vals}")
+    return level_vals
+
+
+def sequential_band_colors(
+    cmap: Colormap,
+    levels: ArrayLike | Sequence[float],
+    *,
+    extend: str = "neither",
+    start: float = 0.1,
+) -> list[tuple[float, float, float, float]]:
+    """Colors for the filled contour bands of a sequential colormap.
+
+    The sequential counterpart of ``band_colors_about_center``, for a field of
+    one sign.  The bands are sampled evenly from ``start`` to the colormap's
+    end.  The default ``start`` of 0.1 skips the white end of maps such as
+    Crameri's ``davos_r``, whose first color matches that of a masked cell.
+
+    With an upper arrow tip, the darkest band is taken at ``1 - 0.8 / n``, for
+    ``n`` bands, and the tip at the colormap's end, so the tip is darker than
+    every band.
+
+    Parameters
+    ----------
+    cmap : matplotlib.colors.Colormap
+        Sequential colormap, running from the color of the smallest values to
+        that of the largest.
+    levels : array-like
+        Contour levels, increasing.  ``tight_scale`` with ``kind="sequential"``
+        chooses them.
+    extend : {"neither", "max"}
+        Whether the colorbar carries an upper arrow tip.  A sequential bar from
+        ``tight_scale`` starts at or below its smallest value, so it never tips
+        at its lower end, and a lower tip raises a ``ValueError``.
+    start : float
+        Position on ``cmap`` of the lightest band, from 0 to 1.
+
+    Returns
+    -------
+    list
+        One RGBA tuple per band, then the tip's color if ``extend`` is
+        ``"max"``, the order ``ListedColormap`` and ``BoundaryNorm(levels,
+        len(colors), extend=extend)`` take them in.
+
+    """
+    level_vals = _increasing_levels(levels)
+    if extend not in ("neither", "max"):
+        raise ValueError(
+            f"a sequential bar tips only at its upper end; got extend={extend!r}"
+        )
+    num_bands = level_vals.size - 1
+    end = 1.0 - 0.8 / num_bands if extend == "max" else 1.0
+    if not 0.0 <= start < end:
+        raise ValueError(
+            f"start must lie in [0, {end:g}), below the darkest band; got {start}"
+        )
+    colors_out = [cmap(float(pos)) for pos in np.linspace(start, end, num_bands)]
+    if extend == "max":
+        colors_out.append(cmap(1.0))
+    return colors_out
+
+
+# Colorbar scales: Spencer Hill's rules of 2026-09-28 for every colorbar, moved
+# here on 2026-10-22 from the lps-enso-grl project's `figure_style.tight_scale`.
+BANDS_PER_SIDE = 8
+"""Bands on the longer side of zero of a diverging colorbar.
+
+So a bar symmetric about zero has sixteen bands, and an asymmetric one has
+eight on its longer side and as many as reach its extreme on the shorter.
+"""
+
+SEQUENTIAL_BANDS = 16
+"""The most bands a sequential colorbar has, the sixteen of a symmetric
+diverging one."""
+
+TIP_QUANTILE = 0.95
+"""The quantile of magnitude that a colorbar side's arrow-tip test refers to;
+see ``tight_scale``."""
+
+TIP_RATIO = 1.3
+"""How far, as a multiple of its ``TIP_QUANTILE`` reference, a side's extreme
+may run before that side ends in an arrow tip; see ``tight_scale``."""
+
+MAX_TICK_LABELS = 9
+"""The most labels ``colorbar_ticks`` puts on a colorbar by default: every
+second boundary of a sixteen-band bar, including both ends and zero."""
+
+# Leading digits a diverging band width may take, times a power of ten.  No two
+# are more than a third apart, so eight bands of the chosen width end near the
+# extent they have to cover.
+_STEP_MANTISSAS = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
+# Coarser, because a sequential bar is labeled from its ends rather than from
+# zero, and a band width of 0.8 or 3 would label it 0.8, 2.4, 4.0 or 3, 12, 21.
+_SEQUENTIAL_MANTISSAS = (1.0, 2.0, 2.5, 5.0)
+_EXTENDS = ("neither", "min", "max", "both")
+
+
+@dataclass(frozen=True, eq=False)
+class TightScale:
+    """The contour levels ``tight_scale`` chooses for one colorbar.
+
+    Attributes
+    ----------
+    levels : numpy.ndarray
+        Band edges, increasing and rounded to twelve significant figures, so
+        that a level such as -2.4 is not -2.4000000000000004.
+    extend : str
+        Which ends of the colorbar carry an arrow tip, as matplotlib's
+        ``extend`` takes it: ``"neither"``, ``"min"``, ``"max"`` or ``"both"``.
+    extremes : tuple of float
+        The smallest and largest finite values over every field, which an
+        arrow tip should print.
+    step : float
+        The band width.
+
+    """
+
+    levels: np.ndarray
+    extend: str
+    extremes: tuple[float, float]
+    step: float
+
+
+def _finite_parts(arrs: ArrayLike | Sequence[ArrayLike]) -> list[np.ndarray]:
+    """Each field's finite values, flattened, one array per field."""
+    arr_seq = arrs if isinstance(arrs, list | tuple) else [arrs]
+    parts = []
+    for arr in arr_seq:
+        vals = np.asarray(arr, dtype=float).ravel()
+        parts.append(vals[np.isfinite(vals)])
+    return parts
+
+
+def _side_reference(parts: list[np.ndarray], sign: int, quantile: float) -> float:
+    """The largest, over the fields, of each one's ``quantile`` of magnitude on
+    one side of zero.  ``sign`` of 0 takes the values themselves."""
+    refs = []
+    for vals in parts:
+        side = vals if sign == 0 else (vals[vals > 0] if sign > 0 else -vals[vals < 0])
+        if side.size:
+            refs.append(float(np.quantile(side, quantile)))
+    return max(refs)
+
+
+def _covered(extreme: float, reference: float, ratio: float) -> float:
+    """What a side's bands cover: its reference if its extreme runs more than
+    ``ratio`` times past it, and otherwise the extreme itself."""
+    return reference if extreme > ratio * reference else extreme
+
+
+def _round12(values: ArrayLike) -> np.ndarray:
+    """Rounded to twelve significant figures, so 3 times 0.1 is 0.3."""
+    return np.array([float(f"{v:.12g}") for v in np.asarray(values, dtype=float)])
+
+
+def _nice_steps(width: float, mantissas: Sequence[float]) -> list[float]:
+    """``mantissas`` times the three powers of ten around ``width``, ascending."""
+    exponent = int(np.floor(np.log10(width)))
+    return sorted(
+        float(f"{m * 10.0**e:.12g}")
+        for e in (exponent - 1, exponent, exponent + 1)
+        for m in mantissas
+    )
+
+
+def _long_side_step(cover: float, largest: float, num_bands: int) -> float:
+    """The band width putting ``num_bands`` bands on the longer side of zero.
+
+    The smallest nice width whose bands reach ``cover``, unless rounding the
+    width up carries the bands more than one band past ``largest``, which
+    would leave the outermost band empty.  Then it is the largest nice width
+    short of ``cover``, and the rest of that side runs into an arrow tip.
+    """
+    steps = _nice_steps(cover / num_bands, _STEP_MANTISSAS)
+    up = min(s for s in steps if num_bands * s >= cover * (1.0 - 1e-12))
+    if largest > (num_bands - 1) * up:
+        return up
+    return max(s for s in steps if num_bands * s < cover)
+
+
+def _extend_for(parts: list[np.ndarray], levels: np.ndarray) -> str:
+    """Which ends of ``levels`` the data run past, as matplotlib's ``extend``."""
+    below = any(vals.size and vals.min() < levels[0] for vals in parts)
+    above = any(vals.size and vals.max() > levels[-1] for vals in parts)
+    return {
+        (False, False): "neither",
+        (True, False): "min",
+        (False, True): "max",
+        (True, True): "both",
+    }[(bool(below), bool(above))]
+
+
+def tight_scale(
+    arrs: ArrayLike | Sequence[ArrayLike],
+    *,
+    kind: str = "diverging",
+    step: float | None = None,
+    bands_per_side: int = BANDS_PER_SIDE,
+    num_bands: int = SEQUENTIAL_BANDS,
+    quantile: float = TIP_QUANTILE,
+    tip_ratio: float = TIP_RATIO,
+) -> TightScale:
+    """Contour levels for a colorbar covering only the values actually plotted.
+
+    Implements Spencer Hill's colorbar rules of 2026-09-28:
+
+    1. A bar spans only the range of values plotted across all the fields it
+       serves, so no color on it goes unused, and a diverging bar is
+       asymmetric about zero wherever the data are.  The levels are multiples
+       of one band width, as ``tight_levels`` gives.
+    2. A diverging bar has ``bands_per_side`` bands, eight, on its longer side
+       of zero, and on its shorter side as many as reach that side's extreme.
+       The longer side is the one whose covered extent, below, is larger.
+    3. A side ends in an arrow tip when its extreme runs more than
+       ``tip_ratio`` times past its reference, the largest over the fields of
+       each field's own ``quantile`` of magnitude on that side; its bands then
+       cover the reference instead of the extreme.  Taking the quantile per
+       field keeps a field of small values sharing the bar from pulling the
+       reference down, as a quantile of all the fields pooled would.
+    4. An asymmetric bar never tips on its shorter side, which always reaches
+       its own extreme.  With ``band_colors_about_center`` the shorter side's
+       colors stop short of the longer side's, so a tip there would draw that
+       side's most extreme values paler than smaller magnitudes on the other
+       side.  When the shorter side would need as many bands as the longer,
+       the bar becomes symmetric, and then either side may tip.
+
+    A sequential bar takes up to ``num_bands`` bands from the smallest value
+    to its covered top, chosen by the same tip test on the values themselves,
+    and only its top can tip.
+
+    A diverging bar is centered on zero.  For another central value, pass the
+    fields minus that value and add it back to the levels.
+
+    Parameters
+    ----------
+    arrs : array-like or sequence of array-like
+        The field, or a list or tuple of every field the colorbar serves, each
+        restricted beforehand to what its panel draws: its frame and its mask.
+        Cells passed from outside the frame widen the bar by values nobody
+        sees.  NaNs and infinities are ignored.
+    kind : {"diverging", "sequential"}
+        A diverging bar suits a field whose plotted values span zero; a
+        sequential one, a field of one sign, which must not be negative.
+    step : float, optional
+        The band width.  By default it is chosen from nice widths to give the
+        band counts above.  A diverging bar with ``step`` given has as many
+        bands on its longer side as reach that side's covered extent.
+    bands_per_side : int
+        Bands on the longer side of zero of a diverging bar.
+    num_bands : int
+        The most bands of a sequential bar.
+    quantile : float
+        The quantile of magnitude each side's arrow-tip test refers to.
+    tip_ratio : float
+        How far past that reference a side's extreme may run before the side
+        ends in an arrow tip.
+
+    Returns
+    -------
+    TightScale
+        The levels, the ``extend`` they need, the extremes an arrow tip should
+        print, and the band width.  ``band_colors_about_center`` or
+        ``sequential_band_colors`` give the band colors, and
+        ``colorbar_ticks`` the boundaries to label.
+
+    Raises
+    ------
+    ValueError
+        If ``kind`` is neither ``"diverging"`` nor ``"sequential"``; if the
+        fields hold no finite values, or only one value and no ``step``; or if
+        a sequential field holds a negative value.
+
+    """
+    if kind not in ("diverging", "sequential"):
+        raise ValueError(f"kind must be 'diverging' or 'sequential'; got {kind!r}")
+    if step is not None and step <= 0:
+        raise ValueError(f"step must be positive; got {step}")
+    parts = _finite_parts(arrs)
+    if not any(vals.size for vals in parts):
+        raise ValueError("no finite values in `arrs`; nothing to scale")
+    lo = min(float(vals.min()) for vals in parts if vals.size)
+    hi = max(float(vals.max()) for vals in parts if vals.size)
+    if kind == "sequential":
+        if lo < 0:
+            raise ValueError(
+                f"a sequential field must not be negative; its smallest value is "
+                f"{lo:g}.  A field spanning zero takes kind='diverging'."
+            )
+        cover_hi = _covered(hi, _side_reference(parts, 0, quantile), tip_ratio)
+        if cover_hi <= lo:
+            # A reference at the smallest value, as for a field mostly at
+            # zero, leaves nothing for the bands to cover short of the extreme.
+            cover_hi = hi
+        if step is None:
+            if cover_hi == lo:
+                raise ValueError("the fields hold a single value; pass `step`")
+            step = next(
+                s
+                for s in _nice_steps((cover_hi - lo) / num_bands, _SEQUENTIAL_MANTISSAS)
+                if tight_levels(np.array([lo, cover_hi]), s).size - 1 <= num_bands
+            )
+        levels = _round12(tight_levels(np.array([lo, cover_hi]), step))
+    else:
+        extreme = {+1: max(hi, 0.0), -1: max(-lo, 0.0)}
+        cover = {
+            sign: (
+                _covered(
+                    extreme[sign], _side_reference(parts, sign, quantile), tip_ratio
+                )
+                if extreme[sign] > 0
+                else 0.0
+            )
+            for sign in (+1, -1)
+        }
+        long_side = +1 if cover[+1] >= cover[-1] else -1
+        short_side = -long_side
+        if step is None:
+            if cover[long_side] == 0:
+                raise ValueError("the fields hold a single value; pass `step`")
+            step = _long_side_step(cover[long_side], extreme[long_side], bands_per_side)
+            num_long = bands_per_side
+        else:
+            num_long = max(int(np.ceil(cover[long_side] / step - _GRID_SNAP_TOL)), 1)
+        num_short = int(np.ceil(extreme[short_side] / step - _GRID_SNAP_TOL))
+        while True:
+            num_short = min(num_short, num_long)
+            counts = {long_side: num_long, short_side: num_short}
+            levels = _round12(step * np.arange(-counts[-1], counts[+1] + 1))
+            # Rounding to twelve figures can leave the shorter side's end a
+            # hair inside its extreme, which contourf would leave unfilled.
+            end = -levels[0] if short_side == -1 else levels[-1]
+            if num_short == num_long or end >= extreme[short_side]:
+                break
+            num_short += 1
+    return TightScale(
+        levels=levels,
+        extend=_extend_for(parts, levels),
+        extremes=(lo, hi),
+        step=float(step),
+    )
+
+
+def _zero_index(levels: np.ndarray) -> int | None:
+    """Index of the level at zero, to within rounding, or None if there is none."""
+    scale = float(np.max(np.abs(levels)))
+    hits = np.flatnonzero(np.abs(levels) <= 1e-9 * max(scale, 1e-300))
+    return int(hits[0]) if hits.size else None
+
+
+def colorbar_ticks(
+    levels: ArrayLike | Sequence[float],
+    every: int = 2,
+    max_labels: int = MAX_TICK_LABELS,
+) -> list[float]:
+    """The band boundaries of a colorbar to label.
+
+    Labels every ``every``-th boundary or coarser, with at most ``max_labels``
+    labels, in one of three ways.
+
+    1. **Zero inside the bar:** stepping outward from zero, every ``every``-th
+       boundary, or the first coarser stride giving at most ``max_labels``.
+       Stepping from the ends instead leaves zero unlabeled whenever the two
+       sides differ in band count, as most bars from ``tight_scale`` do.
+    2. **Otherwise,** at a stride dividing the number of bands, so both ends
+       are labeled and every label sits the same number of bands from its
+       neighbors.  Among the strides giving 3 to ``max_labels`` labels, the
+       one nearest ``every`` is taken, coarser on a tie, and a stride that
+       also labels zero with at least four labels is preferred.
+    3. **When no such stride exists,** as when a prime number of bands rules
+       out every divisor but 1, at the stride nearest ``every`` giving 3 to
+       ``max_labels`` labels, counted from zero if zero is a level and from
+       the lowest boundary if not.  One end is then left unlabeled.
+
+    A level within rounding of zero is labeled as exactly 0.
+
+    Parameters
+    ----------
+    levels : array-like
+        The band edges, increasing, as ``tight_scale`` gives them.
+    every : int
+        The finest stride, in bands, between labeled boundaries.
+    max_labels : int
+        The most labels, at least 3.
+
+    Returns
+    -------
+    list of float
+        The boundaries to pass to ``Colorbar.set_ticks``.
+
+    """
+    level_vals = _increasing_levels(levels).copy()
+    if every < 1:
+        raise ValueError(f"every must be at least 1; got {every}")
+    if max_labels < 3:
+        raise ValueError(f"max_labels must be at least 3; got {max_labels}")
+    num = level_vals.size - 1
+    zero = _zero_index(level_vals)
+    if zero is not None:
+        level_vals[zero] = 0.0
+    if zero is not None and 0 < zero < num:
+        for stride in range(every, num + 1):
+            picked = level_vals[zero % stride :: stride]
+            if picked.size <= max_labels:
+                return [float(v) for v in picked]
+    divisors = [d for d in range(1, num + 1) if num % d == 0]
+    pool = [d for d in divisors if 3 <= num // d + 1 <= max_labels or num < 2]
+    if not pool:
+        anchor = 0 if zero is None else zero
+        strides = [
+            k
+            for k in range(1, num + 1)
+            if 3 <= len(range(anchor % k, num + 1, k)) <= max_labels
+        ]
+        stride = min(strides, key=lambda k: (abs(k - every), -k))
+        return [float(v) for v in level_vals[anchor % stride :: stride]]
+    preferred = [
+        d for d in pool if zero is not None and zero % d == 0 and num // d + 1 >= 4
+    ]
+    stride = min(preferred or pool, key=lambda d: (abs(d - every), -d))
+    return [float(v) for v in level_vals[::stride]]
 
 
 # Plot horizontal, vertical, diagonal lines.

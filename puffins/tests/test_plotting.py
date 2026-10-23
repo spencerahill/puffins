@@ -10,11 +10,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
+from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 
 from puffins.plotting import (  # noqa: E402
     band_colors_about_center,
+    colorbar_ticks,
     panel_label,
+    sequential_band_colors,
     tight_levels,
+    tight_scale,
     trunc_cmap_about_center,
     truncate_cmap,
 )
@@ -369,6 +373,433 @@ class TestBandColorsAboutCenter:
         """A NaN level would otherwise select a band silently and wrongly."""
         with pytest.raises(ValueError, match="must increase"):
             band_colors_about_center(plt.get_cmap("RdBu_r"), [0.0, np.nan, 1.0])
+
+    def test_extend_neither_is_the_default(self) -> None:
+        cmap = plt.get_cmap("RdBu_r")
+        levels = np.arange(-8, 5) * 4.0
+        assert band_colors_about_center(
+            cmap, levels, extend="neither"
+        ) == band_colors_about_center(cmap, levels)
+
+    @pytest.mark.parametrize(
+        ("levels", "under_pos", "over_pos"),
+        [
+            # Eight bands below zero and four above: the longer side's tip is
+            # clipped to the colormap's end, and the shorter side's is one band
+            # past its outermost band, at 0.5 + 4.5 / 16.
+            (np.arange(-8, 5) * 4.0, 0.0, 0.78125),
+            # Mirrored: one band below zero and eight above.
+            (np.arange(-1, 9) * 4.0, 0.5 - 1.5 / 16, 1.0),
+        ],
+    )
+    def test_tip_colors(
+        self, levels: np.ndarray, under_pos: float, over_pos: float
+    ) -> None:
+        """Each tip is one band further along its side, clipped to the end."""
+        cmap = plt.get_cmap("RdBu_r")
+        bands = band_colors_about_center(cmap, levels)
+        both = band_colors_about_center(cmap, levels, extend="both")
+        assert both == [cmap(under_pos), *bands, cmap(over_pos)]
+        assert band_colors_about_center(cmap, levels, extend="min") == both[:-1]
+        assert band_colors_about_center(cmap, levels, extend="max") == both[1:]
+
+    def test_tip_colors_reach_matplotlib_tips(self) -> None:
+        """With BoundaryNorm, out-of-range values take the tip colors."""
+        cmap = plt.get_cmap("RdBu_r")
+        levels = np.arange(-8, 5) * 4.0
+        colors = band_colors_about_center(cmap, levels, extend="both")
+        listed = ListedColormap(colors)
+        norm = BoundaryNorm(levels, len(colors), extend="both")
+        assert listed(norm(-40.0)) == colors[0]
+        assert listed(norm(17.0)) == colors[-1]
+        assert listed(norm(1.0)) == colors[9]  # the band from 0 to 4
+
+    def test_bad_extend_raises(self) -> None:
+        with pytest.raises(ValueError, match="extend must be one of"):
+            band_colors_about_center(plt.get_cmap("RdBu_r"), [0.0, 1.0], extend="up")
+
+
+class TestSequentialBandColors:
+    """Bands sampled evenly from ``start``, stopping short of a tip."""
+
+    def test_bands_span_start_to_end(self) -> None:
+        cmap = plt.get_cmap("viridis")
+        colors = sequential_band_colors(cmap, np.arange(9.0))
+        assert colors == [cmap(p) for p in np.linspace(0.1, 1.0, 8)]
+
+    def test_tip_is_darker_than_every_band(self) -> None:
+        """With a tip the darkest band sits at 1 - 0.8 / 8 and the tip at 1."""
+        cmap = plt.get_cmap("viridis")
+        colors = sequential_band_colors(cmap, np.arange(9.0), extend="max")
+        assert colors == [*(cmap(p) for p in np.linspace(0.1, 0.9, 8)), cmap(1.0)]
+
+    def test_start(self) -> None:
+        cmap = plt.get_cmap("viridis")
+        colors = sequential_band_colors(cmap, np.arange(5.0), start=0.3)
+        assert colors == [cmap(p) for p in np.linspace(0.3, 1.0, 4)]
+
+    def test_tip_reaches_matplotlib_tip(self) -> None:
+        cmap = plt.get_cmap("viridis")
+        levels = np.arange(9.0)
+        colors = sequential_band_colors(cmap, levels, extend="max")
+        norm = BoundaryNorm(levels, len(colors), extend="max")
+        assert ListedColormap(colors)(norm(20.0)) == cmap(1.0)
+
+    @pytest.mark.parametrize("extend", ["min", "both"])
+    def test_lower_tip_raises(self, extend: str) -> None:
+        with pytest.raises(ValueError, match="tips only at its upper end"):
+            sequential_band_colors(plt.get_cmap("viridis"), [0.0, 1.0], extend=extend)
+
+    @pytest.mark.parametrize(("start", "extend"), [(-0.1, "neither"), (0.95, "max")])
+    def test_start_out_of_range_raises(self, start: float, extend: str) -> None:
+        """The second case lies above the darkest band, 0.9 for eight bands."""
+        with pytest.raises(ValueError, match="start must lie"):
+            sequential_band_colors(
+                plt.get_cmap("viridis"), np.arange(9.0), start=start, extend=extend
+            )
+
+
+class TestTightScale:
+    """Levels per Spencer Hill's colorbar rules of 2026-09-28.
+
+    The expected levels are worked out by hand in each test's docstring from
+    the rules in ``tight_scale``'s docstring.  "Nice" band widths are the
+    mantissas 1, 1.5, 2, 2.5, 3, 4, 5, 6 and 8 times a power of ten for a
+    diverging bar, and 1, 2, 2.5 and 5 for a sequential one.
+
+    """
+
+    def test_diverging_asymmetric(self) -> None:
+        """Eight bands on the longer side, as many as reach the shorter's extreme.
+
+        The longer, negative side covers 31.1: the smallest nice width whose
+        eight bands reach it is 4, and its outermost band, -32 to -28, holds
+        -31.1.  The positive side needs ceil(14 / 4) = 4 bands.
+
+        """
+        scale = tight_scale(np.array([-31.1, 14.0]))
+        np.testing.assert_array_equal(scale.levels, np.arange(-8, 5) * 4.0)
+        assert scale.extend == "neither"
+        assert scale.step == 4.0
+        assert scale.extremes == (-31.1, 14.0)
+
+    def test_outermost_band_never_empty(self) -> None:
+        """A width rounded up past one band beyond the extreme is refused.
+
+        Eight bands of 4 reach -24.5 but leave -32 to -28 empty, since -24.5 is
+        above -28.  So the width is the largest nice one short of 24.5, which
+        is 3, and the last 0.5 runs into a tip.
+
+        """
+        scale = tight_scale(np.array([-24.5, 10.0]))
+        np.testing.assert_array_equal(scale.levels, np.arange(-8, 5) * 3.0)
+        assert scale.extend == "min"
+
+    def test_long_side_tips_past_its_reference(self) -> None:
+        """An extreme beyond 1.3 times the 95th percentile runs into a tip.
+
+        The negative side's 95th percentile of magnitude lies between 16 and
+        20, and its extreme, 60, is far past 1.3 times that, so its eight bands
+        cover the percentile at a width of 2.5.  The positive side reaches 5
+        in two bands.
+
+        """
+        field = np.concatenate([np.linspace(-20.0, 5.0, 2501), [-60.0]])
+        reference = np.quantile(-field[field < 0], 0.95)
+        assert 16.0 < reference <= 20.0 and 1.3 * reference < 60.0
+        scale = tight_scale(field)
+        np.testing.assert_array_equal(scale.levels, np.arange(-8, 3) * 2.5)
+        assert scale.extend == "min"
+        assert scale.extremes == (-60.0, 5.0)
+
+    def test_shorter_side_never_tips_so_bar_turns_symmetric(self) -> None:
+        """A shorter side needing as many bands as the longer gets exactly as many.
+
+        The negative side covers 10.  Eight bands of 1.5 would leave -12 to
+        -10.5 empty, so the width is 1.  The positive side would then need ten
+        bands to reach 9.9; the bar becomes symmetric at eight a side, and
+        both sides tip.
+
+        """
+        scale = tight_scale(np.array([-10.0, 9.9]))
+        np.testing.assert_array_equal(scale.levels, np.arange(-8, 9) * 1.0)
+        assert scale.extend == "both"
+
+    def test_shorter_side_end_on_a_grid_multiple(self) -> None:
+        """0.07 / 0.01 is 7.000000000000001, which must not add an empty band."""
+        scale = tight_scale(np.array([-0.08, 0.07]), step=0.01)
+        assert scale.levels[-1] == 0.07
+        assert scale.levels[0] == -0.08
+        assert scale.extend == "neither"
+
+    def test_levels_rounded_to_twelve_figures(self) -> None:
+        """No level carries float noise, such as -0.042000000000000003.
+
+        The negative side covers 0.0543 at a width of 0.006, eight bands to
+        -0.048, since a width of 0.008 would leave -0.064 to -0.056 empty; the
+        positive side reaches 0.0286 in five bands, to 0.03.
+
+        """
+        scale = tight_scale(np.array([-0.0543, 0.0286]))
+        expected = [float(f"{v:.12g}") for v in np.arange(-8, 6) * 0.006]
+        assert scale.levels.tolist() == expected
+        assert [str(v) for v in scale.levels[:3]] == ["-0.048", "-0.042", "-0.036"]
+        assert scale.extend == "min"
+
+    def test_step(self) -> None:
+        """A given width covers each side's extreme in as many bands as needed."""
+        scale = tight_scale(np.array([-31.1, 14.0]), step=5.0)
+        np.testing.assert_array_equal(scale.levels, np.arange(-7, 4) * 5.0)
+        assert scale.step == 5.0
+
+    def test_step_with_a_tip(self) -> None:
+        """A given width covers a tipping side's reference, not its extreme.
+
+        The field of ``test_long_side_tips_past_its_reference``: four bands of
+        5 cover its negative side's reference, between 16 and 20, and one
+        reaches 5.
+
+        """
+        field = np.concatenate([np.linspace(-20.0, 5.0, 2501), [-60.0]])
+        scale = tight_scale(field, step=5.0)
+        np.testing.assert_array_equal(scale.levels, np.arange(-4, 2) * 5.0)
+        assert scale.extend == "min"
+
+    def test_bands_per_side(self) -> None:
+        """Four bands of 8 cover -31.1, and two reach 14."""
+        scale = tight_scale(np.array([-31.1, 14.0]), bands_per_side=4)
+        np.testing.assert_array_equal(scale.levels, np.arange(-4, 3) * 8.0)
+
+    def test_sequential(self) -> None:
+        """Up to sixteen bands from the smallest value to the largest.
+
+        The range of June-September mean rain over monsoonal India, 0.3683 to
+        39.2353 mm per day: 2.5 is the finest sequential width giving at most
+        sixteen bands, 0 to 40.
+
+        """
+        scale = tight_scale(np.array([0.3683, 39.2353]), kind="sequential")
+        np.testing.assert_array_equal(scale.levels, np.arange(17) * 2.5)
+        assert scale.extend == "neither"
+        assert scale.step == 2.5
+
+    def test_sequential_num_bands(self) -> None:
+        """At most eight bands: a width of 5, 0 to 40."""
+        scale = tight_scale(np.array([0.3683, 39.2353]), kind="sequential", num_bands=8)
+        np.testing.assert_array_equal(scale.levels, np.arange(9) * 5.0)
+
+    def test_sequential_far_from_zero(self) -> None:
+        """The bar starts at the smallest value: 150 to 300 in fifteen bands of 10."""
+        scale = tight_scale(np.array([151.2, 298.7]), kind="sequential")
+        np.testing.assert_array_equal(scale.levels, 150.0 + np.arange(16) * 10.0)
+
+    def test_sequential_top_tips(self) -> None:
+        """The bands cover a 95th percentile between 9 and 10, in ten bands of 1."""
+        field = np.concatenate([np.linspace(0.0, 10.0, 1001), [40.0]])
+        reference = np.quantile(field, 0.95)
+        assert 9.0 < reference <= 10.0 and 1.3 * reference < 40.0
+        scale = tight_scale(field, kind="sequential")
+        np.testing.assert_array_equal(scale.levels, np.arange(11) * 1.0)
+        assert scale.extend == "max"
+
+    def test_sequential_mostly_at_the_minimum(self) -> None:
+        """A 95th percentile at the minimum leaves the bands covering the extreme.
+
+        Like a rain field that is zero almost everywhere: fourteen bands of 0.5
+        reach 7.
+
+        """
+        field = np.concatenate([np.zeros(1000), [5.0, 7.0]])
+        assert np.quantile(field, 0.95) == 0.0
+        scale = tight_scale(field, kind="sequential")
+        np.testing.assert_array_equal(scale.levels, np.arange(15) * 0.5)
+        assert scale.extend == "neither"
+
+    def test_reference_is_per_field_not_pooled(self) -> None:
+        """A field of small values sharing the bar does not pull the reference down.
+
+        The first field's own 95th percentile is about 9.5, and its extreme,
+        12, is within 1.3 times that, so the bar covers 12.  The second field
+        alone lies between 0 and 1, and the 95th percentile of both pooled is
+        low enough that the pooled rule would tip at 12.
+
+        """
+        first = np.concatenate([np.linspace(0.0, 10.0, 1001), [12.0]])
+        second = np.tile(np.linspace(0.0, 1.0, 101), 30)
+        assert 1.3 * np.quantile(first, 0.95) >= 12.0
+        assert 1.3 * np.quantile(np.concatenate([first, second]), 0.95) < 12.0
+        scale = tight_scale([first, second], kind="sequential")
+        np.testing.assert_array_equal(scale.levels, np.arange(13) * 1.0)
+        assert scale.extend == "neither"
+
+    def test_reference_takes_every_field(self) -> None:
+        """The extremes and the reference come from every field, in any position."""
+        fields = (
+            xr.DataArray(np.linspace(0.0, 1.0, 101), dims=["x"]),
+            xr.DataArray(np.concatenate([np.linspace(0.0, 10.0, 1001), [12.0]])),
+        )
+        scale = tight_scale(fields, kind="sequential")
+        assert scale.extremes == (0.0, 12.0)
+        assert scale.extend == "neither"
+
+    def test_quantile(self) -> None:
+        """At the 90th percentile, 9, the extreme of 12 passes 1.3 times it."""
+        field = np.concatenate([np.linspace(0.0, 10.0, 1001), [12.0]])
+        assert tight_scale(field, kind="sequential").extend == "neither"
+        assert tight_scale(field, kind="sequential", quantile=0.9).extend == "max"
+
+    def test_tip_ratio(self) -> None:
+        """At a ratio of 1.1 the extreme of 12 passes 1.1 times about 9.5."""
+        field = np.concatenate([np.linspace(0.0, 10.0, 1001), [12.0]])
+        assert tight_scale(field, kind="sequential", tip_ratio=1.1).extend == "max"
+
+    def test_nans_and_infinities_ignored(self) -> None:
+        field = np.array([np.nan, -31.1, np.inf, 14.0, -np.inf])
+        np.testing.assert_array_equal(tight_scale(field).levels, np.arange(-8, 5) * 4.0)
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_rules_hold_on_random_fields(self, seed: int) -> None:
+        """The rules as invariants, over shifted and heavy-tailed random fields.
+
+        The longer side has exactly eight bands; an asymmetric bar's shorter
+        side never tips; and the longer side's outermost band holds data
+        unless that side tips.
+
+        """
+        rng = np.random.default_rng(seed)
+        fields = []
+        for _ in range(rng.integers(1, 4)):
+            vals = 10.0 ** rng.uniform(-3, 3) * (
+                rng.standard_normal(int(rng.integers(20, 2000))) + rng.uniform(-1, 1)
+            )
+            vals[:5] *= rng.uniform(1, 8)
+            fields.append(vals)
+        scale = tight_scale(fields)
+        levels, step = scale.levels, scale.step
+        lo, hi = scale.extremes
+        n_below = int(np.sum(levels < 0))
+        n_above = int(np.sum(levels > 0))
+        assert max(n_below, n_above) == 8
+        tips_low, tips_high = lo < levels[0], hi > levels[-1]
+        assert (
+            scale.extend
+            == {
+                (False, False): "neither",
+                (True, False): "min",
+                (False, True): "max",
+                (True, True): "both",
+            }[(tips_low, tips_high)]
+        )
+        if n_below > n_above:
+            assert not tips_high
+            assert tips_low or -lo > (n_below - 1) * step
+        elif n_above > n_below:
+            assert not tips_low
+            assert tips_high or hi > (n_above - 1) * step
+
+    def test_constant_with_step(self) -> None:
+        scale = tight_scale(np.array([5.0, 5.0]), kind="sequential", step=1.0)
+        np.testing.assert_array_equal(scale.levels, [5.0, 6.0])
+
+    @pytest.mark.parametrize("kind", ["diverging", "sequential"])
+    def test_constant_without_step_raises(self, kind: str) -> None:
+        field = np.zeros(3) if kind == "diverging" else np.full(3, 5.0)
+        with pytest.raises(ValueError, match="single value"):
+            tight_scale(field, kind=kind)
+
+    def test_negative_sequential_raises(self) -> None:
+        with pytest.raises(ValueError, match="must not be negative"):
+            tight_scale(np.array([-1.0, 5.0]), kind="sequential")
+
+    def test_bad_kind_raises(self) -> None:
+        with pytest.raises(ValueError, match="kind must be"):
+            tight_scale(np.array([0.0, 1.0]), kind="cyclic")
+
+    def test_no_finite_values_raises(self) -> None:
+        with pytest.raises(ValueError, match="no finite values"):
+            tight_scale([np.array([np.nan]), np.array([])])
+
+    @pytest.mark.parametrize("step", [0.0, -1.0])
+    def test_nonpositive_step_raises(self, step: float) -> None:
+        with pytest.raises(ValueError, match="step must be positive"):
+            tight_scale(np.array([-1.0, 1.0]), step=step)
+
+
+class TestColorbarTicks:
+    """Labeled boundaries: outward from zero, or at a stride dividing the bar."""
+
+    def test_outward_from_zero(self) -> None:
+        levels = np.arange(-8, 5) * 4.0
+        assert colorbar_ticks(levels) == [-32.0, -24.0, -16.0, -8.0, 0.0, 8.0, 16.0]
+
+    def test_zero_labeled_when_off_the_ends_stride(self) -> None:
+        """Three bands below zero and nine above: the ends go unlabeled."""
+        levels = np.arange(-3, 10) * 1.0
+        assert colorbar_ticks(levels) == [-2.0, 0.0, 2.0, 4.0, 6.0, 8.0]
+
+    def test_every(self) -> None:
+        levels = np.arange(-8, 9) * 1.0
+        assert colorbar_ticks(levels, every=4) == [-8.0, -4.0, 0.0, 4.0, 8.0]
+
+    def test_coarsens_to_max_labels(self) -> None:
+        """Every second boundary gives nine labels; at most five takes every third."""
+        levels = np.arange(-8, 9) * 1.0
+        assert len(colorbar_ticks(levels)) == 9
+        assert colorbar_ticks(levels, max_labels=5) == [-6.0, -3.0, 0.0, 3.0, 6.0]
+
+    def test_sequential_stride_divides_the_bar(self) -> None:
+        levels = np.arange(17) * 2.5
+        assert colorbar_ticks(levels) == [
+            0.0,
+            5.0,
+            10.0,
+            15.0,
+            20.0,
+            25.0,
+            30.0,
+            35.0,
+            40.0,
+        ]
+
+    def test_prefers_four_or_more_labels(self) -> None:
+        """Twelve bands ending at zero, every=6: four labels beat three.
+
+        Strides of 4 and 6 both divide the bar; 6 is nearer ``every`` but
+        gives only three labels.
+
+        """
+        levels = np.arange(-12, 1) * 1.0
+        assert colorbar_ticks(levels, every=6) == [-12.0, -8.0, -4.0, 0.0]
+
+    def test_tie_goes_to_the_coarser_stride(self) -> None:
+        """Sixteen bands, every=3: strides 2 and 4 are equally near; 4 wins."""
+        levels = np.arange(17) * 1.0
+        assert colorbar_ticks(levels, every=3) == [0.0, 4.0, 8.0, 12.0, 16.0]
+
+    def test_prime_band_count_without_zero(self) -> None:
+        """Thirteen bands: no divisor but 1 and 13, so count from the lowest."""
+        levels = np.arange(1, 15) * 1.0
+        assert colorbar_ticks(levels) == [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0]
+
+    def test_prime_band_count_from_zero(self) -> None:
+        levels = np.arange(-13, 1) * 1.0
+        assert colorbar_ticks(levels) == [-12.0, -10.0, -8.0, -6.0, -4.0, -2.0, 0.0]
+
+    def test_near_zero_level_labeled_as_zero(self) -> None:
+        """-0.3 + 3 * 0.1 is 5.55e-17, which must not print as such."""
+        levels = -0.3 + 0.1 * np.arange(7)
+        assert levels[3] != 0.0
+        ticks = colorbar_ticks(levels)
+        assert 0.0 in ticks
+        assert not any(0.0 < abs(t) < 1e-12 for t in ticks)
+
+    def test_bad_every_raises(self) -> None:
+        with pytest.raises(ValueError, match="every must be"):
+            colorbar_ticks(np.arange(5.0), every=0)
+
+    def test_bad_max_labels_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_labels must be"):
+            colorbar_ticks(np.arange(5.0), max_labels=2)
 
 
 def test_truncate_cmap_endpoints() -> None:
