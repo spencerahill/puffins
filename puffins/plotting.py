@@ -505,7 +505,8 @@ def _drawn_range(
     i_lo = int(np.searchsorted(px, left, side="left"))
     i_hi = int(np.searchsorted(px, right, side="right"))
     inside = heights[i_lo:i_hi]
-    vals = [float(v) for v in inside[np.isfinite(inside)]]
+    inside = inside[np.isfinite(inside)]
+    vals = [float(inside.min()), float(inside.max())] if inside.size else []
     for edge, i in ((left, i_lo), (right, i_hi)):
         if 0 < i < px.size and np.isfinite(heights[i - 1]) and np.isfinite(heights[i]):
             vals.append(
