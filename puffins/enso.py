@@ -357,17 +357,24 @@ def read_cpc_index(
     Reads tables such as ``oni.ascii.txt``, whose columns are ``SEAS YR TOTAL
     ANOM``, and ``RONI.ascii.txt``, whose columns are ``SEAS YR ANOM``, from
     https://www.cpc.ncep.noaa.gov/data/indices/.  Each row is one 3-month
-    season, labeled by its months' initials and a year.
+    season, labeled by its months' initials and a year.  Those two tables are
+    built from ERSSTv6 SST; CPC's ERSSTv5 versions are ``oni.v5.ascii.txt``
+    and ``RONI.v5.ascii.txt`` at the same address.
 
     Each value is placed at the first day of its season's center month, which
     is how ``roni`` indexes its running means, so a table read here and
     ``roni`` of a field stamped at the start of each month share a time axis.
     The year is that of the center month: DJF 1950 is December 1949 through
     February 1950, and NDJ 1950 is November 1950 through January 1951.  CPC's
-    pages do not state this.  It is what CPC's own ``TOTAL`` column of
-    ``oni.ascii.txt`` gives: 3-month means of ERSSTv5 NINO3.4 SST centered
-    this way match it as closely for DJF and NDJ as for the other ten seasons,
-    and centered a year off they do not.
+    pages give each season's months but not the year they fall in.  The
+    convention is what CPC's own data give: 3-month means of the monthly
+    NINO3.4 that the ONI averages (``detrend.nino34.ascii.txt``, at the same
+    address), centered this way, reproduce ``oni.ascii.txt`` to its rounding,
+    for DJF and NDJ as for the other ten seasons, and with DJF or NDJ moved a
+    year they miss it by about 1.5 K rms.
+
+    A missing-value code, such as the -999.9 of some other CPC tables, would
+    be read as a number; none of the ONI or RONI tables contains one.
 
     Parameters
     ----------
@@ -389,18 +396,21 @@ def read_cpc_index(
     Raises
     ------
     ValueError
-        If the header does not begin ``SEAS YR`` or lacks ``column``; if a row
-        has the wrong number of fields or an unknown season; if the table has
-        no rows; or if the rows do not run one season after another, as when
-        a row is repeated, missing or out of order.
+        If the header does not begin ``SEAS YR`` or ``column`` is not one of
+        its value columns; if a row has the wrong number of fields, an unknown
+        season, or a year or value that does not parse as a number; if the
+        table has no rows; or if the rows do not run one season after another,
+        as when a row is repeated, missing or out of order.
     """
-    lines = [line.split() for line in Path(path).read_text().splitlines()]
-    rows = [fields for fields in lines if fields]
+    text = Path(path).read_text(encoding="utf-8-sig")
+    rows = [fields for fields in (line.split() for line in text.splitlines()) if fields]
     if not rows or rows[0][:2] != ["SEAS", "YR"]:
         raise ValueError(f"{path}: the header must begin 'SEAS YR'")
     header = rows[0]
     if column not in header[2:]:
-        raise ValueError(f"{path}: no column {column!r} in the header {header}")
+        raise ValueError(
+            f"{path}: {column!r} is not a value column of the header {header}"
+        )
     ind = header.index(column)
     if len(rows) == 1:
         raise ValueError(f"{path}: the table has no rows")
@@ -411,8 +421,11 @@ def read_cpc_index(
             raise ValueError(f"{path}: row {fields} does not match the header {header}")
         if fields[0] not in CPC_SEASONS:
             raise ValueError(f"{path}: unknown season {fields[0]!r} in row {fields}")
-        months.append(12 * int(fields[1]) + CPC_SEASONS.index(fields[0]))
-        values.append(float(fields[ind]))
+        try:
+            months.append(12 * int(fields[1]) + CPC_SEASONS.index(fields[0]))
+            values.append(float(fields[ind]))
+        except ValueError as err:
+            raise ValueError(f"{path}: row {fields} does not parse: {err}") from err
     month_index = np.array(months)
     if not np.all(np.diff(month_index) == 1):
         raise ValueError(

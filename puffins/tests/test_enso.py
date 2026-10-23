@@ -591,17 +591,29 @@ class TestReadCpcIndex:
         got = read_cpc_index(self.write(tmp_path, RONI_TABLE + "\n\n"))
         assert got.size == 3
 
+    def test_byte_order_mark_accepted(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, "﻿" + RONI_TABLE))
+        np.testing.assert_array_equal(got, [-1.19, -1.08, -0.96])
+
     @pytest.mark.parametrize(
         ("text", "column", "match"),
         [
             ("YR SEAS ANOM\n1950 DJF -1.19\n", "ANOM", "must begin 'SEAS YR'"),
             ("SEAS YEAR ANOM\nDJF 1950 -1.19\n", "ANOM", "must begin 'SEAS YR'"),
             ("", "ANOM", "must begin 'SEAS YR'"),
-            (RONI_TABLE, "TOTAL", "no column 'TOTAL'"),
-            (RONI_TABLE, "YR", "no column 'YR'"),
+            ("\n  \n\n", "ANOM", "must begin 'SEAS YR'"),
+            (RONI_TABLE, "TOTAL", "'TOTAL' is not a value column"),
+            (RONI_TABLE, "YR", "'YR' is not a value column"),
             ("SEAS YR ANOM\n", "ANOM", "no rows"),
             ("SEAS YR ANOM\nDJF 1950\n", "ANOM", "does not match the header"),
+            (
+                "SEAS YR ANOM\nDJF 1950 -1.19\nJFM\n",
+                "ANOM",
+                "does not match the header",
+            ),
             ("SEAS YR ANOM\nDJF 1950 -1.19 0.5\n", "ANOM", "does not match the header"),
+            ("SEAS YR ANOM\nDJF 1950 abc\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 19x0 -1.19\n", "ANOM", "does not parse"),
             ("SEAS YR ANOM\nDEJ 1950 -1.19\n", "ANOM", "unknown season 'DEJ'"),
             ("SEAS YR ANOM\nDJF 1950 -1.19\nFMA 1950 -0.96\n", "ANOM", "one season"),
             ("SEAS YR ANOM\nJFM 1950 -1.08\nDJF 1950 -1.19\n", "ANOM", "one season"),
