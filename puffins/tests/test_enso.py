@@ -1009,6 +1009,8 @@ class TestReadCpcIndex:
                 dtype="datetime64[ns]",
             ),
         )
+        # The resolution of the times roni returns from a decoded SST field.
+        assert got["time"].dtype == np.dtype("datetime64[ns]")
         assert got.name == "anom"
         assert got.dims == ("time",)
 
