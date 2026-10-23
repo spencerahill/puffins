@@ -4,7 +4,7 @@
 import os.path
 from collections import namedtuple
 from collections.abc import Sequence
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import xarray as xr
@@ -15,6 +15,8 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
+from matplotlib.text import Text
+from matplotlib.transforms import Bbox
 
 from ._typing import ArrayLike
 from .names import LAT_STR
@@ -467,6 +469,241 @@ def panel_label(
     if bold:
         text_kwargs.setdefault("fontweight", "bold")
     ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
+
+
+# Curve labeling.
+# Keywords label_curve sets itself, or that would move the drawn text off the
+# box it checks.
+_LABEL_KWARGS_SET_HERE = (
+    "ha",
+    "va",
+    "horizontalalignment",
+    "verticalalignment",
+    "transform",
+    "rotation_mode",
+    "bbox",
+)
+# Display pixels by which one candidate must beat another to be preferred, so
+# that leads equal but for rounding go to the leftmost.
+_LABEL_TIE_PX = 1e-6
+
+
+def _drawn_range(
+    px: np.ndarray, heights: np.ndarray, left: float, right: float
+) -> tuple[float, float] | None:
+    """Smallest and largest of a curve as drawn, over display x from ``left``
+    to ``right``.
+
+    ``px`` is sorted.  The curve's finite points in the span count, and so do
+    its values interpolated at the span's two ends, but only along a segment
+    whose two points are both finite: a NaN gap, and the stretch past either
+    end of the curve, are drawn blank and count as no curve.  None when no
+    drawn part of the curve lies in the span.
+    """
+    i_lo = int(np.searchsorted(px, left, side="left"))
+    i_hi = int(np.searchsorted(px, right, side="right"))
+    inside = heights[i_lo:i_hi]
+    inside = inside[np.isfinite(inside)]
+    vals = [float(inside.min()), float(inside.max())] if inside.size else []
+    for edge, i in ((left, i_lo), (right, i_hi)):
+        if 0 < i < px.size and np.isfinite(heights[i - 1]) and np.isfinite(heights[i]):
+            vals.append(
+                float(np.interp(edge, px[i - 1 : i + 1], heights[i - 1 : i + 1]))
+            )
+    if not vals:
+        return None
+    return min(vals), max(vals)
+
+
+def label_curve(
+    ax: Axes,
+    x: ArrayLike | Sequence[float],
+    ys: Sequence[ArrayLike | Sequence[float]],
+    which: int,
+    text: str,
+    *,
+    side: str = "auto",
+    gap: float = 2.0,
+    avoid: Sequence[Text | None] = (),
+    **text_kwargs: Any,
+) -> Text | None:
+    """Label one of several curves directly, beside it, in place of a legend.
+
+    Implements Spencer Hill's rules for direct labels (2026-07-22 and
+    2026-09-09): a label sits beside its curve and never on it, nearer to it
+    than to any other curve, at the x where its curve stands farthest from
+    the nearest other curve, on the side away from that curve.
+
+    Each candidate puts the label's left edge at one of the labeled curve's
+    points, on one side of it, with its near edge ``gap`` points beyond the
+    labeled curve's extreme over the label's width plus ``gap`` either side.
+    So the labeled curve is at least ``gap`` from the label, and at most
+    ``gap`` times the square root of 2, at a corner.  Every other curve must
+    be farther than that: over the label's width plus that distance either
+    side, it must lie wholly behind the labeled curve's extreme, or wholly
+    beyond the label's far edge, by more than that distance from the label.
+    So the label is clear of every curve and nearer the labeled one.  Of the
+    candidates lying wholly inside the axes and overlapping no text in
+    ``avoid``, those on the side away from the nearest other curve come
+    first, and among them the one where the labeled curve's extreme stands
+    farthest from the nearest other curve is taken, the leftmost on a tie,
+    and above on a tie at one point.  A candidate on the side toward the
+    nearest curve is taken only when no candidate on the side away from it
+    fits.
+
+    A curve counts only where it is drawn: along segments between two finite
+    points, so neither across a NaN gap nor past either end of the curve.
+    Curves are taken as straight segments through their points, centered on
+    the line: markers, a stepped drawstyle and the line's own width are not
+    counted, so pass a larger ``gap`` for them.
+
+    Distances are measured in display coordinates after a draw, so they hold
+    on the rendered figure whatever the axis scales.  The label is anchored in
+    data coordinates while its size and its gap are in points, so draw every
+    curve and fix the axis limits, the figure size and the layout first: a
+    later change to any of them can bring the label nearer a curve or push it
+    outside the axes.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes holding the curves.
+    x : array-like
+        The curves' shared x values, one-dimensional, as plotted; dates are
+        converted by the x axis's own units.
+    ys : sequence of array-like
+        Every curve on the axes that the label must keep clear of, each with
+        one value per ``x``; NaN marks a missing point.
+    which : int
+        Index in ``ys`` of the curve to label.
+    text : str
+        The label.
+    side : {"auto", "above", "below"}
+        Which side of its curve the label goes on, as seen on the screen.
+        ``"auto"`` tries both, preferring the side away from the nearest
+        other curve as the rules ask.
+    gap : float
+        Distance, in points, from the labeled curve's line to the label's
+        near edge; positive.
+    avoid : sequence of matplotlib.text.Text or None
+        Labels already placed, which this one must not overlap.  None
+        entries, as from earlier calls that placed nothing, are skipped.
+    **text_kwargs
+        Passed to ``Axes.text``, such as ``color`` and ``fontsize``.  The
+        alignment, the transform, the rotation mode and a bounding-box patch
+        are set here or would move the drawn text off the box checked, and
+        raise a ``ValueError`` if passed.
+
+    Returns
+    -------
+    matplotlib.text.Text or None
+        The label, or None when no position satisfies the rules, in which case
+        nothing is added to the axes; nothing is left on the axes if an
+        error is raised either.
+
+    """
+    if side not in ("auto", "above", "below"):
+        raise ValueError(f"side must be 'auto', 'above' or 'below'; got {side!r}")
+    if not gap > 0:
+        raise ValueError(f"gap must be positive; got {gap}")
+    blocked = sorted(set(text_kwargs) & set(_LABEL_KWARGS_SET_HERE))
+    if blocked:
+        raise ValueError(f"label_curve sets or forbids {blocked}; do not pass them")
+    curves = [np.asarray(y, dtype=float) for y in ys]
+    x_vals = np.asarray(ax.xaxis.convert_units(np.asarray(x)), dtype=float)
+    if x_vals.ndim != 1 or any(c.shape != x_vals.shape for c in curves):
+        raise ValueError("x must be one-dimensional and each curve must match it")
+    if not 0 <= which < len(curves):
+        raise ValueError(f"which must index ys, of length {len(curves)}; got {which}")
+    others_placed = [t for t in avoid if t is not None]
+    fig = ax.figure
+    fig.canvas.draw()
+    # Measured at the axes' center, a point every axis scale can place.
+    label = ax.text(
+        0.5, 0.5, text, transform=ax.transAxes, ha="left", va="bottom", **text_kwargs
+    )
+    placed = False
+    try:
+        extent = label.get_window_extent()
+        width, height = extent.width, extent.height
+        gap_px = gap * fig.dpi / 72.0
+        # The farthest the labeled curve can be from the label, at a corner.
+        reach = np.sqrt(2.0) * gap_px
+        # Display x from x alone: a NaN y makes the transform's x NaN as well,
+        # which would drop the other curves' points where the labeled one is
+        # missing.
+        y_ref = np.full_like(x_vals, float(np.mean(ax.get_ylim())))
+        px = ax.transData.transform(np.column_stack([x_vals, y_ref]))[:, 0]
+        order = np.argsort(px)
+        px = px[order]
+        py = [
+            ax.transData.transform(np.column_stack([x_vals, c]))[order, 1]
+            for c in curves
+        ]
+        frame = ax.bbox
+        best_key: tuple[bool, float] | None = None
+        best_place: tuple[float, float] | None = None
+        for left in px[np.isfinite(py[which])]:
+            right = left + width
+            if left < frame.x0 or right > frame.x1:
+                continue
+            own_span = (left - gap_px, right + gap_px)
+            other_span = (left - reach, right + reach)
+            for this_side in ("above", "below") if side == "auto" else (side,):
+                sign = 1.0 if this_side == "above" else -1.0
+                # Never None: the candidate's own point lies in its span.
+                own = cast(
+                    tuple[float, float],
+                    _drawn_range(px, sign * py[which], *own_span),
+                )
+                near_edge = own[1] + gap_px
+                far_edge = near_edge + height
+                behind, ahead = [], []
+                for k, curve_py in enumerate(py):
+                    if k == which:
+                        continue
+                    drawn = _drawn_range(px, sign * curve_py, *other_span)
+                    if drawn is None:
+                        continue
+                    if drawn[1] < near_edge - reach:
+                        behind.append(own[1] - drawn[1])
+                    elif drawn[0] > far_edge + reach:
+                        ahead.append(drawn[0] - own[1])
+                    else:
+                        break
+                else:
+                    if this_side == "above":
+                        y_lo, y_hi = near_edge, far_edge
+                    else:
+                        y_lo, y_hi = -far_edge, -near_edge
+                    if y_lo < frame.y0 or y_hi > frame.y1:
+                        continue
+                    box = Bbox([[left, y_lo], [right, y_hi]])
+                    if any(box.overlaps(t.get_window_extent()) for t in others_placed):
+                        continue
+                    nearest_behind = min(behind, default=np.inf)
+                    nearest_ahead = min(ahead, default=np.inf)
+                    away = nearest_behind <= nearest_ahead
+                    clearance = min(nearest_behind, nearest_ahead)
+                    if (
+                        best_key is None
+                        or away > best_key[0]
+                        or (
+                            away == best_key[0]
+                            and clearance > best_key[1] + _LABEL_TIE_PX
+                        )
+                    ):
+                        best_key, best_place = (away, clearance), (left, y_lo)
+        if best_place is None:
+            return None
+        x_data, y_data = ax.transData.inverted().transform(best_place)
+        label.set_transform(ax.transData)
+        label.set_position((float(x_data), float(y_data)))
+        placed = True
+        return label
+    finally:
+        if not placed:
+            label.remove()
 
 
 # Contour levels.
