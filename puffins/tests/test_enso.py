@@ -14,9 +14,11 @@ import xarray as xr
 
 from puffins.dates import ann_subset_ts, monthly_anom
 from puffins.enso import (
+    ENSO_THRESHOLD,
     RONI_BASE,
     RONI_SIGMA_YEARS,
     box_mean,
+    enso_phase,
     nino34,
     relative_nino34,
     relative_nino34_jjas,
@@ -298,6 +300,54 @@ class TestBoxes:
         np.testing.assert_allclose(
             tio(renamed, lat_str="latitude", lon_str="longitude"), tio(sst), rtol=1e-14
         )
+
+
+class TestEnsoPhase:
+    """El Niño at or above the threshold, La Niña at or below its negative."""
+
+    VALUES = [-1.5, -0.5, -0.49, 0.0, 0.49, 0.5, 0.51, 1.5, np.nan]
+
+    @staticmethod
+    def index(values: list[float]) -> xr.DataArray:
+        time = xr.date_range("2000-01-01", periods=len(values), freq="MS")
+        return xr.DataArray(values, dims=["time"], coords={"time": time}, name="roni")
+
+    def test_inclusive_by_default(self) -> None:
+        got = enso_phase(self.index(self.VALUES))
+        np.testing.assert_array_equal(got, [-1, -1, 0, 0, 0, 1, 1, 1, np.nan])
+
+    def test_strict(self) -> None:
+        got = enso_phase(self.index(self.VALUES), inclusive=False)
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 1, 1, np.nan])
+
+    def test_threshold(self) -> None:
+        got = enso_phase(self.index(self.VALUES), threshold=1.0)
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 0, 1, np.nan])
+
+    def test_default_threshold_is_cpcs(self) -> None:
+        assert ENSO_THRESHOLD == 0.5
+
+    def test_coordinates_kept_and_named(self) -> None:
+        index = self.index(self.VALUES)
+        got = enso_phase(index)
+        xr.testing.assert_equal(got["time"], index["time"])
+        assert got.name == "enso_phase"
+
+    def test_any_shape(self) -> None:
+        """A field of indices, such as one per ensemble member, keeps its shape."""
+        index = xr.DataArray([[0.7, -0.2], [-0.6, np.nan]], dims=["year", "member"])
+        got = enso_phase(index)
+        assert got.dims == ("year", "member")
+        np.testing.assert_array_equal(got, [[1, 0], [-1, np.nan]])
+
+    def test_inclusive_is_keyword_only(self) -> None:
+        with pytest.raises(TypeError):
+            enso_phase(self.index([0.5]), 0.5, False)  # type: ignore[misc]
+
+    @pytest.mark.parametrize("threshold", [0.0, -0.5, np.nan])
+    def test_nonpositive_threshold_raises(self, threshold: float) -> None:
+        with pytest.raises(ValueError, match="threshold must be positive"):
+            enso_phase(self.index([0.5]), threshold=threshold)
 
 
 class TestOutputNames:

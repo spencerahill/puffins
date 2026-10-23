@@ -24,6 +24,7 @@ built from the same SST product as its input.
 ``relative_nino34`` is the same quantity month by month, without the running
 mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 ``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
+``enso_phase`` labels each value of such an index El Niño, La Niña or neutral.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
@@ -151,6 +152,60 @@ def tropical_mean(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
 def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     """Tropical Indian Ocean SST on Yu et al. (2021)'s box, 20S-20N, 50-110E."""
     return cast(xr.DataArray, box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio"))
+
+
+ENSO_THRESHOLD: float = 0.5
+"""The index magnitude, in K, that CPC's thresholds for El Niño and La Niña use."""
+
+
+def enso_phase(
+    index: xr.DataArray, threshold: float = ENSO_THRESHOLD, *, inclusive: bool = True
+) -> xr.DataArray:
+    """The ENSO phase of each value of an index: El Niño, La Niña or neutral.
+
+    1 marks El Niño, a value at or above ``threshold``; -1 marks La Niña, a
+    value at or below ``-threshold``; 0 marks neutral; and NaN stays NaN.  The
+    phase is per value: CPC's further requirement that the threshold be met
+    for five consecutive overlapping seasons before a period counts as an
+    episode is not applied.
+
+    CPC words the threshold both ways.  Its ENSO Alert System defines El Niño
+    conditions by a relative anomaly "of 0.5° C or greater"
+    (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso_advisory/enso-alert-readme.shtml),
+    and its RONI page defines a warm value as one "greater than 0.5 degrees
+    Celsius" (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/).
+    With values to two decimals, as in CPC's tables, the choice determines
+    the phase of every season at exactly 0.50 or -0.50.
+
+    Parameters
+    ----------
+    index : xarray.DataArray
+        An ENSO index such as RONI or ONI, in K.
+    threshold : float
+        The positive magnitude separating neutral from El Niño and La Niña.
+    inclusive : bool
+        Whether a value exactly at ``threshold`` or ``-threshold`` counts as
+        El Niño or La Niña rather than neutral.
+
+    Returns
+    -------
+    xarray.DataArray
+        The phase, as floats so that NaN can stand for a missing value, on
+        ``index``'s coordinates, named ``"enso_phase"``.
+
+    Raises
+    ------
+    ValueError
+        If ``threshold`` is not positive.
+    """
+    if not threshold > 0:
+        raise ValueError(f"threshold must be positive; got {threshold}")
+    if inclusive:
+        warm, cold = index >= threshold, index <= -threshold
+    else:
+        warm, cold = index > threshold, index < -threshold
+    phase = xr.where(warm, 1.0, xr.where(cold, -1.0, 0.0)).where(index.notnull())
+    return cast(xr.DataArray, phase.rename("enso_phase"))
 
 
 def _box_anomalies(
