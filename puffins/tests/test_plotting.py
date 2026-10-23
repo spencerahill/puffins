@@ -482,6 +482,12 @@ class TestSequentialBandColors:
         colors = sequential_band_colors(cmap, np.arange(5.0), start=0.0)
         assert colors[0] == cmap(0.0)
 
+    def test_single_band_with_a_tip_sits_at_start(self) -> None:
+        """One band is both the first and the last; it takes ``start``."""
+        cmap = plt.get_cmap("viridis")
+        colors = sequential_band_colors(cmap, [0.0, 1.0], extend="max")
+        assert colors == [cmap(0.1), cmap(1.0)]
+
 
 class TestTightScale:
     """Levels per Spencer Hill's colorbar rules of 2026-09-28.
@@ -653,6 +659,20 @@ class TestTightScale:
         np.testing.assert_array_equal(scale.levels, np.arange(15) * 0.5)
         assert scale.extend == "neither"
 
+    def test_sequential_mostly_at_zero_with_noise_below(self) -> None:
+        """The same field with one cell at -1e-15 gets the same bands.
+
+        Its 95th percentile, 0, lies above its minimum of -1e-15, which
+        counts as zero, so the percentile still sits at the bottom of the bar
+        and the bands cover the extreme.
+
+        """
+        field = np.concatenate([np.zeros(1000), [-1e-15, 5.0, 7.0]])
+        scale = tight_scale(field, kind="sequential")
+        assert scale.levels[0] == -1e-15
+        np.testing.assert_array_equal(scale.levels[1:], np.arange(1, 15) * 0.5)
+        assert scale.extend == "neither"
+
     def test_reference_is_per_field_not_pooled(self) -> None:
         """A field of small values sharing the bar does not pull the reference down.
 
@@ -771,6 +791,44 @@ class TestTightScale:
         """A minimum of -1e-15, regridding noise, is zero to within rounding."""
         scale = tight_scale(np.array([-1e-15, 3.0]), kind="sequential")
         assert scale.levels[0] == -1e-15 and scale.extend == "neither"
+
+    def test_sequential_noise_below_zero_adds_no_band(self) -> None:
+        """A minimum of -2.5e-9, within rounding of 3.0, widens the first band.
+
+        It is below zero by more than the grid's snapping tolerance, 1e-9 of
+        the width of 0.2, but within the 1e-9 of 3.0 that a sequential field
+        may be negative by.  So the bar is fifteen bands of 0.2 from zero,
+        the first starting at -2.5e-9, and zero is labeled.
+
+        """
+        scale = tight_scale(np.r_[-2.5e-9, np.linspace(0, 3, 301)], kind="sequential")
+        assert scale.levels[0] == -2.5e-9
+        expected = [float(f"{v:.12g}") for v in np.arange(1, 16) * 0.2]
+        assert scale.levels[1:].tolist() == expected
+        assert scale.extend == "neither"
+        assert colorbar_ticks(scale.levels)[0] == 0.0
+
+    @pytest.mark.parametrize(
+        ("field", "kind", "end"),
+        [
+            ([-1.0, 1 / 3], "diverging", -1),
+            ([2 / 3, 3.0], "sequential", 0),
+        ],
+    )
+    def test_step_without_a_short_decimal(
+        self, field: list[float], kind: str, end: int
+    ) -> None:
+        """A width of 1/3 leaves levels unrounded, so an extreme on the grid ends it.
+
+        Rounded to six significant figures of the width, 1/3 would become
+        0.3333333, short of the extreme by far more than rounding, giving a
+        spurious arrow tip, which ``sequential_band_colors`` rejects at the
+        lower end of a sequential bar.
+
+        """
+        scale = tight_scale(np.array(field), kind=kind, step=1 / 3)
+        assert scale.levels[end] == field[end]
+        assert scale.extend == "neither"
 
     def test_sequential_reference_counts_every_value(self) -> None:
         """The 95th percentile of 80 zeros, 1 to 10 and 12 is about 8.1, zeros included.
@@ -897,9 +955,10 @@ class TestTightScale:
         """The rules as invariants, over shifted and heavy-tailed random fields.
 
         The longer side has exactly eight bands; an asymmetric bar's shorter
-        side never tips and its outermost band holds data; and the longer
-        side's outermost band holds data unless that side tips.  The shift of
-        up to 3 standard deviations makes some fields one-signed.
+        side never tips; and each end of the bar either tips or has data in
+        its outermost band, symmetric bars included, except the end at zero
+        of a one-signed field.  The shift of up to 3 standard deviations makes
+        some fields one-signed.
 
         """
         rng = np.random.default_rng(seed)
@@ -934,6 +993,9 @@ class TestTightScale:
             assert not tips_low
             assert tips_high or hi > (n_above - 1) * step
             assert n_below == 0 or -lo > (n_below - 1) * step
+        else:
+            assert tips_low or -lo > (n_below - 1) * step
+            assert tips_high or hi > (n_above - 1) * step
 
     def test_constant_with_step(self) -> None:
         scale = tight_scale(np.array([5.0, 5.0]), kind="sequential", step=1.0)
@@ -951,14 +1013,30 @@ class TestTightScale:
             tight_scale(np.full(3, value), kind=kind)
 
     @pytest.mark.parametrize(
+        "field",
+        [
+            [288.0, 288.00000000000006],
+            [271.35, 271.35 + 1e-13],
+            [1.0, 1.0 + 2e-16],
+        ],
+    )
+    def test_constant_but_for_rounding_raises(self, field: list[float]) -> None:
+        """Values a few units in the last place apart give no distinct levels."""
+        with pytest.raises(ValueError, match="differ only by rounding"):
+            tight_scale(np.array(field), kind="sequential")
+
+    @pytest.mark.parametrize(
         ("kwargs", "match"),
         [
             ({"bands_per_side": 0}, "at least 1"),
             ({"num_bands": 0}, "at least 1"),
+            ({"bands_per_side": 2.5}, "integers"),
+            ({"num_bands": 2.5}, "integers"),
             ({"quantile": 0.0}, "quantile must"),
             ({"quantile": 1.5}, "quantile must"),
             ({"tip_ratio": 0.0}, "tip_ratio must"),
             ({"step": np.nan}, "step must be positive"),
+            ({"step": np.inf}, "step must be positive and finite"),
         ],
     )
     def test_bad_parameters_raise(self, kwargs: dict[str, float], match: str) -> None:
@@ -1128,6 +1206,16 @@ class TestColorbarTicks:
 
     def test_every_past_the_band_count(self) -> None:
         assert colorbar_ticks(np.arange(-3.0, 4.0), every=10) == [0.0]
+
+    def test_levels_without_a_short_decimal_are_kept(self) -> None:
+        """Thirds are labeled where they lie, on the boundaries themselves.
+
+        Rounded to six significant figures, 2/3 would become 0.6666667, off
+        the boundary it labels and past the top of the bar.
+
+        """
+        levels = np.arange(-3, 3) / 3.0
+        assert colorbar_ticks(levels, every=1) == levels.tolist()
 
     def test_end_levels_off_a_round_value_are_rounded(self) -> None:
         """Ends a hair past 0.4, as a snapped bar may have, label as 0.4."""

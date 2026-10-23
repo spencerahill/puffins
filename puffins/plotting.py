@@ -5,6 +5,7 @@ import os.path
 from collections import namedtuple
 from collections.abc import Sequence
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Any, cast
 
 import numpy as np
@@ -485,8 +486,9 @@ def tight_levels(arrs: ArrayLike | Sequence[ArrayLike], step: float) -> np.ndarr
 
     The levels are the multiples of ``step`` from the largest one at or below
     the data minimum through the smallest one at or above the data maximum.
-    Every resulting band therefore contains plotted values, so a colorbar drawn
-    from these levels has no empty box on the low or the high end.  A field
+    The two end bands therefore contain plotted values, so a colorbar drawn
+    from these levels has no empty box on the low or the high end; a band in
+    between is empty wherever no values fall in its range.  A field
     spanning zero gets zero as one of its levels, the grid being anchored
     there, which keeps the levels usable for a diverging colormap centered on
     zero via ``trunc_cmap_about_center``.
@@ -661,9 +663,10 @@ def sequential_band_colors(
     end.  The default ``start`` of 0.1 skips the white end of maps such as
     Crameri's ``davos_r``, whose first color matches that of a masked cell.
 
-    With an upper arrow tip, the last band is taken at ``1 - 0.8 / n``, for
-    ``n`` bands, and the tip at the colormap's end, so the tip lies further
-    along the colormap than every band.
+    With an upper arrow tip, the last of ``n`` bands is taken at
+    ``1 - 0.8 / n``, or a single band at ``start``, and the tip at the
+    colormap's end, so the tip lies further along the colormap than every
+    band.
 
     Parameters
     ----------
@@ -749,9 +752,12 @@ class TightScale:
     levels : numpy.ndarray
         Band edges, increasing.  Each is a multiple of the band width rounded
         to six significant figures of it, so that a level such as -2.4 is not
-        -2.4000000000000004, except that an end level the data's extreme passes
-        by no more than rounding is set to that extreme, so that a contour
-        routine fills those cells and no arrow tip is drawn for them.
+        -2.4000000000000004, unless that rounding would move it off the grid,
+        as for a multiple of 1/3.  An end level the data's extreme passes by
+        no more than rounding is set to that extreme, as is the lowest level
+        of a sequential bar whose smallest value is below zero by rounding, so
+        that a contour routine fills those cells and no arrow tip is drawn for
+        them.
     extend : str
         Which ends of the colorbar carry an arrow tip, as matplotlib's
         ``extend`` takes it: ``"neither"``, ``"min"``, ``"max"`` or ``"both"``.
@@ -808,9 +814,19 @@ def _covered(extreme: float, reference: float, ratio: float) -> float:
 
 def _round_to_step(values: ArrayLike, step: float) -> np.ndarray:
     """Rounded to six significant figures of ``step``, so that -6 times 0.4 is
-    -2.4 and not -2.4000000000000004, however far the values lie from zero."""
+    -2.4 and not -2.4000000000000004, however far the values lie from zero.
+
+    A value that rounding would move by more than ``_GRID_SNAP_TOL`` times
+    ``step`` has no short decimal form, as for a multiple of 1/3, and is left
+    as it is, since rounding would move it off the grid.
+    """
+    vals = np.asarray(values, dtype=float)
     decimals = int(6 - np.floor(np.log10(step)))
-    return cast(np.ndarray, np.round(np.asarray(values, dtype=float), decimals))
+    rounded = np.round(vals, decimals)
+    return cast(
+        np.ndarray,
+        np.where(np.abs(rounded - vals) <= _GRID_SNAP_TOL * step, rounded, vals),
+    )
 
 
 def _snap_ends(levels: np.ndarray, lo: float, hi: float, step: float) -> np.ndarray:
@@ -895,9 +911,12 @@ def tight_scale(
     Implements Spencer Hill's colorbar rules of 2026-09-28:
 
     1. A bar spans only the range of values plotted across all the fields it
-       serves, so no color on it goes unused, and a diverging bar is
-       asymmetric about zero wherever the data are.  The levels are multiples
-       of one band width, as ``tight_levels`` gives.
+       serves, so the color at each end is used: by the data's extreme, or,
+       where that end carries an arrow tip, by the values past it.  Bands in
+       between may go unused, as when one outlier sits far from the rest.  A
+       diverging bar is asymmetric about zero wherever the data are, and
+       always reaches zero.  The levels are multiples of one band width, as
+       ``tight_levels`` gives.
     2. A diverging bar has ``bands_per_side`` bands, eight, on its longer side
        of zero, and on its shorter side as many as reach that side's extreme.
        The longer side is the one whose covered extent, below, is larger.
@@ -947,13 +966,15 @@ def tight_scale(
         sequential one, a field of one sign, which must not be negative beyond
         rounding (1e-9 of its largest magnitude).
     step : float, optional
-        The band width.  By default it is chosen from nice widths to give the
-        band counts above.  A diverging bar with ``step`` given has as many
-        bands on its longer side as reach that side's covered extent.
+        The band width, positive and finite.  By default it is chosen from
+        nice widths to give the band counts above.  A diverging bar with
+        ``step`` given has as many bands on its longer side as reach that
+        side's covered extent.
     bands_per_side : int
-        Bands on the longer side of zero of a diverging bar, at least 1.
+        Bands on the longer side of zero of a diverging bar, an integer of at
+        least 1.
     num_bands : int
-        The most bands of a sequential bar, at least 1.
+        The most bands of a sequential bar, an integer of at least 1.
     quantile : float
         The quantile of magnitude each side's arrow-tip test refers to,
         greater than 0 and at most 1.
@@ -974,17 +995,23 @@ def tight_scale(
     ValueError
         If ``kind`` is neither ``"diverging"`` nor ``"sequential"``; if a
         parameter lies outside the range given above; if the fields hold no
-        finite values, or only one value and no ``step``; or if a sequential
-        field holds a negative value beyond rounding.
+        finite values, or, with no ``step``, only one value or values that
+        differ only by rounding; or if a sequential field holds a negative
+        value beyond rounding.
 
     """
     if kind not in ("diverging", "sequential"):
         raise ValueError(f"kind must be 'diverging' or 'sequential'; got {kind!r}")
-    if step is not None and not step > 0:
-        raise ValueError(f"step must be positive; got {step}")
-    if bands_per_side < 1 or num_bands < 1:
+    if step is not None and not 0 < step < np.inf:
+        raise ValueError(f"step must be positive and finite; got {step}")
+    if (
+        not isinstance(bands_per_side, Integral)
+        or not isinstance(num_bands, Integral)
+        or bands_per_side < 1
+        or num_bands < 1
+    ):
         raise ValueError(
-            f"bands_per_side and num_bands must be at least 1; got "
+            f"bands_per_side and num_bands must be integers of at least 1; got "
             f"{bands_per_side} and {num_bands}"
         )
     if not 0 < quantile <= 1:
@@ -1004,14 +1031,19 @@ def tight_scale(
                 f"a sequential field must not be negative; its smallest value is "
                 f"{lo:g}.  A field spanning zero takes kind='diverging'."
             )
+        # A smallest value below zero by no more than rounding counts as zero:
+        # the bands start there, and the lowest level is then moved down to
+        # take that value in.
+        seq_lo = max(lo, 0.0)
         cover_hi = _covered(hi, _side_reference(parts, 0, quantile), tip_ratio)
-        if cover_hi <= lo:
+        if cover_hi <= seq_lo:
             # A reference at the smallest value, as for a field mostly at
             # zero, leaves nothing for the bands to cover short of the extreme.
             cover_hi = hi
         if step is None:
-            step = _sequential_step(lo, cover_hi, num_bands)
-        levels = _round_to_step(tight_levels(np.array([lo, cover_hi]), step), step)
+            step = _sequential_step(seq_lo, cover_hi, num_bands)
+        levels = _round_to_step(tight_levels(np.array([seq_lo, cover_hi]), step), step)
+        levels[0] = min(levels[0], lo)
     else:
         extreme = {+1: max(hi, 0.0), -1: max(-lo, 0.0)}
         cover = {
@@ -1037,6 +1069,11 @@ def tight_scale(
         counts = {long_side: num_long, short_side: num_short}
         levels = _round_to_step(step * np.arange(-counts[-1], counts[+1] + 1), step)
     levels = _snap_ends(levels, lo, hi, step)
+    if not np.all(np.diff(levels) > 0):
+        raise ValueError(
+            "the fields' values differ only by rounding, too little for "
+            "distinct levels; pass `step`"
+        )
     return TightScale(
         levels=levels,
         extend=_extend_for(parts, levels),
@@ -1080,8 +1117,10 @@ def colorbar_ticks(
        stride gives three labels, the two ends are labeled.
 
     Each boundary returned is rounded to six significant figures of the
-    narrowest band, and a level within rounding of zero is labeled as exactly
-    0, so an end level a hair off a round value is labeled as that value.
+    narrowest band, where that moves it by no more than rounding, and a level
+    within rounding of zero is labeled as exactly 0.  So an end level a hair
+    off a round value is labeled as that value, and a level with no short
+    decimal form, such as 2/3, is labeled where it lies.
 
     Parameters
     ----------
