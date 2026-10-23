@@ -47,7 +47,7 @@ The package is structured into several functional groups:
 - `grad_bal.py`: Gradient balance and thermal wind balance (Boussinesq, CQE, and pressure-coordinate forms), plus the angular-momentum-conserving, uniform-Rossby-number, and linear-Rossby-number wind and potential temperature expressions
 - `eq_area.py`: Equal-area Hadley cell model (Held-Hou 1980, Lindzen-Hou 1988, and extensions): closed forms for the small-angle uniform- and linear-Rossby-number cases; numerical solvers for Lindzen-Hou 1988 (standard Boussinesq and fixed-tropopause-temperature forms) and for a user-supplied RCE potential-temperature profile under Boussinesq, convective quasi-equilibrium (CQE), or CQE with fixed tropopause temperature; belongs conceptually with the Theoretical Models below
 - `eofs.py`: Empirical Orthogonal Function analysis
-- `enso.py`: ENSO and tropical-ocean SST indices from a gridded monthly SST field (NINO3.4, CPC's Relative Oceanic Nino Index, the tropical Indian Ocean box)
+- `enso.py`: ENSO and tropical-ocean SST indices from a gridded monthly SST field (NINO3.4, CPC's Relative Oceanic Nino Index, the tropical Indian Ocean box), and a reader for CPC's published tables of 3-month-season indices
 - `stats.py`: Statistical analysis tools
 - `budget_adj.py`: Column budget adjustment via spherical harmonic wind inversion
 
