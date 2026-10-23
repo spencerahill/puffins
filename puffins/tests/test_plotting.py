@@ -421,9 +421,10 @@ class TestLabelCurve:
         """A curve rising steeply just beyond the label's edge keeps clear of it.
 
         The labeled curve is flat at 1; the other falls slowly to 0 at x = 5,
-        then rises at 300 per unit x to 3.  Without the margin of ``gap``
-        beside the label's width, a label ending just short of x = 5 was 0.25
-        pixels from that rise.
+        then rises at 300 per unit x to 3.  Without the margin beside the
+        label's width, the first version of this function started the label
+        at x = 4.25, ending just short of x = 5, and 0.36 pixels from that
+        rise.
 
         """
         fig, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
