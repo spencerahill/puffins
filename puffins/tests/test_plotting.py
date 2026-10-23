@@ -782,6 +782,12 @@ class TestTightScale:
         scale = tight_scale(np.array([10000.0, 10010.0]), kind="sequential")
         np.testing.assert_array_equal(scale.levels, 10000.0 + np.arange(11))
 
+    def test_sequential_top_on_a_grid_multiple(self) -> None:
+        """0.07 / 0.01 is 7.000000000000001, which must not refuse seven bands of 0.01."""
+        field = np.linspace(0.0, 0.07, 71)
+        scale = tight_scale(field, kind="sequential", num_bands=7)
+        assert scale.step == 0.01 and scale.levels.size == 8
+
     def test_sequential_one_band(self) -> None:
         """4.95 to 5.05 in at most one band: no width up to 1 does it, 2 does."""
         scale = tight_scale(np.array([4.95, 5.05]), kind="sequential", num_bands=1)
@@ -807,6 +813,20 @@ class TestTightScale:
         assert scale.levels[1:].tolist() == expected
         assert scale.extend == "neither"
         assert colorbar_ticks(scale.levels)[0] == 0.0
+
+    def test_mostly_near_zero_field_covers_only_those_values(self) -> None:
+        """The precipitation-like example in the docstring.
+
+        With 96% of the values from 0 to 0.01, the 95th percentile falls among
+        them, so the bar spans 0 to 0.01 and the 40 values from 0.5 to 40
+        are all in its tip.
+
+        """
+        field = np.r_[np.linspace(0.0, 0.01, 960), np.linspace(0.5, 40.0, 40)]
+        scale = tight_scale(field, kind="sequential")
+        np.testing.assert_allclose(scale.levels, np.arange(11) * 0.001, rtol=1e-12)
+        assert scale.extend == "max"
+        assert np.sum(field > scale.levels[-1]) == 40
 
     @pytest.mark.parametrize(
         ("field", "kind", "end"),
@@ -944,8 +964,19 @@ class TestTightScale:
         np.testing.assert_array_equal(scale.levels, np.arange(-8, 2) * 3.0)
         assert scale.extend == "min"
 
+    def test_extreme_past_seven_widths_by_rounding_takes_the_narrower(self) -> None:
+        """An extreme past seven bands of 4 by rounding alone counts as at them.
+
+        Taken as past them, it would get an eighth band of 4, from -32 to -28,
+        holding no value visibly different from -28.
+
+        """
+        scale = tight_scale(np.array([np.nextafter(-28.0, -np.inf), 1.0]))
+        np.testing.assert_array_equal(scale.levels, np.arange(-8, 2) * 3.0)
+        assert scale.extend == "min"
+
     def test_bands_per_side_not_a_power_of_two(self) -> None:
-        """Six bands of 0.3 reach 1.8 exactly, which a looser test would refuse."""
+        """Six bands of 0.3 reach 1.8 exactly, which a test without a tolerance refuses."""
         field = np.concatenate([np.full(99, -1.8), [-5.0, 0.5]])
         scale = tight_scale(field, bands_per_side=6)
         assert scale.step == 0.3
@@ -1139,6 +1170,15 @@ class TestColorbarTicks:
         ticks = colorbar_ticks([-2.0, -1.0, -1e-12, 1.0, 2.0])
         assert ticks == [-2.0, 0.0, 2.0]
         assert not np.signbit(ticks[1])
+
+    def test_log_spaced_levels_label_the_smallest_as_zero(self) -> None:
+        """The limitation the docstring notes, for levels from 0.001 to 1e6.
+
+        1e-9 times the largest level, 1e6, is 0.001, so the level 0.001
+        counts as zero and is labeled 0.
+
+        """
+        assert colorbar_ticks(10.0 ** np.arange(-3, 7)) == [0.0, 1.0, 1e3, 1e6]
 
     def test_large_levels_rounded(self) -> None:
         """Levels a part in 1e13 off multiples of 1500 label as the multiples.
