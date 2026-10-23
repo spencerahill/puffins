@@ -335,20 +335,26 @@ class TestEnsoPhase:
     def test_default_threshold_is_cpcs(self) -> None:
         assert ENSO_THRESHOLD == 0.5
 
-    def test_coordinates_kept_and_named(self) -> None:
+    CPC_RULES = pytest.mark.parametrize(("decimals", "min_run"), [(None, 1), (1, 3)])
+
+    @CPC_RULES
+    def test_coordinates_kept_and_named(
+        self, decimals: int | None, min_run: int
+    ) -> None:
         index = self.index(self.VALUES).assign_coords(
             season=("time", list("abcdefghi")), member=3
         )
-        got = enso_phase(index)
+        got = enso_phase(index, decimals=decimals, min_run=min_run)
         xr.testing.assert_identical(got.coords.to_dataset(), index.coords.to_dataset())
         assert got.name == "enso_phase"
 
-    def test_attributes_dropped(self) -> None:
+    @CPC_RULES
+    def test_attributes_dropped(self, decimals: int | None, min_run: int) -> None:
         """A phase has no units, so the index's are not carried over."""
         index = self.index(self.VALUES)
         index.attrs = {"units": "K", "long_name": "RONI"}
         with xr.set_options(keep_attrs=True):
-            got = enso_phase(index)
+            got = enso_phase(index, decimals=decimals, min_run=min_run)
         assert got.attrs == {}
 
     def test_any_shape(self) -> None:
@@ -366,6 +372,77 @@ class TestEnsoPhase:
     def test_nonpositive_threshold_raises(self, threshold: float) -> None:
         with pytest.raises(ValueError, match="threshold must be positive"):
             enso_phase(self.index([0.5]), threshold=threshold)
+
+    def test_decimals_round_halves_up(self) -> None:
+        """0.45 rounds to 0.5 and -0.45 to -0.4, as CPC's tables round."""
+        got = enso_phase(
+            self.index([-0.46, -0.45, -0.44, 0.44, 0.45, 0.46]), decimals=1
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 1, 1])
+
+    def test_decimals_with_strict(self) -> None:
+        got = enso_phase(
+            self.index([-0.56, -0.55, 0.54, 0.55]), decimals=1, inclusive=False
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 1])
+
+    def test_decimals_leave_rounded_values(self) -> None:
+        """CPC's one-decimal values come through rounding unchanged."""
+        index = self.index([k / 10 for k in range(-10, 11)])
+        np.testing.assert_array_equal(enso_phase(index, decimals=1), enso_phase(index))
+
+    def test_other_decimals(self) -> None:
+        got = enso_phase(self.index([-0.51, -0.5, 0.49, 0.5]), 1.0, decimals=0)
+        np.testing.assert_array_equal(got, [-1, 0, 0, 1])
+
+    def test_min_run(self) -> None:
+        """A run shorter than min_run is neutral, at either end of the record too.
+
+        The runs here are 4 warm, 6 warm, 5 cold right after them, and 4 cold.
+        """
+        values = [0.6] * 4 + [0.0] + [0.6] * 6 + [-0.6] * 5 + [0.0] + [-0.6] * 4
+        got = enso_phase(self.index(values), min_run=5)
+        np.testing.assert_array_equal(got, [0] * 5 + [1] * 6 + [-1] * 5 + [0] * 5)
+
+    def test_min_run_two(self) -> None:
+        got = enso_phase(self.index([0.6, 0.0, 0.6, 0.6, -0.6]), min_run=2)
+        np.testing.assert_array_equal(got, [0, 0, 1, 1, 0])
+
+    def test_nan_ends_a_run(self) -> None:
+        got = enso_phase(self.index([0.6, 0.6, np.nan, 0.6, 0.6, 0.6]), min_run=3)
+        np.testing.assert_array_equal(got, [0, 0, np.nan, 1, 1, 1])
+
+    def test_min_run_along_time_str(self) -> None:
+        """Runs are counted along time_str wherever it sits in the dimensions."""
+        index = xr.DataArray(
+            [[0.6, 0.6, 0.6, 0.0], [0.6, 0.6, 0.0, 0.6]], dims=["member", "season"]
+        )
+        got = enso_phase(index, min_run=3, time_str="season")
+        assert got.dims == ("member", "season")
+        np.testing.assert_array_equal(got, [[1, 1, 1, 0], [0, 0, 0, 0]])
+
+    @pytest.mark.parametrize("min_run", [0, -1])
+    def test_min_run_below_one_raises(self, min_run: int) -> None:
+        with pytest.raises(ValueError, match="min_run must be at least 1"):
+            enso_phase(self.index([0.5]), min_run=min_run)
+
+    def test_reproduces_cpcs_roni_table(self) -> None:
+        """CPC's coloring of RONI for 1951 and 1952, from its two-decimal values.
+
+        From ``RONI.ascii.txt`` and CPC's RONI table, downloaded 2026-10-23.
+        FMA 1951, 0.48, is shown as 0.5 and colored El Niño; FMA 1952, 0.46, is
+        shown as 0.5 but is a single season and uncolored; MJJ 1952, -0.45, is
+        shown as -0.4.  Neither rule alone gives CPC's colors.
+        """
+        roni = [
+            -0.28, 0.09, 0.48, 0.63, 0.59, 0.69, 0.79, 0.97, 1.04, 0.98, 0.94, 0.71,
+            0.65, 0.33, 0.46, 0.24, -0.03, -0.45, -0.41, -0.14, 0.08, 0.04, -0.10, 0.10,
+        ]  # fmt: skip
+        cpc = [0, 0] + [1] * 11 + [0] * 11
+        index = self.index(roni)
+        np.testing.assert_array_equal(enso_phase(index, decimals=1, min_run=5), cpc)
+        assert not np.array_equal(enso_phase(index, decimals=1), cpc)
+        assert not np.array_equal(enso_phase(index, min_run=5), cpc)
 
 
 class TestOutputNames:

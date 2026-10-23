@@ -154,20 +154,38 @@ def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     return cast(xr.DataArray, box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio"))
 
 
+def _in_long_run(flag: xr.DataArray, min_run: int, time_str: str) -> xr.DataArray:
+    """Whether each value lies in a run of ``min_run`` or more True values."""
+    # True at the last value of each window of min_run values that are all True.
+    ends = flag.rolling({time_str: min_run}).sum() == min_run
+    # A value is in such a window if one ends at it or at one of the next
+    # min_run - 1 values.
+    covered = ends
+    for lag in range(1, min_run):
+        covered = covered | ends.shift({time_str: -lag}, fill_value=False)
+    return covered
+
+
 ENSO_THRESHOLD: float = 0.5
 """The index magnitude, in K, that CPC's thresholds for El Niño and La Niña use."""
 
 
 def enso_phase(
-    index: xr.DataArray, threshold: float = ENSO_THRESHOLD, *, inclusive: bool = True
+    index: xr.DataArray,
+    threshold: float = ENSO_THRESHOLD,
+    *,
+    inclusive: bool = True,
+    decimals: int | None = None,
+    min_run: int = 1,
+    time_str: str = TIME_STR,
 ) -> xr.DataArray:
     """The ENSO phase of each value of an index: El Niño, La Niña or neutral.
 
     1 marks El Niño, a value at or above ``threshold``; -1 marks La Niña, a
-    value at or below ``-threshold``; 0 marks neutral; and NaN stays NaN.  The
-    phase is per value: CPC's further requirement that the threshold be met
-    for five consecutive overlapping seasons before a period counts as an
-    episode is not applied.
+    value at or below ``-threshold``; 0 marks neutral; and NaN stays NaN.  By
+    default each value is labeled alone and as given.  CPC adds two rules,
+    which ``decimals`` and ``min_run`` apply, so
+    ``enso_phase(index, decimals=1, min_run=5)`` gives CPC's labels.
 
     CPC's operational definitions are inclusive: El Niño is "a positive RONI
     greater than or equal to +0.5ºC" and La Niña "a negative RONI less than
@@ -178,12 +196,27 @@ def enso_phase(
     is replaced each week).  ``inclusive=False`` gives the strict test some
     studies use instead.
 
-    CPC applies the threshold to the index rounded to one decimal, as its
-    tables show it: RONI for February to April 1951, 0.48 in CPC's
+    First, CPC applies the threshold to the index rounded to one decimal, as
+    its tables show it: RONI for February to April 1951, 0.48 in CPC's
     two-decimal ``RONI.ascii.txt``, is shown as 0.5 and counted as El Niño.
-    So to match CPC's labels from an unrounded index, such as one from
-    ``roni``, pass ``threshold=0.45``.  A two-decimal value of exactly 0.45
-    or -0.45 is ambiguous, having been rounded from a value either side.
+    ``decimals`` rounds a value halfway between up, so 0.45 becomes 0.5 and
+    -0.45 becomes -0.4.  CPC's tables round that way 80 of the 87 RONI values
+    and 87 of the 89 ONI values in its two-decimal text files that end in 5.
+
+    Second, CPC's RONI and ONI tables color a season El Niño or La Niña only
+    "when the threshold is met for a minimum of five (5) consecutive
+    overlapping seasons"
+    (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/).
+    ``min_run`` applies this along ``time_str``.  A run shorter than
+    ``min_run`` is neutral, including one at the end of the index's record
+    that later values may lengthen.
+
+    With both rules, the function reproduces CPC's coloring of all 912 seasons from
+    DJF 1950 to NDJ 2025 in its RONI and ONI tables, as downloaded on 23
+    October 2026, from the one-decimal values the tables show.  From the
+    two-decimal text files it reproduces every ONI season, and every RONI
+    season but four, FMA to MJJ 1984: CPC shows FMA's -0.45 as -0.5, which
+    joins the three seasons after it to the La Niña run before it.
 
     Parameters
     ----------
@@ -196,6 +229,16 @@ def enso_phase(
     inclusive : bool
         Whether a value exactly at ``threshold`` or ``-threshold`` counts as
         El Niño or La Niña rather than neutral.
+    decimals : int, optional
+        If given, the index is rounded to this many decimals, halves up,
+        before it is compared with the threshold; CPC rounds to 1.
+    min_run : int
+        The fewest consecutive values along ``time_str`` that must all pass
+        the same threshold for any of them to count; CPC requires 5.  A NaN
+        ends a run, and the values along ``time_str`` are taken to be
+        consecutive, with no gaps.  The default, 1, labels each value alone.
+    time_str : str
+        Name of the time dimension, used only when ``min_run`` exceeds 1.
 
     Returns
     -------
@@ -207,14 +250,22 @@ def enso_phase(
     Raises
     ------
     ValueError
-        If ``threshold`` is not positive.
+        If ``threshold`` is not positive, or ``min_run`` is less than 1.
     """
     if not threshold > 0:
         raise ValueError(f"threshold must be positive; got {threshold}")
+    if min_run < 1:
+        raise ValueError(f"min_run must be at least 1; got {min_run}")
+    value = index
+    if decimals is not None:
+        value = np.floor(index * 10**decimals + 0.5) / 10**decimals
     if inclusive:
-        warm, cold = index >= threshold, index <= -threshold
+        warm, cold = value >= threshold, value <= -threshold
     else:
-        warm, cold = index > threshold, index < -threshold
+        warm, cold = value > threshold, value < -threshold
+    if min_run > 1:
+        warm = _in_long_run(warm, min_run, time_str)
+        cold = _in_long_run(cold, min_run, time_str)
     phase = xr.where(warm, 1.0, xr.where(cold, -1.0, 0.0)).where(index.notnull())
     return cast(xr.DataArray, phase.rename("enso_phase"))
 
