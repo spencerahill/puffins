@@ -324,14 +324,32 @@ class TestEnsoPhase:
         got = enso_phase(self.index(self.VALUES), threshold=1.0)
         np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 0, 1, np.nan])
 
+    def test_strict_with_threshold(self) -> None:
+        got = enso_phase(
+            self.index([-1.5, -1.0, -0.7, 0.7, 1.0, 1.5]),
+            threshold=1.0,
+            inclusive=False,
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 1])
+
     def test_default_threshold_is_cpcs(self) -> None:
         assert ENSO_THRESHOLD == 0.5
 
     def test_coordinates_kept_and_named(self) -> None:
-        index = self.index(self.VALUES)
+        index = self.index(self.VALUES).assign_coords(
+            season=("time", list("abcdefghi")), member=3
+        )
         got = enso_phase(index)
-        xr.testing.assert_equal(got["time"], index["time"])
+        xr.testing.assert_identical(got.coords.to_dataset(), index.coords.to_dataset())
         assert got.name == "enso_phase"
+
+    def test_attributes_dropped(self) -> None:
+        """A phase has no units, so the index's are not carried over."""
+        index = self.index(self.VALUES)
+        index.attrs = {"units": "K", "long_name": "RONI"}
+        with xr.set_options(keep_attrs=True):
+            got = enso_phase(index)
+        assert got.attrs == {}
 
     def test_any_shape(self) -> None:
         """A field of indices, such as one per ensemble member, keeps its shape."""

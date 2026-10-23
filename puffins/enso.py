@@ -169,20 +169,30 @@ def enso_phase(
     for five consecutive overlapping seasons before a period counts as an
     episode is not applied.
 
-    CPC words the threshold both ways.  Its ENSO Alert System defines El Niño
-    conditions by a relative anomaly "of 0.5° C or greater"
-    (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso_advisory/enso-alert-readme.shtml),
-    and its RONI page defines a warm value as one "greater than 0.5 degrees
-    Celsius" (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/).
-    With values to two decimals, as in CPC's tables, the choice determines
-    the phase of every season at exactly 0.50 or -0.50.
+    CPC's operational definitions are inclusive: El Niño is "a positive RONI
+    greater than or equal to +0.5ºC" and La Niña "a negative RONI less than
+    or equal to -0.5ºC", in the "NOAA Operational Definitions for El Niño and
+    La Niña" of CPC's weekly "ENSO: Recent Evolution, Current Status and
+    Predictions" (issue of 19 October 2026; the file at
+    https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/lanina/enso_evolution-status-fcsts-web.pdf
+    is replaced each week).  ``inclusive=False`` gives the strict test some
+    studies use instead.
+
+    CPC applies the threshold to the index rounded to one decimal, as its
+    tables show it: RONI for February to April 1951, 0.48 in CPC's
+    two-decimal ``RONI.ascii.txt``, is shown as 0.5 and counted as El Niño.
+    So to match CPC's labels from an unrounded index, such as one from
+    ``roni``, pass ``threshold=0.45``.  A two-decimal value of exactly 0.45
+    or -0.45 is ambiguous, having been rounded from a value either side.
 
     Parameters
     ----------
     index : xarray.DataArray
         An ENSO index such as RONI or ONI, in K.
     threshold : float
-        The positive magnitude separating neutral from El Niño and La Niña.
+        The positive magnitude separating neutral from El Niño and La Niña, in
+        the units of ``index``; for a standardized index, pass it in standard
+        deviations.
     inclusive : bool
         Whether a value exactly at ``threshold`` or ``-threshold`` counts as
         El Niño or La Niña rather than neutral.
@@ -191,7 +201,8 @@ def enso_phase(
     -------
     xarray.DataArray
         The phase, as floats so that NaN can stand for a missing value, on
-        ``index``'s coordinates, named ``"enso_phase"``.
+        ``index``'s coordinates, named ``"enso_phase"``, without ``index``'s
+        attributes, since a phase has no units.
 
     Raises
     ------
