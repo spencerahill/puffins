@@ -32,7 +32,7 @@ The package is structured into several functional groups:
 - `num_solver.py`: Numerical solvers
 - `dates.py`: Date utilities
 - `longitude.py`: Longitude utilities and `Longitude` class
-- `bootstrap.py`: Bootstrap statistical methods
+- `bootstrap.py`: Bootstrap and permutation statistical methods
 
 ### Physical Calculations
 - `dynamics.py`: Fundamental dynamical quantities (Coriolis parameter, absolute angular momentum, vorticity, Rossby number)
@@ -43,7 +43,7 @@ The package is structured into several functional groups:
 - `radiation.py`: Blackbody radiation (Planck function, Wien's displacement law)
 
 ### Climate Dynamics
-- `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent)
+- `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent), plus theoretical cell-edge predictions (baroclinic-instability models)
 - `grad_bal.py`: Gradient balance and thermal wind balance (Boussinesq, CQE, and pressure-coordinate forms), plus the angular-momentum-conserving, uniform-Rossby-number, and linear-Rossby-number wind and potential temperature expressions
 - `eq_area.py`: Equal-area Hadley cell model (Held-Hou 1980, Lindzen-Hou 1988, and extensions): closed forms for the small-angle uniform- and linear-Rossby-number cases; numerical solvers for Lindzen-Hou 1988 (standard Boussinesq and fixed-tropopause-temperature forms) and for a user-supplied RCE potential-temperature profile under Boussinesq, convective quasi-equilibrium (CQE), or CQE with fixed tropopause temperature; belongs conceptually with the Theoretical Models below
 - `eofs.py`: Empirical Orthogonal Function analysis
@@ -62,7 +62,7 @@ The package is structured into several functional groups:
 - `therm_inert.py`: Thermal inertia calculations
 
 ### Visualization
-- `plotting.py`: Matplotlib helpers with custom styling, latitude axis formatting (sine-latitude and standard), and faceted plotting integration
+- `plotting.py`: Matplotlib helpers with custom styling, latitude axis formatting (sine-latitude and standard), faceted plotting integration, and data-fitted colorbar levels, ticks and band colors
 
 ## Key Design Patterns
 
