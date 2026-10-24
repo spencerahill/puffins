@@ -16,12 +16,14 @@ import xarray as xr
 
 from puffins.dates import ann_subset_ts, monthly_anom
 from puffins.enso import (
+    CPC_SEASONS,
     ENSO_THRESHOLD,
     RONI_BASE,
     RONI_SIGMA_YEARS,
     box_mean,
     enso_phase,
     nino34,
+    read_cpc_index,
     relative_nino34,
     relative_nino34_jjas,
     roni,
@@ -669,7 +671,6 @@ class TestEnsoPhaseCPCFiles:
     """
 
     DATA = Path(__file__).parent / "data" / "cpc"
-    SEASONS = ["DJF", "JFM", "FMA", "MAM", "AMJ", "MJJ", "JJA", "JAS", "ASO", "SON", "OND", "NDJ"]  # fmt: skip
     FILES = {
         "RONI": ("RONI.ascii.txt", "roni-table.csv"),
         "ONI": ("oni.ascii.txt", "oni-table.csv"),
@@ -686,23 +687,30 @@ class TestEnsoPhaseCPCFiles:
         """The text file's two-decimal values and the table's one-decimal
         values and colors, by each season's center month."""
         text_file, table_file = cls.FILES[name]
-        lines = (cls.DATA / text_file).read_text().splitlines()[1:]
-        rows = [line.split() for line in lines]
+        text = read_cpc_index(cls.DATA / text_file)
         with (cls.DATA / table_file).open() as f:
             table = list(csv.DictReader(f))
-        keys = [(r[1], r[0]) for r in rows]
-        assert keys == [(t["year"], t["season"]) for t in table]
         months = [
-            f"{year}-{cls.SEASONS.index(season) + 1:02d}" for year, season in keys
+            f"{t['year']}-{CPC_SEASONS.index(t['season']) + 1:02d}" for t in table
         ]
+        np.testing.assert_array_equal(text["time"], cls.time(months))
         return xr.Dataset(
             {
-                "text": ("time", [float(r[-1]) for r in rows]),
+                "text": text,
                 "shown": ("time", [float(t["shown"]) for t in table]),
                 "color": ("time", [float(t["phase"]) for t in table]),
-            },
-            coords={"time": cls.time(months)},
+            }
         )
+
+    @pytest.mark.parametrize(("name", "last"), [("RONI", 1.69), ("ONI", 2.16)])
+    def test_read_cpc_index_reads_every_season(self, name: str, last: float) -> None:
+        """All 920 seasons, DJF 1950 to JAS 2026, at their center months."""
+        got = read_cpc_index(self.DATA / self.FILES[name][0])
+        assert got.sizes["time"] == 920
+        np.testing.assert_array_equal(
+            got["time"][[0, -1]], self.time(["1950-01", "2026-08"])
+        )
+        assert got[-1].item() == last
 
     @NAMES
     def test_reproduces_cpcs_tables(self, name: str) -> None:
@@ -771,6 +779,9 @@ class TestEnsoPhaseCPCFiles:
         assert np.isfinite(below).all()
         for sign in (oni.values > 0, oni.values < 0):
             assert 0.004 < below[sign].mean() < 0.006
+        # So read_cpc_index's center-month year is CPC's: with DJF or NDJ
+        # placed a year off, those seasons would miss by about 1.5 K rms.
+        assert np.abs(below).max() < 0.02
 
 
 class TestOutputNames:
@@ -968,3 +979,172 @@ class TestRelativeNino34:
         np.testing.assert_array_equal(got["year"], np.arange(1946, 2023))
         assert np.isnan(got.sel(year=1946).item())
         assert np.isfinite(got.sel(year=slice(1947, None))).all()
+
+
+# The opening rows of CPC's oni.ascii.txt as published, with a made-up OND and
+# NDJ for 1949 before them so the table crosses a year end.
+ONI_TABLE = """\
+ SEAS  YR   TOTAL   ANOM
+  OND 1949  25.20  -0.95
+  NDJ 1949  25.10  -1.05
+  DJF 1950  25.01  -1.32
+  JFM 1950  25.36  -1.20
+  FMA 1950  25.88  -1.12
+"""
+RONI_TABLE = """\
+SEAS   YR  ANOM
+DJF  1950 -1.19
+JFM  1950 -1.08
+FMA  1950 -0.96
+"""
+
+
+class TestReadCpcIndex:
+    """CPC's season tables, each value at the first day of its center month."""
+
+    @staticmethod
+    def write(tmp_path: Path, text: str) -> Path:
+        path = tmp_path / "table.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_oni_anomalies(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, ONI_TABLE))
+        np.testing.assert_array_equal(got, [-0.95, -1.05, -1.32, -1.20, -1.12])
+        np.testing.assert_array_equal(
+            got["time"],
+            np.array(
+                ["1949-11-01", "1949-12-01", "1950-01-01", "1950-02-01", "1950-03-01"],
+                dtype="datetime64[ns]",
+            ),
+        )
+        # The resolution of the times roni returns from a decoded SST field.
+        assert got["time"].dtype == np.dtype("datetime64[ns]")
+        assert got.name == "anom"
+        assert got.dims == ("time",)
+
+    def test_other_column(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, ONI_TABLE), column="TOTAL")
+        np.testing.assert_array_equal(got, [25.20, 25.10, 25.01, 25.36, 25.88])
+        assert got.name == "total"
+
+    def test_roni_table(self, tmp_path: Path) -> None:
+        """A table without TOTAL, given as a string path."""
+        got = read_cpc_index(str(self.write(tmp_path, RONI_TABLE)))
+        np.testing.assert_array_equal(got, [-1.19, -1.08, -0.96])
+        assert str(got["time"].values[0])[:10] == "1950-01-01"
+
+    def test_time_str(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, RONI_TABLE), time_str="t")
+        assert got.dims == ("t",)
+
+    def test_seasons_centered_like_a_running_mean(self, tmp_path: Path) -> None:
+        """Each row lands where a centered 3-month mean of its months does.
+
+        A table is written from the running mean of a random monthly series,
+        each season labeled by the initials of its three months and the year
+        of the middle one.  It reads back onto the running mean's own time
+        axis, the year-end seasons included.
+
+        """
+        rng = np.random.default_rng(3)
+        time = xr.date_range("1949-01-01", periods=48, freq="MS")
+        run = running3(rng.normal(size=48))
+        initials = "JFMAMJJASOND"
+        lines = ["SEAS YR ANOM"] + [
+            "".join(initials[(t.month - 1 + k) % 12] for k in (-1, 0, 1))
+            + f" {t.year} {float(v)!r}"
+            for t, v in zip(time.to_pydatetime(), run)
+            if np.isfinite(v)
+        ]
+        got = read_cpc_index(self.write(tmp_path, "\n".join(lines)))
+        want = xr.DataArray(run, dims=["time"], coords={"time": time}).isel(
+            time=slice(1, -1)
+        )
+        xr.testing.assert_equal(got.rename(None), want)
+
+    def test_season_labels_in_order_of_center_month(self) -> None:
+        initials = "JFMAMJJASOND"
+        want = tuple(
+            "".join(initials[(m + k) % 12] for k in (-1, 0, 1)) for m in range(12)
+        )
+        assert want == CPC_SEASONS
+
+    def test_blank_lines_ignored(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, RONI_TABLE + "\n\n"))
+        assert got.size == 3
+
+    def test_byte_order_mark_accepted(self, tmp_path: Path) -> None:
+        got = read_cpc_index(self.write(tmp_path, "﻿" + RONI_TABLE))
+        np.testing.assert_array_equal(got, [-1.19, -1.08, -0.96])
+
+    def test_not_utf8_raises_with_path(self, tmp_path: Path) -> None:
+        """A Latin-1 degree sign, byte 0xb0, is not UTF-8."""
+        path = tmp_path / "table.txt"
+        path.write_bytes(RONI_TABLE.encode() + b"\xb0\n")
+        with pytest.raises(ValueError, match="not UTF-8") as err:
+            read_cpc_index(path)
+        assert str(path) in str(err.value)
+
+    def test_value_column_named_like_a_key_column(self, tmp_path: Path) -> None:
+        """The column is looked up among the value columns only."""
+        got = read_cpc_index(
+            self.write(tmp_path, "SEAS YR YR\nDJF 1950 -1.19\n"), column="YR"
+        )
+        np.testing.assert_array_equal(got, [-1.19])
+
+    @pytest.mark.parametrize(
+        ("row", "month"),
+        [("SON 1677 0.1", "1677-10-01"), ("MAM 2262 0.1", "2262-04-01")],
+    )
+    def test_years_at_the_ends_of_datetime64_ns(
+        self, tmp_path: Path, row: str, month: str
+    ) -> None:
+        got = read_cpc_index(self.write(tmp_path, f"SEAS YR ANOM\n{row}\n"))
+        np.testing.assert_array_equal(
+            got["time"], np.array([month], dtype="datetime64[ns]")
+        )
+
+    @pytest.mark.parametrize(
+        ("text", "column", "match"),
+        [
+            ("YR SEAS ANOM\n1950 DJF -1.19\n", "ANOM", "must begin 'SEAS YR'"),
+            ("SEAS YEAR ANOM\nDJF 1950 -1.19\n", "ANOM", "must begin 'SEAS YR'"),
+            ("", "ANOM", "must begin 'SEAS YR'"),
+            ("\n  \n\n", "ANOM", "must begin 'SEAS YR'"),
+            (RONI_TABLE, "TOTAL", "'TOTAL' is not a value column"),
+            (RONI_TABLE, "YR", "'YR' is not a value column"),
+            (
+                "SEAS YR ANOM ANOM\nDJF 1950 -1.19 0.5\n",
+                "ANOM",
+                "more than one 'ANOM'",
+            ),
+            ("SEAS YR ANOM\n", "ANOM", "no rows"),
+            ("SEAS YR ANOM\nDJF 1950\n", "ANOM", "does not match the header"),
+            (
+                "SEAS YR ANOM\nDJF 1950 -1.19\nJFM\n",
+                "ANOM",
+                "does not match the header",
+            ),
+            ("SEAS YR ANOM\nDJF 1950 -1.19 0.5\n", "ANOM", "does not match the header"),
+            ("SEAS YR ANOM\nDJF 1950 abc\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 19x0 -1.19\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 19_50 -1.19\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 1_0.5\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 nan\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 inf\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 50 -1.19\n", "ANOM", "October 1677 to April 2262"),
+            ("SEAS YR ANOM\nASO 1677 0.1\n", "ANOM", "October 1677 to April 2262"),
+            ("SEAS YR ANOM\nAMJ 2262 0.1\n", "ANOM", "October 1677 to April 2262"),
+            ("SEAS YR ANOM\nDEJ 1950 -1.19\n", "ANOM", "unknown season 'DEJ'"),
+            ("SEAS YR ANOM\nDJF 1950 -1.19\nFMA 1950 -0.96\n", "ANOM", "one season"),
+            ("SEAS YR ANOM\nJFM 1950 -1.08\nDJF 1950 -1.19\n", "ANOM", "one season"),
+            ("SEAS YR ANOM\nDJF 1950 -1.19\nDJF 1950 -1.19\n", "ANOM", "one season"),
+            ("SEAS YR ANOM\nNDJ 1950 -0.8\nDJF 1950 -1.19\n", "ANOM", "one season"),
+        ],
+    )
+    def test_malformed_tables_raise(
+        self, tmp_path: Path, text: str, column: str, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            read_cpc_index(self.write(tmp_path, text), column=column)

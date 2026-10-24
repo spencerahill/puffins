@@ -32,7 +32,9 @@ labels each value alone and unrounded.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
-and 50-110E, as their Figure 3a caption states it.
+and 50-110E, as their Figure 3a caption states it.  ``read_cpc_index`` reads
+CPC's published tables of 3-month-season indices, such as its ONI and RONI,
+onto the same time axis as ``roni``.
 
 All box means are cos(latitude)-weighted over the gridpoint centers inside
 inclusive bounds, with land (NaN in an SST product) dropped from the weights as
@@ -46,6 +48,9 @@ These functions moved here on 2026-09-30 from the lps-enso-grl project's
 """
 
 import numbers
+import os
+import re
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -559,3 +564,151 @@ def relative_nino34_jjas(
     rel = relative_nino34(sst, base, sigma_years, time_str, scaled=scaled, **kwargs)
     out = ann_subset_ts(rel, "jjas", dim_time=time_str)
     return cast(xr.DataArray, out.rename("relative_nino34_jjas"))
+
+
+CPC_SEASONS: tuple[str, ...] = (
+    "DJF",
+    "JFM",
+    "FMA",
+    "MAM",
+    "AMJ",
+    "MJJ",
+    "JJA",
+    "JAS",
+    "ASO",
+    "SON",
+    "OND",
+    "NDJ",
+)
+"""CPC's 3-month season labels, in calendar order of their center months, so
+the season at index ``k`` is centered on month ``k + 1``."""
+
+_CPC_SEASON_INDEX = {season: k for k, season in enumerate(CPC_SEASONS)}
+# A year written as digits, and a value written as a decimal number, so that
+# the digit-group underscores int and float accept, and float's nan and inf,
+# raise an error.
+_CPC_YEAR = re.compile(r"[0-9]+")
+_CPC_VALUE = re.compile(r"[+-]?[0-9]*\.?[0-9]+")
+
+
+def read_cpc_index(
+    path: str | os.PathLike[str], column: str = "ANOM", time_str: str = TIME_STR
+) -> xr.DataArray:
+    """A 3-month-season index from one of NOAA CPC's text tables.
+
+    Reads tables such as ``oni.ascii.txt``, whose columns are ``SEAS YR TOTAL
+    ANOM``, and ``RONI.ascii.txt``, whose columns are ``SEAS YR ANOM``, from
+    https://www.cpc.ncep.noaa.gov/data/indices/.  Each row is one 3-month
+    season, labeled by its months' initials and a year.  Those two tables are
+    built from ERSSTv6 SST; CPC's ERSSTv5 versions are ``oni.v5.ascii.txt``
+    and ``RONI.v5.ascii.txt`` at the same address.
+
+    Each value is placed at the first day of its season's center month, which
+    is how ``roni`` indexes its running means, so a table read here and
+    ``roni`` of a field stamped at the start of each month share a time axis.
+    The year is that of the center month: DJF 1950 is December 1949 through
+    February 1950, and NDJ 1950 is November 1950 through January 1951.
+    ``dates.ann_subset_ts`` gives a season crossing the year end the year of
+    its January instead, so the two agree on DJF, and it gives NDJ 1950 the
+    year 1951.  CPC's pages give each season's months but not the year they
+    fall in.  The convention is what CPC's own data give: 3-month means of
+    the monthly NINO3.4 that the ONI averages (``detrend.nino34.ascii.txt``,
+    at the same address), centered this way, differ from ``oni.ascii.txt`` by
+    -0.003 to +0.013 K across all 920 of its seasons from DJF 1950 to JAS
+    2026, DJF and NDJ included, which is within what truncating the ONI file
+    to two decimals (see ``enso_phase``) and rounding the monthly file allow.
+    With DJF or NDJ moved a year they miss it by about 1.5 K rms.
+
+    A missing-value code, such as the -999.9 of some other CPC tables, would
+    be read as a number; none of the ONI or RONI tables contains one.
+
+    Parameters
+    ----------
+    path : str or path-like
+        The table: a header line beginning ``SEAS YR``, then one row per
+        season, in order, with no season missing.
+    column : str
+        The header name of the column to read, such as ``"ANOM"`` or
+        ``"TOTAL"``.
+    time_str : str
+        Name of the returned time dimension.
+
+    Returns
+    -------
+    xarray.DataArray
+        The column's values along ``time_str``, named after the column in
+        lower case.
+
+    Raises
+    ------
+    ValueError
+        If the file is not UTF-8 text; if the header does not begin ``SEAS
+        YR``, or ``column`` is not one of its value columns or appears more
+        than once among them; if a row has the wrong number of fields, an
+        unknown season, a year not written as digits, or a value not written
+        as a decimal number; if the table has no rows; if the rows do not run
+        one season after another, as when a row is repeated, missing or out of
+        order; or if a season's center month falls outside October 1677 to
+        April 2262, the months whose first days ``datetime64[ns]`` can
+        represent.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as err:
+        raise ValueError(f"{path}: the file is not UTF-8 text: {err}") from err
+    rows = [fields for fields in (line.split() for line in text.splitlines()) if fields]
+    if not rows or rows[0][:2] != ["SEAS", "YR"]:
+        raise ValueError(f"{path}: the header must begin 'SEAS YR'")
+    header = rows[0]
+    value_columns = header[2:]
+    if column not in value_columns:
+        raise ValueError(
+            f"{path}: {column!r} is not a value column of the header {header}"
+        )
+    if value_columns.count(column) > 1:
+        raise ValueError(f"{path}: the header {header} has more than one {column!r}")
+    ind = 2 + value_columns.index(column)
+    if len(rows) == 1:
+        raise ValueError(f"{path}: the table has no rows")
+    months: list[int] = []
+    values: list[float] = []
+    for fields in rows[1:]:
+        if len(fields) != len(header):
+            raise ValueError(f"{path}: row {fields} does not match the header {header}")
+        season, year, value = fields[0], fields[1], fields[ind]
+        if season not in _CPC_SEASON_INDEX:
+            raise ValueError(f"{path}: unknown season {season!r} in row {fields}")
+        if not _CPC_YEAR.fullmatch(year):
+            raise ValueError(
+                f"{path}: row {fields} does not parse: the year {year!r} is not "
+                "written as digits"
+            )
+        if not _CPC_VALUE.fullmatch(value):
+            raise ValueError(
+                f"{path}: row {fields} does not parse: {value!r} is not written "
+                "as a decimal number"
+            )
+        months.append(12 * int(year) + _CPC_SEASON_INDEX[season])
+        values.append(float(value))
+    month_index = np.array(months)
+    if not np.all(np.diff(month_index) == 1):
+        raise ValueError(
+            f"{path}: the rows must run one season after another, with none "
+            "repeated, missing or out of order"
+        )
+    # Months since January 1970, the epoch of datetime64.  Converting to
+    # nanoseconds wraps around silently outside the range datetime64[ns] can
+    # represent, and the round trip back to months catches that.
+    center_months = (month_index - 12 * 1970).astype("datetime64[M]")
+    time = center_months.astype("datetime64[ns]")
+    if not np.array_equal(time.astype("datetime64[M]"), center_months):
+        raise ValueError(
+            f"{path}: every season's center month must fall from October 1677 to "
+            "April 2262, the months whose first days datetime64[ns] can represent"
+        )
+    return xr.DataArray(
+        np.array(values, dtype=float),
+        dims=[time_str],
+        coords={time_str: time},
+        name=column.lower(),
+    )
