@@ -5,7 +5,9 @@ from the module's own helpers, so that each test pins a coefficient, a bound or
 an offset rather than restating the code.
 """
 
+import csv
 from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -14,9 +16,11 @@ import xarray as xr
 
 from puffins.dates import ann_subset_ts, monthly_anom
 from puffins.enso import (
+    ENSO_THRESHOLD,
     RONI_BASE,
     RONI_SIGMA_YEARS,
     box_mean,
+    enso_phase,
     nino34,
     relative_nino34,
     relative_nino34_jjas,
@@ -298,6 +302,454 @@ class TestBoxes:
         np.testing.assert_allclose(
             tio(renamed, lat_str="latitude", lon_str="longitude"), tio(sst), rtol=1e-14
         )
+
+
+class TestEnsoPhase:
+    """El Niño at or above the threshold, La Niña at or below its negative."""
+
+    VALUES = [-1.5, -0.5, -0.49, 0.0, 0.49, 0.5, 0.51, 1.5, np.nan]
+
+    @staticmethod
+    def index(values: list[float]) -> xr.DataArray:
+        time = xr.date_range("2000-01-01", periods=len(values), freq="MS")
+        return xr.DataArray(values, dims=["time"], coords={"time": time}, name="roni")
+
+    @staticmethod
+    def assert_rounds_to(
+        index: xr.DataArray, rounded: list[float], decimals: int = 1
+    ) -> None:
+        """Each value of ``index`` rounds to the one in ``rounded``.
+
+        The rounded value is read back through ``enso_phase``: a value that
+        rounds to r meets a threshold of abs(r), and not one a step larger.
+        """
+        step = 10.0**-decimals
+        for i, r in enumerate(rounded):
+            one = index.isel(time=[i])
+            above = round(abs(r) + step, decimals)
+            for threshold, want in ((abs(r), np.sign(r)), (above, 0.0)):
+                if threshold > 0:
+                    got = enso_phase(one, threshold, decimals=decimals, min_run=1)
+                    assert got.item() == want, (float(one.item()), r, threshold)
+
+    def test_inclusive_by_default(self) -> None:
+        got = enso_phase(self.index(self.VALUES), decimals=None, min_run=1)
+        np.testing.assert_array_equal(got, [-1, -1, 0, 0, 0, 1, 1, 1, np.nan])
+
+    def test_strict(self) -> None:
+        got = enso_phase(
+            self.index(self.VALUES), inclusive=False, decimals=None, min_run=1
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 1, 1, np.nan])
+
+    def test_threshold(self) -> None:
+        got = enso_phase(
+            self.index(self.VALUES), threshold=1.0, decimals=None, min_run=1
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 0, 0, 1, np.nan])
+
+    def test_strict_with_threshold(self) -> None:
+        got = enso_phase(
+            self.index([-1.5, -1.0, -0.7, 0.7, 1.0, 1.5]),
+            threshold=1.0,
+            inclusive=False,
+            min_run=1,
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 0, 1])
+
+    @pytest.mark.parametrize("threshold", [3 * 0.1, 0.3 - 0.1, 0.6, 0.7])
+    @pytest.mark.parametrize("inclusive", [True, False])
+    def test_threshold_on_the_grid(self, threshold: float, inclusive: bool) -> None:
+        """A threshold within float error of the grid acts as the grid value.
+
+        3 * 0.1 is 0.30000000000000004 and 0.3 - 0.1 is 0.19999999999999998.
+        """
+        t = round(threshold, 1)
+        index = self.index([-t - 0.1, -t, t, t + 0.1])
+        got = enso_phase(index, threshold, inclusive=inclusive, min_run=1)
+        at = 1 if inclusive else 0
+        np.testing.assert_array_equal(got, [-1, -at, at, 1])
+
+    def test_default_threshold_is_cpcs(self) -> None:
+        assert ENSO_THRESHOLD == 0.5
+
+    CPC_RULES = pytest.mark.parametrize(("decimals", "min_run"), [(None, 1), (1, 3)])
+
+    @CPC_RULES
+    def test_coordinates_kept_and_named(
+        self, decimals: int | None, min_run: int
+    ) -> None:
+        index = self.index(self.VALUES).assign_coords(
+            season=("time", list("abcdefghi")), member=3
+        )
+        got = enso_phase(index, decimals=decimals, min_run=min_run)
+        xr.testing.assert_identical(got.coords.to_dataset(), index.coords.to_dataset())
+        assert got.name == "enso_phase"
+
+    @CPC_RULES
+    def test_attributes_dropped(self, decimals: int | None, min_run: int) -> None:
+        """A phase has no units, so the index's are not carried over."""
+        index = self.index(self.VALUES)
+        index.attrs = {"units": "K", "long_name": "RONI"}
+        with xr.set_options(keep_attrs=True):
+            got = enso_phase(index, decimals=decimals, min_run=min_run)
+        assert got.attrs == {}
+
+    def test_any_shape(self) -> None:
+        """A field of indices, such as one per ensemble member, keeps its shape."""
+        index = xr.DataArray([[0.7, -0.2], [-0.6, np.nan]], dims=["year", "member"])
+        got = enso_phase(index, min_run=1)
+        assert got.dims == ("year", "member")
+        np.testing.assert_array_equal(got, [[1, 0], [-1, np.nan]])
+
+    @pytest.mark.parametrize("min_run", [2, 5])
+    def test_no_time_dimension_raises(self, min_run: int) -> None:
+        """A run of two or more needs a time dimension to count along."""
+        index = xr.DataArray([0.7, -0.6], dims=["member"])
+        with pytest.raises(ValueError, match="no 'time' dimension.*min_run=1"):
+            enso_phase(index, min_run=min_run)
+
+    def test_gap_in_time_raises(self) -> None:
+        """Dropping a month would join the runs on either side of it."""
+        index = self.index([0.6, 0.6, 0.6, np.nan, 0.6, 0.6]).dropna("time")
+        message = (
+            "monthly with no gaps, since min_run counts runs of consecutive "
+            "months; pass min_run=1 to label each value alone"
+        )
+        with pytest.raises(ValueError, match=message):
+            enso_phase(index)
+        np.testing.assert_array_equal(enso_phase(index, min_run=1), [1] * 5)
+
+    @pytest.mark.parametrize("order", [[0, 1, 1, 2, 3], [4, 3, 2, 1, 0]])
+    def test_repeated_or_reversed_months_raise(self, order: list[int]) -> None:
+        index = self.index([0.6] * 5).isel(time=order)
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index)
+
+    def test_gap_along_time_str_raises(self) -> None:
+        index = self.index([0.6] * 6).rename(time="season").isel(season=[0, 1, 3, 4])
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index, time_str="season")
+
+    @pytest.mark.parametrize("coord", [np.arange(2000, 2005), np.arange(5.0)])
+    def test_time_coordinate_not_dates_raises(self, coord: np.ndarray) -> None:
+        """Year numbers, say, cannot be checked to step by one month."""
+        index = xr.DataArray([0.6] * 5, dims=["year"], coords={"year": coord})
+        with pytest.raises(ValueError, match="'year' coordinate must be dates"):
+            enso_phase(index, time_str="year")
+        np.testing.assert_array_equal(enso_phase(index, min_run=1), [1] * 5)
+
+    def test_yearly_time_raises(self) -> None:
+        """A run of five is CPC's rule for monthly seasons."""
+        time = xr.date_range("2000-01-01", periods=5, freq="YS")
+        index = xr.DataArray([0.6] * 5, dims=["time"], coords={"time": time})
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index)
+
+    def test_gap_in_cftime_time_raises(self) -> None:
+        pytest.importorskip("cftime")
+        time = xr.date_range(
+            "2000-01-01", periods=6, freq="MS", calendar="noleap", use_cftime=True
+        )
+        index = xr.DataArray([0.6] * 6, dims=["time"], coords={"time": time})
+        np.testing.assert_array_equal(enso_phase(index), [1] * 6)
+        with pytest.raises(ValueError, match="monthly with no gaps"):
+            enso_phase(index.isel(time=[0, 1, 2, 4, 5]))
+
+    def test_time_axis_shorter_than_min_run(self) -> None:
+        """Values beyond the record might complete a run, so a warm or cold
+        value is NaN; an empty axis gives an empty result."""
+        got = enso_phase(self.index([0.6, 0.0, -0.6, -0.6]))
+        np.testing.assert_array_equal(got, [np.nan, 0, np.nan, np.nan])
+        assert enso_phase(self.index([])).sizes == {"time": 0}
+
+    def test_time_axis_exactly_min_run_long(self) -> None:
+        np.testing.assert_array_equal(enso_phase(self.index([0.6] * 5)), [1] * 5)
+        np.testing.assert_array_equal(enso_phase(self.index([-0.6] * 4)), [np.nan] * 4)
+
+    def test_non_integer_decimals_or_min_run_raises(self) -> None:
+        index = self.index([0.6] * 6)
+        with pytest.raises(TypeError, match="decimals must be an integer"):
+            enso_phase(index, decimals=1.5)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="min_run must be an integer"):
+            enso_phase(index, min_run=2.5)  # type: ignore[arg-type]
+
+    def test_numpy_integer_min_run(self) -> None:
+        got = enso_phase(self.index([0.6] * 3 + [0.0]), min_run=np.int64(3))  # type: ignore[arg-type]
+        np.testing.assert_array_equal(got, [1, 1, 1, 0])
+
+    def test_inclusive_is_keyword_only(self) -> None:
+        with pytest.raises(TypeError):
+            enso_phase(self.index([0.5]), 0.5, False)  # type: ignore[misc]
+
+    @pytest.mark.parametrize("threshold", [0.0, -0.5, np.nan])
+    def test_nonpositive_threshold_raises(self, threshold: float) -> None:
+        with pytest.raises(ValueError, match="threshold must be positive"):
+            enso_phase(self.index([0.5]), threshold=threshold)
+
+    def test_decimals_round_halves_up(self) -> None:
+        """0.45 rounds to 0.5 and -0.45 to -0.4, as CPC's tables round."""
+        got = enso_phase(
+            self.index([-0.46, -0.45, -0.44, 0.44, 0.45, 0.46]), decimals=1, min_run=1
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 0, 1, 1])
+
+    def test_decimals_with_strict(self) -> None:
+        got = enso_phase(
+            self.index([-0.56, -0.55, 0.54, 0.55]),
+            decimals=1,
+            inclusive=False,
+            min_run=1,
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 1])
+
+    def test_decimals_leave_rounded_values(self) -> None:
+        """CPC's one-decimal values come through rounding unchanged."""
+        values = [k / 10 for k in range(-15, 16)]
+        self.assert_rounds_to(self.index(values), values)
+
+    def test_decimals_round_values_below_a_half_down(self) -> None:
+        """Only a value within 1e-4 of a step below a half rounds up.
+
+        -0.45002 and 0.44998 sit 2e-4 of a step below theirs.
+        """
+        self.assert_rounds_to(
+            self.index([-0.4501, -0.45002, 0.44998, 0.4499]), [-0.5, -0.5, 0.4, 0.4]
+        )
+
+    @pytest.mark.parametrize("to_float64", [False, True])
+    def test_decimals_round_float32_halves_up(self, to_float64: bool) -> None:
+        """A half stored in float32, as 0.45 is stored as 0.44999999, rounds up,
+        and so does one cast from float32 to float64."""
+        hundredths = range(-395, 400, 10)
+        index = self.index([k / 100 for k in hundredths]).astype(np.float32)
+        if to_float64:
+            index = index.astype(np.float64)
+        self.assert_rounds_to(index, [(k + 5) / 100 for k in hundredths])
+
+    def test_two_decimals_round_halves_up(self) -> None:
+        """In float64, -2.555 times 100 is -255.50000000000003, just below -255.5."""
+        self.assert_rounds_to(
+            self.index([-2.555, -2.365, -2.345, -0.455, 0.455, 2.345, 2.555]),
+            [-2.55, -2.36, -2.34, -0.45, 0.46, 2.35, 2.56],
+            decimals=2,
+        )
+
+    def test_two_decimals_round_float32_halves_up(self) -> None:
+        """In float32, 3.905 to 3.995 sit 2.9e-6 to 1.1e-5 of a step below
+        their halves, and -3.995 to -3.905 above theirs."""
+        thousandths = [*range(-3995, -3900, 10), *range(3905, 4000, 10)]
+        index = self.index([k / 1000 for k in thousandths]).astype(np.float32)
+        self.assert_rounds_to(index, [(k + 5) / 1000 for k in thousandths], decimals=2)
+
+    def test_float32_index_meets_a_float64_threshold(self) -> None:
+        """The rounded index is float64, so 0.7 in float32 equals 0.7 in float64."""
+        index = self.index([-0.7, 0.7]).astype(np.float32)
+        got = enso_phase(index, np.float64(0.7), min_run=1)
+        np.testing.assert_array_equal(got, [-1, 1])
+
+    def test_threshold_off_the_rounding_grid_raises(self) -> None:
+        """Rounding to one decimal would move a threshold of 0.37."""
+        index = self.index([-0.37, -0.36, 0.36, 0.37])
+        with pytest.raises(ValueError, match="not a multiple of 10"):
+            enso_phase(index, 0.37, min_run=1)
+        for decimals in (None, 2):
+            got = enso_phase(index, 0.37, decimals=decimals, min_run=1)
+            np.testing.assert_array_equal(got, [-1, 0, 0, 1])
+
+    @pytest.mark.parametrize("threshold", [0.51, 0.501])
+    def test_threshold_just_off_the_grid_raises(self, threshold: float) -> None:
+        with pytest.raises(ValueError, match="not a multiple of 10"):
+            enso_phase(self.index([0.5]), threshold, min_run=1)
+
+    def test_other_decimals(self) -> None:
+        got = enso_phase(
+            self.index([-0.51, -0.5, 0.49, 0.5]), 1.0, decimals=0, min_run=1
+        )
+        np.testing.assert_array_equal(got, [-1, 0, 0, 1])
+
+    def test_min_run(self) -> None:
+        """By default a run shorter than five is neutral where values that miss
+        the threshold bound it, and NaN at either end of the record, which
+        values beyond might lengthen.
+
+        The runs here are 4 warm, 6 warm, 5 cold right after them, and 4 cold.
+        """
+        values = [0.6] * 4 + [0.0] + [0.6] * 6 + [-0.6] * 5 + [0.0] + [-0.6] * 4
+        got = enso_phase(self.index(values))
+        want = [np.nan] * 4 + [0] + [1] * 6 + [-1] * 5 + [0] + [np.nan] * 4
+        np.testing.assert_array_equal(got, want)
+
+    def test_min_run_two(self) -> None:
+        got = enso_phase(self.index([0.0, 0.6, 0.0, 0.6, 0.6, -0.6, 0.0]), min_run=2)
+        np.testing.assert_array_equal(got, [0, 0, 0, 1, 1, 0, 0])
+
+    def test_nan_ends_a_run(self) -> None:
+        """A NaN might continue the run of three before it, so the warm value
+        after it is NaN: it would be El Niño only if the NaN were warm."""
+        got = enso_phase(self.index([0.6, 0.6, 0.6, np.nan, 0.6, 0.0]), min_run=3)
+        np.testing.assert_array_equal(got, [1, 1, 1, np.nan, np.nan, 0])
+
+    def test_nan_beside_a_short_run(self) -> None:
+        """Values beside a NaN are NaN where the NaN might complete a run.
+
+        The warm values on either side of the first NaN would make a run of
+        three with it, and so would the cold values on either side of the
+        third, while the warm value before the second would make a run of two.
+        """
+        values = [0.0, 0.6, np.nan, 0.6, 0.0, 0.6, np.nan, 0.0, -0.6, np.nan, -0.6, 0.0]
+        got = enso_phase(self.index(values), min_run=3)
+        nan = np.nan
+        np.testing.assert_array_equal(
+            got, [0, nan, nan, nan, 0, 0, nan, 0, nan, nan, nan, 0]
+        )
+
+    def test_min_run_along_time_str(self) -> None:
+        """Runs are counted along time_str wherever it sits in the dimensions."""
+        index = xr.DataArray(
+            [[0.6, 0.6, 0.6, 0.0], [0.6, 0.6, 0.0, 0.6]], dims=["member", "season"]
+        )
+        got = enso_phase(index, min_run=3, time_str="season")
+        assert got.dims == ("member", "season")
+        nan = np.nan
+        np.testing.assert_array_equal(got, [[1, 1, 1, 0], [nan, nan, 0, nan]])
+        xr.testing.assert_identical(
+            enso_phase(index.T, min_run=3, time_str="season"), got.T
+        )
+
+    @pytest.mark.parametrize("min_run", [0, -1])
+    def test_min_run_below_one_raises(self, min_run: int) -> None:
+        with pytest.raises(ValueError, match="min_run must be at least 1"):
+            enso_phase(self.index([0.5]), min_run=min_run)
+
+    def test_reproduces_cpcs_roni_table(self) -> None:
+        """The defaults give CPC's coloring of RONI for 1951 and 1952.
+
+        From ``RONI.ascii.txt`` and CPC's RONI table, downloaded 2026-10-23.
+        FMA 1951, 0.48, is shown as 0.5 and colored El Niño; FMA 1952, 0.46, is
+        shown as 0.5 but is a single season and uncolored; MJJ 1952, -0.45, is
+        shown as -0.4.  Neither rule alone gives CPC's colors.
+        """
+        roni = [
+            -0.28, 0.09, 0.48, 0.63, 0.59, 0.69, 0.79, 0.97, 1.04, 0.98, 0.94, 0.71,
+            0.65, 0.33, 0.46, 0.24, -0.03, -0.45, -0.41, -0.14, 0.08, 0.04, -0.10, 0.10,
+        ]  # fmt: skip
+        cpc = [0, 0] + [1] * 11 + [0] * 11
+        index = self.index(roni)
+        np.testing.assert_array_equal(enso_phase(index), cpc)
+        assert not np.array_equal(enso_phase(index, min_run=1), cpc)
+        assert not np.array_equal(enso_phase(index, decimals=None), cpc)
+
+
+class TestEnsoPhaseCPCFiles:
+    """The defaults against CPC's files as of 23 October 2026, DJF 1950 to JAS 2026.
+
+    See ``data/cpc/README.md`` for where each file comes from.
+    """
+
+    DATA = Path(__file__).parent / "data" / "cpc"
+    SEASONS = ["DJF", "JFM", "FMA", "MAM", "AMJ", "MJJ", "JJA", "JAS", "ASO", "SON", "OND", "NDJ"]  # fmt: skip
+    FILES = {
+        "RONI": ("RONI.ascii.txt", "roni-table.csv"),
+        "ONI": ("oni.ascii.txt", "oni-table.csv"),
+    }
+    NAMES = pytest.mark.parametrize("name", ["RONI", "ONI"])
+
+    @staticmethod
+    def time(months: list[str]) -> np.ndarray:
+        """Months written as YYYY-MM, as datetime64[ns]."""
+        return np.array(months, dtype="datetime64[M]").astype("datetime64[ns]")
+
+    @classmethod
+    def load(cls, name: str) -> xr.Dataset:
+        """The text file's two-decimal values and the table's one-decimal
+        values and colors, by each season's center month."""
+        text_file, table_file = cls.FILES[name]
+        lines = (cls.DATA / text_file).read_text().splitlines()[1:]
+        rows = [line.split() for line in lines]
+        with (cls.DATA / table_file).open() as f:
+            table = list(csv.DictReader(f))
+        keys = [(r[1], r[0]) for r in rows]
+        assert keys == [(t["year"], t["season"]) for t in table]
+        months = [
+            f"{year}-{cls.SEASONS.index(season) + 1:02d}" for year, season in keys
+        ]
+        return xr.Dataset(
+            {
+                "text": ("time", [float(r[-1]) for r in rows]),
+                "shown": ("time", [float(t["shown"]) for t in table]),
+                "color": ("time", [float(t["phase"]) for t in table]),
+            },
+            coords={"time": cls.time(months)},
+        )
+
+    @NAMES
+    def test_reproduces_cpcs_tables(self, name: str) -> None:
+        """From the values the tables show, every season but RONI's last four.
+
+        AMJ to JAS 2026 begin a warm run, which CPC leaves uncolored and
+        enso_phase labels NaN.
+        """
+        seasons = self.load(name)
+        assert seasons.sizes["time"] == 920
+        want = seasons.color.copy()
+        if name == "RONI":
+            want[-4:] = np.nan
+        np.testing.assert_array_equal(enso_phase(seasons.shown), want)
+
+    @NAMES
+    def test_reproduces_cpcs_tables_from_text_files(self, name: str) -> None:
+        """The same from the two-decimal files, but for RONI's FMA to MJJ 1984.
+
+        CPC shows FMA's -0.45 as -0.5, which joins the three seasons after it
+        to the La Niña run before it; rounded halves up, -0.45 is -0.4.
+        """
+        seasons = self.load(name)
+        want = seasons.color.copy()
+        if name == "RONI":
+            want[-4:] = np.nan
+            spring = slice("1984-03", "1984-06")
+            assert seasons.text.sel(time="1984-03").item() == -0.45
+            np.testing.assert_array_equal(want.sel(time=spring), [-1] * 4)
+            want.loc[spring] = 0
+        np.testing.assert_array_equal(enso_phase(seasons.text), want)
+
+    @pytest.mark.parametrize(
+        ("name", "up", "halves"), [("RONI", 80, 87), ("ONI", 87, 90)]
+    )
+    def test_cpcs_tables_round_most_halves_up(
+        self, name: str, up: int, halves: int
+    ) -> None:
+        """CPC's tables show most text values ending in 5 rounded up, and every
+        other value rounded to the nearest."""
+        seasons = self.load(name)
+        hundredths = np.round(seasons.text.values * 100).astype(int)
+        tenths = np.round(seasons.shown.values * 10).astype(int)
+        half = hundredths % 10 == 5
+        assert half.sum() == halves
+        assert (10 * tenths[half] == hundredths[half] + 5).sum() == up
+        assert (10 * tenths[half] == hundredths[half] - 5).sum() == halves - up
+        np.testing.assert_array_equal(tenths[~half], np.round(hundredths[~half] / 10))
+
+    def test_cpcs_oni_file_looks_truncated(self) -> None:
+        """CPC's two-decimal ONI values average 0.005 K below the 3-month means
+        of its monthly NINO3.4 anomalies, for either sign, as truncation toward
+        minus infinity would make them; rounding to the nearest would make that
+        average near zero."""
+        oni = self.load("ONI").text
+        lines = (self.DATA / "detrend.nino34.ascii.txt").read_text().splitlines()[1:]
+        rows = [line.split() for line in lines]
+        months = [f"{r[0]}-{int(r[1]):02d}" for r in rows]
+        monthly = xr.DataArray(
+            [float(r[-1]) for r in rows],
+            dims=["time"],
+            coords={"time": self.time(months)},
+        )
+        means = monthly.rolling(time=3, center=True).mean().sel(time=oni.time)
+        below = (means - oni).values
+        assert np.isfinite(below).all()
+        for sign in (oni.values > 0, oni.values < 0):
+            assert 0.004 < below[sign].mean() < 0.006
 
 
 class TestOutputNames:

@@ -24,6 +24,11 @@ built from the same SST product as its input.
 ``relative_nino34`` is the same quantity month by month, without the running
 mean, and ``relative_nino34_jjas`` is its June-September mean, taken with
 ``dates.ann_subset_ts``.  The anomalies come from ``dates.monthly_anom``.
+``enso_phase`` labels each value of an index El Niño, La Niña or neutral.  Its
+defaults are CPC's rules for an index of overlapping 3-month seasons, one per
+month, such as RONI.  Those rules are written for CPC's seasonal tables, so for
+a monthly or yearly index, such as these two, ``min_run=1, decimals=None``
+labels each value alone and unrounded.
 
 The module also gives the plain NINO3.4 box mean and the tropical Indian Ocean
 (TIO) box of Yu et al. (2021, Geophys. Res. Lett. 48, e2021GL092873), 20S-20N
@@ -40,6 +45,7 @@ These functions moved here on 2026-09-30 from the lps-enso-grl project's
 ``enso_indices.py``, so that the projects using them share one definition.
 """
 
+import numbers
 from typing import cast
 
 import numpy as np
@@ -60,6 +66,16 @@ RONI_BASE: tuple[int, int] = (1991, 2020)
 
 RONI_SIGMA_YEARS: tuple[int, int] = (1950, 2020)
 """The years over which RONI's rescaling ratio is computed."""
+
+ENSO_THRESHOLD: float = 0.5
+"""The index magnitude, in K, that CPC's thresholds for El Niño and La Niña use."""
+
+_ROUND_TOL = 1e-4
+"""How far below a half a value may sit and still round up in ``enso_phase``,
+in units of the last decimal kept.  Stored in float32, a two-decimal half
+below 4 in magnitude sits up to 1e-6 below it in those units, and a
+three-decimal half up to 1.1e-5; 0.45, stored as 0.44999999, sits 1.2e-7
+below."""
 
 
 def box_mean(
@@ -153,6 +169,216 @@ def tio(sst: xr.DataArray, **kwargs: str) -> xr.DataArray:
     return cast(xr.DataArray, box_mean(sst, TIO_LAT, TIO_LON, **kwargs).rename("tio"))
 
 
+def _in_long_run(
+    flag: xr.DataArray, min_run: int, time_str: str, beyond: bool
+) -> xr.DataArray:
+    """Whether each value lies in a run of ``min_run`` or more True values.
+
+    The values beyond either end of ``time_str`` are taken to be ``beyond``.
+    """
+    pad = min_run - 1
+    padded = flag.pad({time_str: (pad, pad)}, constant_values=beyond)
+    # True at the last value of each window of min_run values that are all True.
+    ends = padded.rolling({time_str: min_run}).sum() == min_run
+    # A value is in such a window if one ends at it or at one of the next
+    # min_run - 1 values.
+    covered = ends
+    for lag in range(1, min_run):
+        covered = covered | ends.shift({time_str: -lag}, fill_value=False)
+    return covered.isel({time_str: slice(pad, pad + flag.sizes[time_str])})
+
+
+def _require_monthly(times: xr.DataArray, why: str) -> None:
+    """Raise a ValueError, ending with ``why``, unless ``times`` steps by one month."""
+    year_month = (times.dt.year * 12 + times.dt.month).to_numpy()
+    if not np.all(np.diff(year_month) == 1):
+        raise ValueError(f"the time axis must be monthly with no gaps, since {why}")
+
+
+def enso_phase(
+    index: xr.DataArray,
+    threshold: float = ENSO_THRESHOLD,
+    *,
+    inclusive: bool = True,
+    decimals: int | None = 1,
+    min_run: int = 5,
+    time_str: str = TIME_STR,
+) -> xr.DataArray:
+    """The ENSO phase of each value of an index: El Niño, La Niña or neutral.
+
+    1 marks El Niño, a value at or above ``threshold``; -1 marks La Niña, a
+    value at or below ``-threshold``; 0 marks neutral; and NaN marks a
+    missing value, or a phase that cannot be determined from the values given.
+    By default the function also applies CPC's two further rules, described
+    below, and so gives CPC's labels.  ``decimals=None, min_run=1`` labels
+    each value alone and as given.
+
+    CPC's operational definitions are inclusive: El Niño is "a positive RONI
+    greater than or equal to +0.5ºC" and La Niña "a negative RONI less than
+    or equal to -0.5ºC", in the "NOAA Operational Definitions for El Niño and
+    La Niña" of CPC's weekly "ENSO: Recent Evolution, Current Status and
+    Predictions" (issue of 19 October 2026; the file at
+    https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/lanina/enso_evolution-status-fcsts-web.pdf
+    is replaced each week).  ``inclusive=False`` gives the strict test some
+    studies use instead.
+
+    First, CPC applies the threshold to the index rounded to one decimal, as
+    its tables show it: RONI for February to April 1951, 0.48 in CPC's
+    two-decimal ``RONI.ascii.txt``, is shown as 0.5 and counted as El Niño.
+    ``decimals`` rounds a value halfway between up, so 0.45 becomes 0.5 and
+    -0.45 becomes -0.4.  CPC's tables round that way 80 of the 87 RONI values
+    and 87 of the 90 ONI values in its two-decimal text files that end in 5.
+
+    Rounding halves up suits those files because their second decimal
+    appears to be truncated, toward minus infinity: the ONI file's values
+    average 0.005 K below the 3-month means of CPC's monthly NINO3.4
+    anomalies, for positive and negative values alike.  A truncated 0.45
+    then stands for a value from 0.45 to 0.46, whose nearest one decimal is
+    0.5, and a truncated -0.45 for one from -0.45 to -0.44, whose nearest is
+    -0.4.  So an unrounded value gets the label its truncated two decimals
+    get: El Niño from 0.45 K and La Niña below -0.45 K, to within 1e-5 K.  A
+    series rounded to two decimals the usual way, to the nearest, is labeled
+    differently.  Its 0.45 stands for a value from 0.445 to 0.455, so the
+    defaults label it El Niño from 0.445 K, and La Niña only below -0.455 K.
+    Pass such a series unrounded where possible.
+
+    Second, CPC's RONI and ONI tables color a season El Niño or La Niña only
+    "when the threshold is met for a minimum of five (5) consecutive
+    overlapping seasons"
+    (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/).
+    ``min_run`` applies this along ``time_str``.  A run shorter than
+    ``min_run`` is neutral where values that miss the threshold bound it on
+    both sides.  One that an end of the record cuts off is NaN, since values
+    beyond the record might lengthen it.  So is one beside a NaN, unless it
+    would stay shorter than ``min_run`` even if the NaN values passed.
+
+    With its defaults, the function reproduces CPC's coloring of all 920
+    seasons from DJF 1950 to JAS 2026 in its RONI and ONI tables, as
+    downloaded on 23 October 2026, from the one-decimal values the tables
+    show, except RONI's last four seasons, AMJ to JAS 2026.  They begin a
+    warm run, which CPC leaves uncolored and the function labels NaN.  From
+    the two-decimal text files it reproduces the same seasons except four
+    more, RONI's FMA to MJJ 1984: CPC shows FMA's -0.45 as -0.5, which joins
+    the three seasons after it to the La Niña run before it.  Copies of
+    these files are in ``puffins/tests/data/cpc``.
+
+    Parameters
+    ----------
+    index : xarray.DataArray
+        An ENSO index such as RONI or ONI, in K.
+    threshold : float
+        The positive magnitude separating neutral from El Niño and La Niña, in
+        the units of ``index``; for a standardized index, pass it in standard
+        deviations.  With ``decimals``, it must be a multiple of
+        ``10**-decimals``, the only values the rounded index takes; pass
+        ``decimals=None`` for any other threshold.
+    inclusive : bool
+        Whether a value exactly at ``threshold`` or ``-threshold`` counts as
+        El Niño or La Niña rather than neutral.  With ``decimals``, the test
+        is on the rounded value, so with the default rounding
+        ``inclusive=False`` gives El Niño from 0.55 K and La Niña below
+        -0.55 K, as a strict test on the one-decimal values of CPC's tables
+        would.
+    decimals : int, optional
+        The index is rounded to this many decimals, halves up, before it is
+        compared with the threshold.  The default, 1, is CPC's; None leaves
+        the index as given.  The rounding is done in float64, and a value
+        less than 1e-4 of a step below a half, as a half stored in float32
+        is, also rounds up.
+    min_run : int
+        The fewest consecutive values along ``time_str`` that must all pass
+        the same threshold for any of them to count.  The default, 5, is
+        CPC's, for an index of overlapping 3-month seasons, one per month; 1
+        labels each value alone.  Where ``time_str`` has a coordinate, it
+        must be dates that step by one month, with no gaps; with none, the
+        values along it are taken to be consecutive months.
+    time_str : str
+        Name of the time dimension, used only when ``min_run`` exceeds 1.
+
+    Returns
+    -------
+    xarray.DataArray
+        The phase, as floats so that NaN can stand for a missing value or
+        an undetermined phase, on
+        ``index``'s coordinates, named ``"enso_phase"``, without ``index``'s
+        attributes, since a phase has no units.
+
+    Raises
+    ------
+    ValueError
+        If ``threshold`` is not positive, or is off the grid of
+        ``10**-decimals``; if ``min_run`` is less than 1; or if ``min_run``
+        exceeds 1 and ``index`` has no ``time_str`` dimension, or has a
+        coordinate along it that is not dates stepping by one month.
+    TypeError
+        If ``decimals`` is not an integer or None, or ``min_run`` is not an
+        integer.
+    """
+    if not threshold > 0:
+        raise ValueError(f"threshold must be positive; got {threshold}")
+    if not isinstance(min_run, numbers.Integral):
+        raise TypeError(f"min_run must be an integer; got {min_run!r}")
+    if min_run < 1:
+        raise ValueError(f"min_run must be at least 1; got {min_run}")
+    if min_run > 1:
+        if time_str not in index.dims:
+            raise ValueError(
+                f"index has no {time_str!r} dimension to count runs along; pass "
+                "min_run=1 to label each value alone, as for a yearly index"
+            )
+        why = (
+            "min_run counts runs of consecutive months; pass min_run=1 to label "
+            "each value alone"
+        )
+        # coords.get would give a dimension with no coordinate a range of
+        # integers, so test membership instead.
+        if time_str in index.coords:
+            times = index[time_str]
+            if not (
+                np.issubdtype(times.dtype, np.datetime64)
+                or isinstance(index.indexes.get(time_str), xr.CFTimeIndex)
+            ):
+                raise ValueError(
+                    f"the {time_str!r} coordinate must be dates, since {why}"
+                )
+            _require_monthly(times, why)
+    value, limit = index, threshold
+    if decimals is not None:
+        if not isinstance(decimals, numbers.Integral):
+            raise TypeError(f"decimals must be an integer or None; got {decimals!r}")
+        steps = threshold * 10**decimals
+        if abs(steps - round(steps)) > _ROUND_TOL:
+            raise ValueError(
+                f"threshold {threshold} is not a multiple of 10**-{decimals}, so "
+                f"rounding the index to {decimals} decimals would move it; pass "
+                "decimals=None, or a threshold on that grid"
+            )
+        # Compared in units of the last decimal kept, in which the rounded
+        # index and the threshold are whole numbers, so that a threshold such
+        # as 3 * 0.1, which is 0.30000000000000004, acts as 0.3.  The scaling
+        # is in float64, whose rounding error is far below _ROUND_TOL.
+        value = np.floor(index.astype(np.float64) * 10**decimals + 0.5 + _ROUND_TOL)
+        limit = round(steps)
+    if inclusive:
+        warm, cold = value >= limit, value <= -limit
+    else:
+        warm, cold = value > limit, value < -limit
+    known = index.notnull()
+    if min_run > 1:
+        # A short run that an end of the record or a NaN cuts off may continue
+        # in the values not seen, so its phase is undetermined, unless the run
+        # would stay short were every one of those values to pass.
+        missing = index.isnull()
+        sure_warm = _in_long_run(warm, min_run, time_str, False)
+        sure_cold = _in_long_run(cold, min_run, time_str, False)
+        maybe_warm = _in_long_run(warm | missing, min_run, time_str, True)
+        maybe_cold = _in_long_run(cold | missing, min_run, time_str, True)
+        known = known & (sure_warm | ~maybe_warm) & (sure_cold | ~maybe_cold)
+        warm, cold = sure_warm, sure_cold
+    phase = xr.where(warm, 1.0, xr.where(cold, -1.0, 0.0)).where(known)
+    return cast(xr.DataArray, phase.rename("enso_phase"))
+
+
 def _box_anomalies(
     sst: xr.DataArray, base: tuple[int, int], time_str: str, **kwargs: str
 ) -> tuple[xr.DataArray, xr.DataArray]:
@@ -173,13 +399,10 @@ def _running_means(
         If the time axis is not monthly or has a gap, since the running mean
         takes its neighbors by position.
     """
-    times = nino34_anom[time_str]
-    year_month = (times.dt.year * 12 + times.dt.month).to_numpy()
-    if not np.all(np.diff(year_month) == 1):
-        raise ValueError(
-            "the time axis must be monthly with no gaps, since the 3-month "
-            "running mean takes its neighbors by position"
-        )
+    _require_monthly(
+        nino34_anom[time_str],
+        "the 3-month running mean takes its neighbors by position",
+    )
     oni = nino34_anom.rolling({time_str: 3}, center=True).mean()
     diff = (nino34_anom - tropical_anom).rolling({time_str: 3}, center=True).mean()
     return oni, diff

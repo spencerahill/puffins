@@ -42,6 +42,8 @@ dependencies = [
 # Install via: conda install -c conda-forge windspharm
 fortran = ["windspharm"]
 dev = [
+  # For the tests on cftime calendars, such as noleap.
+  "cftime",
   "mypy",
   "pre-commit",
   "pytest",
