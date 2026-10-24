@@ -283,8 +283,11 @@ def enso_phase(
         The index is rounded to this many decimals, halves up, before it is
         compared with the threshold.  The default, 1, is CPC's; None leaves
         the index as given.  The rounding is done in float64, and a value
-        less than 1e-4 of a step below a half, as a half stored in float32
-        is, also rounds up.
+        less than 1e-4 of a step below a half also rounds up.  So a half
+        stored in float32, which can sit just below the half, rounds up too,
+        wherever its magnitude is below 256 K at one decimal, 32 K at two or
+        2 K at three.  Above those, some float32 halves round down, so
+        float32 input does not round reliably to three decimals above 2 K.
     min_run : int
         The fewest consecutive values along ``time_str`` that must all pass
         the same threshold for any of them to count.  The default, 5, is
