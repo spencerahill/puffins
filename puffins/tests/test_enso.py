@@ -671,7 +671,6 @@ class TestEnsoPhaseCPCFiles:
     """
 
     DATA = Path(__file__).parent / "data" / "cpc"
-    SEASONS = ["DJF", "JFM", "FMA", "MAM", "AMJ", "MJJ", "JJA", "JAS", "ASO", "SON", "OND", "NDJ"]  # fmt: skip
     FILES = {
         "RONI": ("RONI.ascii.txt", "roni-table.csv"),
         "ONI": ("oni.ascii.txt", "oni-table.csv"),
@@ -688,23 +687,30 @@ class TestEnsoPhaseCPCFiles:
         """The text file's two-decimal values and the table's one-decimal
         values and colors, by each season's center month."""
         text_file, table_file = cls.FILES[name]
-        lines = (cls.DATA / text_file).read_text().splitlines()[1:]
-        rows = [line.split() for line in lines]
+        text = read_cpc_index(cls.DATA / text_file)
         with (cls.DATA / table_file).open() as f:
             table = list(csv.DictReader(f))
-        keys = [(r[1], r[0]) for r in rows]
-        assert keys == [(t["year"], t["season"]) for t in table]
         months = [
-            f"{year}-{cls.SEASONS.index(season) + 1:02d}" for year, season in keys
+            f"{t['year']}-{CPC_SEASONS.index(t['season']) + 1:02d}" for t in table
         ]
+        np.testing.assert_array_equal(text["time"], cls.time(months))
         return xr.Dataset(
             {
-                "text": ("time", [float(r[-1]) for r in rows]),
+                "text": text,
                 "shown": ("time", [float(t["shown"]) for t in table]),
                 "color": ("time", [float(t["phase"]) for t in table]),
-            },
-            coords={"time": cls.time(months)},
+            }
         )
+
+    @pytest.mark.parametrize(("name", "last"), [("RONI", 1.69), ("ONI", 2.16)])
+    def test_read_cpc_index_reads_every_season(self, name: str, last: float) -> None:
+        """All 920 seasons, DJF 1950 to JAS 2026, at their center months."""
+        got = read_cpc_index(self.DATA / self.FILES[name][0])
+        assert got.sizes["time"] == 920
+        np.testing.assert_array_equal(
+            got["time"][[0, -1]], self.time(["1950-01", "2026-08"])
+        )
+        assert got[-1].item() == last
 
     @NAMES
     def test_reproduces_cpcs_tables(self, name: str) -> None:
@@ -773,6 +779,9 @@ class TestEnsoPhaseCPCFiles:
         assert np.isfinite(below).all()
         for sign in (oni.values > 0, oni.values < 0):
             assert 0.004 < below[sign].mean() < 0.006
+        # So read_cpc_index's center-month year is CPC's: with DJF or NDJ
+        # placed a year off, those seasons would miss by about 1.5 K rms.
+        assert np.abs(below).max() < 0.02
 
 
 class TestOutputNames:
@@ -996,7 +1005,7 @@ class TestReadCpcIndex:
     @staticmethod
     def write(tmp_path: Path, text: str) -> Path:
         path = tmp_path / "table.txt"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return path
 
     def test_oni_anomalies(self, tmp_path: Path) -> None:
@@ -1069,6 +1078,33 @@ class TestReadCpcIndex:
         got = read_cpc_index(self.write(tmp_path, "﻿" + RONI_TABLE))
         np.testing.assert_array_equal(got, [-1.19, -1.08, -0.96])
 
+    def test_not_utf8_raises_with_path(self, tmp_path: Path) -> None:
+        """A Latin-1 degree sign, byte 0xb0, is not UTF-8."""
+        path = tmp_path / "table.txt"
+        path.write_bytes(RONI_TABLE.encode() + b"\xb0\n")
+        with pytest.raises(ValueError, match="not UTF-8") as err:
+            read_cpc_index(path)
+        assert str(path) in str(err.value)
+
+    def test_value_column_named_like_a_key_column(self, tmp_path: Path) -> None:
+        """The column is looked up among the value columns only."""
+        got = read_cpc_index(
+            self.write(tmp_path, "SEAS YR YR\nDJF 1950 -1.19\n"), column="YR"
+        )
+        np.testing.assert_array_equal(got, [-1.19])
+
+    @pytest.mark.parametrize(
+        ("row", "month"),
+        [("SON 1677 0.1", "1677-10-01"), ("MAM 2262 0.1", "2262-04-01")],
+    )
+    def test_years_at_the_ends_of_datetime64_ns(
+        self, tmp_path: Path, row: str, month: str
+    ) -> None:
+        got = read_cpc_index(self.write(tmp_path, f"SEAS YR ANOM\n{row}\n"))
+        np.testing.assert_array_equal(
+            got["time"], np.array([month], dtype="datetime64[ns]")
+        )
+
     @pytest.mark.parametrize(
         ("text", "column", "match"),
         [
@@ -1078,6 +1114,11 @@ class TestReadCpcIndex:
             ("\n  \n\n", "ANOM", "must begin 'SEAS YR'"),
             (RONI_TABLE, "TOTAL", "'TOTAL' is not a value column"),
             (RONI_TABLE, "YR", "'YR' is not a value column"),
+            (
+                "SEAS YR ANOM ANOM\nDJF 1950 -1.19 0.5\n",
+                "ANOM",
+                "more than one 'ANOM'",
+            ),
             ("SEAS YR ANOM\n", "ANOM", "no rows"),
             ("SEAS YR ANOM\nDJF 1950\n", "ANOM", "does not match the header"),
             (
@@ -1088,6 +1129,13 @@ class TestReadCpcIndex:
             ("SEAS YR ANOM\nDJF 1950 -1.19 0.5\n", "ANOM", "does not match the header"),
             ("SEAS YR ANOM\nDJF 1950 abc\n", "ANOM", "does not parse"),
             ("SEAS YR ANOM\nDJF 19x0 -1.19\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 19_50 -1.19\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 1_0.5\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 nan\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 1950 inf\n", "ANOM", "does not parse"),
+            ("SEAS YR ANOM\nDJF 50 -1.19\n", "ANOM", "October 1677 to April 2262"),
+            ("SEAS YR ANOM\nASO 1677 0.1\n", "ANOM", "October 1677 to April 2262"),
+            ("SEAS YR ANOM\nAMJ 2262 0.1\n", "ANOM", "October 1677 to April 2262"),
             ("SEAS YR ANOM\nDEJ 1950 -1.19\n", "ANOM", "unknown season 'DEJ'"),
             ("SEAS YR ANOM\nDJF 1950 -1.19\nFMA 1950 -0.96\n", "ANOM", "one season"),
             ("SEAS YR ANOM\nJFM 1950 -1.08\nDJF 1950 -1.19\n", "ANOM", "one season"),

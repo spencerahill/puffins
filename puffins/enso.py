@@ -49,6 +49,7 @@ These functions moved here on 2026-09-30 from the lps-enso-grl project's
 
 import numbers
 import os
+import re
 from pathlib import Path
 from typing import cast
 
@@ -582,6 +583,13 @@ CPC_SEASONS: tuple[str, ...] = (
 """CPC's 3-month season labels, in calendar order of their center months, so
 the season at index ``k`` is centered on month ``k + 1``."""
 
+_CPC_SEASON_INDEX = {season: k for k, season in enumerate(CPC_SEASONS)}
+# A year written as digits, and a value written as a decimal number, so that
+# the digit-group underscores int and float accept, and float's nan and inf,
+# raise an error.
+_CPC_YEAR = re.compile(r"[0-9]+")
+_CPC_VALUE = re.compile(r"[+-]?[0-9]*\.?[0-9]+")
+
 
 def read_cpc_index(
     path: str | os.PathLike[str], column: str = "ANOM", time_str: str = TIME_STR
@@ -599,13 +607,17 @@ def read_cpc_index(
     is how ``roni`` indexes its running means, so a table read here and
     ``roni`` of a field stamped at the start of each month share a time axis.
     The year is that of the center month: DJF 1950 is December 1949 through
-    February 1950, and NDJ 1950 is November 1950 through January 1951.  CPC's
-    pages give each season's months but not the year they fall in.  The
-    convention is what CPC's own data give: 3-month means of the monthly
-    NINO3.4 that the ONI averages (``detrend.nino34.ascii.txt``, at the same
-    address), centered this way, reproduce ``oni.ascii.txt`` to its rounding,
-    for DJF and NDJ as for the other ten seasons, and with DJF or NDJ moved a
-    year they miss it by about 1.5 K rms.
+    February 1950, and NDJ 1950 is November 1950 through January 1951.
+    ``dates.ann_subset_ts`` gives a season crossing the year end the year of
+    its January instead, so the two agree on DJF, and it gives NDJ 1950 the
+    year 1951.  CPC's pages give each season's months but not the year they
+    fall in.  The convention is what CPC's own data give: 3-month means of
+    the monthly NINO3.4 that the ONI averages (``detrend.nino34.ascii.txt``,
+    at the same address), centered this way, differ from ``oni.ascii.txt`` by
+    -0.003 to +0.013 K across all 920 of its seasons from DJF 1950 to JAS
+    2026, DJF and NDJ included, which is within what truncating the ONI file
+    to two decimals (see ``enso_phase``) and rounding the monthly file allow.
+    With DJF or NDJ moved a year they miss it by about 1.5 K rms.
 
     A missing-value code, such as the -999.9 of some other CPC tables, would
     be read as a number; none of the ONI or RONI tables contains one.
@@ -630,22 +642,32 @@ def read_cpc_index(
     Raises
     ------
     ValueError
-        If the header does not begin ``SEAS YR`` or ``column`` is not one of
-        its value columns; if a row has the wrong number of fields, an unknown
-        season, or a year or value that does not parse as a number; if the
-        table has no rows; or if the rows do not run one season after another,
-        as when a row is repeated, missing or out of order.
+        If the file is not UTF-8 text; if the header does not begin ``SEAS
+        YR``, or ``column`` is not one of its value columns or appears more
+        than once among them; if a row has the wrong number of fields, an
+        unknown season, a year not written as digits, or a value not written
+        as a decimal number; if the table has no rows; if the rows do not run
+        one season after another, as when a row is repeated, missing or out of
+        order; or if a season's center month falls outside October 1677 to
+        April 2262, the months whose first days ``datetime64[ns]`` can
+        represent.
     """
-    text = Path(path).read_text(encoding="utf-8-sig")
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as err:
+        raise ValueError(f"{path}: the file is not UTF-8 text: {err}") from err
     rows = [fields for fields in (line.split() for line in text.splitlines()) if fields]
     if not rows or rows[0][:2] != ["SEAS", "YR"]:
         raise ValueError(f"{path}: the header must begin 'SEAS YR'")
     header = rows[0]
-    if column not in header[2:]:
+    value_columns = header[2:]
+    if column not in value_columns:
         raise ValueError(
             f"{path}: {column!r} is not a value column of the header {header}"
         )
-    ind = header.index(column)
+    if value_columns.count(column) > 1:
+        raise ValueError(f"{path}: the header {header} has more than one {column!r}")
+    ind = 2 + value_columns.index(column)
     if len(rows) == 1:
         raise ValueError(f"{path}: the table has no rows")
     months: list[int] = []
@@ -653,23 +675,37 @@ def read_cpc_index(
     for fields in rows[1:]:
         if len(fields) != len(header):
             raise ValueError(f"{path}: row {fields} does not match the header {header}")
-        if fields[0] not in CPC_SEASONS:
-            raise ValueError(f"{path}: unknown season {fields[0]!r} in row {fields}")
-        try:
-            months.append(12 * int(fields[1]) + CPC_SEASONS.index(fields[0]))
-            values.append(float(fields[ind]))
-        except ValueError as err:
-            raise ValueError(f"{path}: row {fields} does not parse: {err}") from err
+        season, year, value = fields[0], fields[1], fields[ind]
+        if season not in _CPC_SEASON_INDEX:
+            raise ValueError(f"{path}: unknown season {season!r} in row {fields}")
+        if not _CPC_YEAR.fullmatch(year):
+            raise ValueError(
+                f"{path}: row {fields} does not parse: the year {year!r} is not "
+                "written as digits"
+            )
+        if not _CPC_VALUE.fullmatch(value):
+            raise ValueError(
+                f"{path}: row {fields} does not parse: {value!r} is not written "
+                "as a decimal number"
+            )
+        months.append(12 * int(year) + _CPC_SEASON_INDEX[season])
+        values.append(float(value))
     month_index = np.array(months)
     if not np.all(np.diff(month_index) == 1):
         raise ValueError(
             f"{path}: the rows must run one season after another, with none "
             "repeated, missing or out of order"
         )
-    time = np.array(
-        [f"{m // 12:04d}-{m % 12 + 1:02d}-01" for m in month_index],
-        dtype="datetime64[ns]",
-    )
+    # Months since January 1970, the epoch of datetime64.  Converting to
+    # nanoseconds wraps around silently outside the range datetime64[ns] can
+    # represent, and the round trip back to months catches that.
+    center_months = (month_index - 12 * 1970).astype("datetime64[M]")
+    time = center_months.astype("datetime64[ns]")
+    if not np.array_equal(time.astype("datetime64[M]"), center_months):
+        raise ValueError(
+            f"{path}: every season's center month must fall from October 1677 to "
+            "April 2262, the months whose first days datetime64[ns] can represent"
+        )
     return xr.DataArray(
         np.array(values, dtype=float),
         dims=[time_str],
