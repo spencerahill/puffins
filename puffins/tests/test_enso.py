@@ -542,6 +542,27 @@ class TestEnsoPhase:
         index = self.index([k / 1000 for k in thousandths]).astype(np.float32)
         self.assert_rounds_to(index, [(k + 5) / 1000 for k in thousandths], decimals=2)
 
+    @pytest.mark.parametrize(
+        ("decimals", "halves", "rounded"),
+        [
+            (1, [-255.85, 256.05], [-255.8, 256.0]),
+            (2, [-31.915, -32.005], [-31.91, -32.01]),
+            (3, [-1.9005, 2.0015], [-1.9, 2.001]),
+            (4, [-0.22095, -0.25025], [-0.2209, -0.2503]),
+        ],
+    )
+    def test_float32_halves_round_up_only_below_the_documented_limits(
+        self, decimals: int, halves: list[float], rounded: list[float]
+    ) -> None:
+        """The limits the docstring gives for float32 halves: 256, 32, 2, 0.25 K.
+
+        Each first value is the half below its limit that float32 stores
+        furthest below its exact value, and it rounds up.  Each second is the
+        smallest half above the limit, of either sign, that rounds down.
+        """
+        index = self.index(halves).astype(np.float32)
+        self.assert_rounds_to(index, rounded, decimals=decimals)
+
     def test_float32_index_meets_a_float64_threshold(self) -> None:
         """The rounded index is float64, so 0.7 in float32 equals 0.7 in float64."""
         index = self.index([-0.7, 0.7]).astype(np.float32)
