@@ -72,10 +72,15 @@ ENSO_THRESHOLD: float = 0.5
 
 _ROUND_TOL = 1e-4
 """How far below a half a value may sit and still round up in ``enso_phase``,
-in units of the last decimal kept.  Stored in float32, a two-decimal half
-below 4 in magnitude sits up to 1e-6 below it in those units, and a
-three-decimal half up to 1.1e-5; 0.45, stored as 0.44999999, sits 1.2e-7
-below."""
+in units of the last decimal kept.  Stored in float32, a half below 4 in
+magnitude sits up to 1e-6 below it in those units at one decimal, and up to
+1.1e-5 at two; 0.45, stored as 0.44999999, sits 1.2e-7 below.  A float32
+half can sit up to half the gap between adjacent float32 values below it,
+and that gap doubles with each power of two.  So float32 halves round up
+only below the first power of two at which half the gap, in those units,
+exceeds this value: 256 at one decimal, 32 at two, 2 at three and 0.25 at
+four.  The ``enso_phase`` docstring gives those limits, so a change here
+moves them."""
 
 
 def box_mean(
@@ -283,8 +288,14 @@ def enso_phase(
         The index is rounded to this many decimals, halves up, before it is
         compared with the threshold.  The default, 1, is CPC's; None leaves
         the index as given.  The rounding is done in float64, and a value
-        less than 1e-4 of a step below a half, as a half stored in float32
-        is, also rounds up.
+        less than 1e-4 of a step below a half also rounds up.  So a half
+        stored in float32, which can sit just below the half, rounds up too,
+        wherever its magnitude is below 256 K at one decimal, 32 K at two,
+        2 K at three or 0.25 K at four.  At any number of decimals the limit
+        is the first power of two at which half the gap between adjacent
+        float32 values exceeds 1e-4 of a step.  Above the limit some float32
+        halves round down, so float32 input does not round reliably to three
+        decimals above 2 K, or to four above 0.25 K.
     min_run : int
         The fewest consecutive values along ``time_str`` that must all pass
         the same threshold for any of them to count.  The default, 5, is
