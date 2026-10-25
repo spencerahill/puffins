@@ -1,5 +1,7 @@
 """Tests for the plotting module."""
 
+import copy
+import io
 from collections.abc import Iterator
 from typing import Any
 
@@ -12,6 +14,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
+from matplotlib.backends.backend_pdf import PdfFile, RendererPdf  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
@@ -145,12 +148,12 @@ class TestPanelLabel:
 class TestLabelCurve:
     """Direct labels beside their curves, clear of every other.
 
-    Every check is made on the rendered figure, in display pixels: the label's
-    near edge lies ``gap`` points beyond its curve's extreme across the
-    label's width and ``gap`` either side, every other curve lies on the far
-    side of that extreme, the label lies inside the axes, and, measured from
-    the label's box to each drawn line, it is nearer its own curve than any
-    other.  Curve a rises from 0 to 3 across x from 0 to 10 and curve b falls
+    Every check is made on the rendered figure, in display pixels, and on the
+    label's box as a saved PDF lays it out: the label's near edge lies
+    ``gap`` points beyond its curve's extreme across the label's width and
+    ``gap`` either side, every other curve lies on the far side of that
+    extreme, the label lies inside the axes, and, measured from the label's
+    box to each drawn line, it is nearer its own curve than any other.  Curve a rises from 0 to 3 across x from 0 to 10 and curve b falls
     from 3 to 0, so a lies above b only for x past 5, and by more the further
     right.
 
@@ -179,6 +182,19 @@ class TestLabelCurve:
     def extent(ax_: matplotlib.axes.Axes, label: Text) -> matplotlib.transforms.Bbox:
         ax_.figure.canvas.draw()
         return label.get_window_extent()
+
+    @staticmethod
+    def pdf_extent(
+        ax_: matplotlib.axes.Axes, label: Text
+    ) -> matplotlib.transforms.Bbox:
+        """The label's box as matplotlib's PDF backend lays it out, at 72 dpi,
+        in the figure's display pixels; measured on a copy of the label."""
+        fig = ax_.get_figure(root=True)
+        assert fig is not None
+        width, height = fig.get_size_inches() * 72.0
+        renderer = RendererPdf(PdfFile(io.BytesIO()), 72, height, width)
+        box = copy.copy(label).get_window_extent(renderer=renderer, dpi=72.0)
+        return matplotlib.transforms.Bbox(box.get_points() * fig.dpi / 72.0)
 
     @staticmethod
     def segments(
@@ -279,18 +295,22 @@ class TestLabelCurve:
     ) -> matplotlib.transforms.Bbox:
         x = self.X if x is None else x
         box = self.extent(ax_, label)
+        in_pdf = self.pdf_extent(ax_, label)
         gap_px = gap_pts * ax_.figure.dpi / 72.0
-        own_px = self.under(ax_, box, x, own, gap_px)
-        if above:
-            np.testing.assert_allclose(box.y0, own_px.max() + gap_px, atol=1e-6)
-        else:
-            np.testing.assert_allclose(box.y1, own_px.min() - gap_px, atol=1e-6)
-        assert ax_.bbox.contains(box.x0, box.y0) and ax_.bbox.contains(box.x1, box.y1)
-        own_d, other_d = (
-            self.distance(ax_, box, x, own),
-            self.distance(ax_, box, x, other),
-        )
-        assert gap_px - 1e-6 <= own_d < other_d
+        both = matplotlib.transforms.Bbox.union([box, in_pdf])
+        own_px = self.under(ax_, both, x, own, gap_px)
+        for drawn in (box, in_pdf):
+            if above:
+                np.testing.assert_allclose(drawn.y0, own_px.max() + gap_px, atol=1e-6)
+            else:
+                np.testing.assert_allclose(drawn.y1, own_px.min() - gap_px, atol=1e-6)
+            assert ax_.bbox.contains(drawn.x0, drawn.y0)
+            assert ax_.bbox.contains(drawn.x1, drawn.y1)
+            own_d, other_d = (
+                self.distance(ax_, drawn, x, own),
+                self.distance(ax_, drawn, x, other),
+            )
+            assert gap_px - 1e-6 <= own_d < other_d
         return box
 
     def test_above_where_its_curve_leads_most(self, axes: matplotlib.axes.Axes) -> None:
@@ -788,11 +808,13 @@ class TestLabelCurve:
     def test_small_lead_on_parallel_slopes_goes_leftmost(
         self, axes: matplotlib.axes.Axes
     ) -> None:
-        """0.3x + 0.05 leads 0.3x by 1.9 pixels, and by 1.5 over the spans
-        compared, the other curve's being the wider (1.9 less 0.37 pixels a
-        pixel of slope times the 1.15 pixels the spans differ by).  That is
-        above the 1.15 needed, ``gap`` times the square root of 2 less
-        ``gap``.
+        """0.3x + 0.08 leads 0.3x by 3.1 pixels, and by 2.3 over the spans
+        compared, the other curve's being the wider (3.1 less 0.37 pixels a
+        pixel of slope times the 2.2 pixels the spans differ by).  That is
+        above the 2.2 needed: the farthest the labeled curve can be from the
+        label, less ``gap``.  That farthest distance is the hypotenuse of
+        ``gap`` and ``gap`` plus 1.3 pixels, the difference between the
+        label's widths on the canvas and in a PDF.
 
         The curves run on to x = 12, past the axes, so no span is cut short at
         an end of the data, and the leads, equal but for rounding, tie: the
@@ -800,7 +822,7 @@ class TestLabelCurve:
 
         """
         x = np.linspace(0.0, 12.0, 121)
-        own, other = 0.3 * x + 0.05, 0.3 * x
+        own, other = 0.3 * x + 0.08, 0.3 * x
         label = label_curve(axes, x, [own, other], 0, "upper", side="above")
         assert label is not None
         box = self.check_beside(axes, label, own, other, x=x)
@@ -926,6 +948,76 @@ class TestLabelCurve:
             )
         else:
             assert label is None
+
+    @pytest.mark.parametrize(("ahead_px", "placed"), [(23.0, True), (20.6, False)])
+    def test_own_peak_at_the_narrower_box_corner(
+        self, ahead_px: float, placed: bool
+    ) -> None:
+        """Another curve must be farther from the label than the labeled curve
+        is from the narrower of the label's two boxes.
+
+        Data units here are display pixels: axes 200 by 300 pixels.  The label,
+        ten W at 10 points, is 140 pixels wide on the canvas at 100 dpi and
+        about 2.6 pixels narrower in a PDF.  It can start only at x = 10.  The
+        labeled curve is flat at 100 but for a narrow peak of 30, placed just
+        inside the right end of the label's span, ``gap`` past the wider box.
+        From the narrower box's corner the peak is about the hypotenuse of
+        ``gap`` and ``gap`` plus the 2.6 pixels, 21.6 pixels, where ``gap``
+        times the square root of 2 is 19.6.  The other curve is flat, 23 or
+        20.6 pixels above the label's far edge; only at 23 is it farther than
+        the peak.
+
+        """
+        fig = plt.figure(figsize=(4.0, 3.0), dpi=100)
+        ax_ = fig.add_axes((0.0, 0.0, 0.5, 1.0))
+        ax_.set_xlim(0.0, 200.0)
+        ax_.set_ylim(0.0, 300.0)
+        text = "W" * 10
+        probe = ax_.text(0.0, 0.0, text)
+        canvas_box = self.extent(ax_, probe)
+        pdf_box = self.pdf_extent(ax_, probe)
+        probe.remove()
+        assert pdf_box.width < canvas_box.width - 2.0  # the premise above
+        gap_px = 10.0 * 100.0 / 72.0
+        peak_x = 10.0 + canvas_box.width + gap_px - 0.01
+        x = np.array([10.0, peak_x - 2.0, peak_x, peak_x + 2.0, 400.0])
+        own = np.array([100.0, 100.0, 130.0, 100.0, 100.0])
+        far_edge = 130.0 + gap_px + max(canvas_box.height, pdf_box.height)
+        other = np.full(x.shape, far_edge + ahead_px)
+        label = label_curve(ax_, x, [own, other], 0, text, side="above", gap=10.0)
+        if placed:
+            assert label is not None
+            self.check_beside(ax_, label, own, other, gap_pts=10.0, x=x)
+            np.testing.assert_allclose(
+                self.distance(ax_, self.pdf_extent(ax_, label), x, own),
+                np.hypot(gap_px, gap_px + canvas_box.width - pdf_box.width - 0.01),
+                atol=1e-6,
+            )
+        else:
+            assert label is None
+
+    def test_avoid_as_laid_out_in_a_pdf(self) -> None:
+        """A text in ``avoid`` is avoided as a PDF lays it out, too.
+
+        At 72 dpi, "Southern Oscillation Index" is about 2 points wider in a
+        PDF than on the canvas.  It sits on the one curve at the left, and the
+        label must start clear of both of its boxes, with points 0.1 pixels
+        apart to start at.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=72)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        x = np.linspace(0.0, 10.0, 2001)
+        own = np.ones_like(x)
+        first = ax_.text(0.0, 1.0, "Southern Oscillation Index", va="bottom")
+        first_canvas, first_pdf = self.extent(ax_, first), self.pdf_extent(ax_, first)
+        assert first_pdf.x1 > first_canvas.x1 + 1.0  # the premise above
+        label = label_curve(ax_, x, [own], 0, "a", side="above", avoid=[first])
+        assert label is not None
+        for box in (self.extent(ax_, label), self.pdf_extent(ax_, label)):
+            assert not box.overlaps(first_canvas)
+            assert not box.overlaps(first_pdf)
 
     def test_nearest_of_two_curves_behind_decides(
         self, axes: matplotlib.axes.Axes

@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 """Helper functions for creating plots."""
 
+import copy
+import io
 import os.path
 from collections import namedtuple
 from collections.abc import Sequence
@@ -15,6 +17,7 @@ from faceted import faceted_ax as fac_ax
 from matplotlib import colors, gridspec, ticker
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.backends.backend_pdf import PdfFile, RendererPdf
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
 from matplotlib.text import Text
@@ -494,6 +497,25 @@ _LABEL_KWARGS_SET_HERE = (
 _LABEL_TIE_PX = 1e-6
 
 
+def _pdf_renderer(fig: Figure) -> RendererPdf:
+    """A renderer that lays text out as ``fig`` saved to PDF would."""
+    width, height = fig.get_size_inches() * 72.0
+    return RendererPdf(PdfFile(io.BytesIO()), 72, height, width)
+
+
+def _pdf_extent(text: Text, renderer: RendererPdf) -> Bbox:
+    """The text's box as a saved PDF lays it out, in the figure's display
+    pixels.
+
+    A PDF lays text out at 72 dpi from unhinted glyphs, so its box can be
+    wider or narrower than on the figure's canvas.  Measured on a copy, so
+    that the text keeps the renderer it caches for the canvas.
+    """
+    fig = cast(Figure, text.get_figure(root=True))
+    box = copy.copy(text).get_window_extent(renderer=renderer, dpi=72.0)
+    return Bbox(box.get_points() * fig.dpi / 72.0)
+
+
 def _drawn_points(
     px: np.ndarray, py: list[np.ndarray]
 ) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -572,12 +594,19 @@ def label_curve(
     than to any other curve, at the x where its curve stands farthest from
     the nearest other curve, on the side away from that curve.
 
+    The label's size is measured twice: as drawn on the figure's canvas, such
+    as the screen or a PNG file, and as matplotlib lays it out in a saved PDF.
+    The two differ, since a PDF lays text out at 72 dpi from unhinted
+    glyphs, and the label is checked as the larger of the two, so that what
+    follows applies to both.
+
     Each candidate puts the label's left edge at one of the labeled curve's
     points, on one side of it, with its near edge ``gap`` points beyond the
     labeled curve's extreme over the label's width plus ``gap`` either side.
-    So the labeled curve is at least ``gap`` from the label, and at most
-    ``gap`` times the square root of 2, at a corner.  Every other curve must
-    be farther than that: over the label's width plus that distance either
+    So the labeled curve is at least ``gap`` from the label, and at most the
+    hypotenuse of ``gap`` and ``gap`` plus the difference between the two
+    widths, at a corner of the narrower box.  Every other curve must be
+    farther than that: over the label's width plus that distance either
     side, it must lie wholly behind the labeled curve's extreme, or wholly
     beyond the label's far edge, by more than that distance from the label.
     So the label is clear of every curve and nearer the labeled one.  Of the
@@ -597,8 +626,9 @@ def label_curve(
     the line: markers, a stepped drawstyle and the line's own width are not
     counted, so pass a larger ``gap`` for them.
 
-    Distances are measured in display coordinates after a draw, so they hold
-    on the rendered figure whatever the axis scales.  The label is anchored in
+    Distances are measured in display coordinates after a draw, so they apply
+    whatever the axis scales.  Other vector formats than PDF are not measured.
+    The label is anchored in
     data coordinates while its size and its gap are in points, so draw every
     curve and fix the axis limits, the figure size and the layout first: a
     later change to any of them can bring the label nearer a curve or push it
@@ -622,14 +652,15 @@ def label_curve(
     side : {"auto", "above", "below"}
         Which side of its curve the label goes on, as seen on the screen.
         ``"auto"`` tries both, preferring the side away from the nearest
-        other curve as the rules specify.  With a side given, the x is chosen by
-        the distance to the nearest other curve alone.
+        other curve as the rules specify.  With a side given, the x is
+        chosen by the distance to the nearest other curve alone.
     gap : float
         Distance, in points, from the labeled curve's line to the label's
         near edge; positive.
     avoid : sequence of matplotlib.text.Text or None
-        Labels already placed, which this one must not overlap.  None
-        entries, as from earlier calls that placed nothing, are skipped.
+        Labels already placed, which this one must not overlap on the canvas
+        or in a PDF.  None entries, as from earlier calls that placed
+        nothing, are skipped.
     **text_kwargs
         Passed to ``Axes.text``, such as ``color`` and ``fontsize``.  The
         alignment, the transform, the rotation mode and a bounding-box patch
@@ -664,7 +695,6 @@ def label_curve(
     if not 0 <= which < len(curves):
         raise ValueError(f"which must index ys, of length {len(curves)}; got {which}")
     x_vals = np.where(np.ma.getmaskarray(x_masked), np.nan, x_vals)
-    others_placed = [t for t in avoid if t is not None]
     # The root figure, which a subfigure's axes reach through their subfigure;
     # an Axes always belongs to one.
     fig = cast(Figure, ax.get_figure(root=True))
@@ -677,11 +707,22 @@ def label_curve(
     )
     placed = False
     try:
-        extent = label.get_window_extent()
-        width, height = extent.width, extent.height
+        pdf_renderer = _pdf_renderer(fig)
+        on_canvas = label.get_window_extent()
+        in_pdf = _pdf_extent(label, pdf_renderer)
+        # The box checked covers the label both as drawn on the canvas and as
+        # laid out in a PDF.  Both share the left edge and the near edge.
+        width = max(on_canvas.width, in_pdf.width)
+        height = max(on_canvas.height, in_pdf.height)
         gap_px = gap * fig.dpi / 72.0
-        # The farthest the labeled curve can be from the label, at a corner.
-        reach = np.sqrt(2.0) * gap_px
+        # The farthest the labeled curve can be from the label: at a corner of
+        # the narrower of the two, with its extreme up to gap past the wider.
+        reach = float(np.hypot(gap_px, gap_px + abs(on_canvas.width - in_pdf.width)))
+        others_placed = [
+            Bbox.union([t.get_window_extent(), _pdf_extent(t, pdf_renderer)])
+            for t in avoid
+            if t is not None
+        ]
         # Display x from x alone: a NaN y makes the transform's x NaN as well,
         # which would drop the other curves' points where the labeled one is
         # missing.
@@ -695,7 +736,8 @@ def label_curve(
         )
         frame = ax.bbox
         best_key: tuple[bool, float] | None = None
-        best_place: tuple[float, float] | None = None
+        # The label's left edge, its near edge, and its side.
+        best_place: tuple[float, float, str] | None = None
         for left in px[np.isfinite(py[which])]:
             right = left + width
             if left < frame.x0 or right > frame.x1:
@@ -737,7 +779,7 @@ def label_curve(
                     if y_lo < frame.y0 or y_hi > frame.y1:
                         continue
                     box = Bbox([[left, y_lo], [right, y_hi]])
-                    if any(box.overlaps(t.get_window_extent()) for t in others_placed):
+                    if any(box.overlaps(placed_box) for placed_box in others_placed):
                         continue
                     nearest_behind = min(behind, default=np.inf)
                     nearest_ahead = min(ahead, default=np.inf)
@@ -754,10 +796,16 @@ def label_curve(
                             and clearance > best_key[1] + _LABEL_TIE_PX
                         )
                     ):
-                        best_key, best_place = (away, clearance), (left, y_lo)
+                        near_y = y_lo if this_side == "above" else y_hi
+                        best_key = (away, clearance)
+                        best_place = (left, near_y, this_side)
         if best_place is None:
             return None
-        x_data, y_data = ax.transData.inverted().transform(best_place)
+        left, near_y, this_side = best_place
+        x_data, y_data = ax.transData.inverted().transform((left, near_y))
+        # Anchored at its near edge, which the canvas and a PDF then share,
+        # though the label's height differs between them.
+        label.set_verticalalignment("bottom" if this_side == "above" else "top")
         label.set_transform(ax.transData)
         label.set_position((float(x_data), float(y_data)))
         placed = True
