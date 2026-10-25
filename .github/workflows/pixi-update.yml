@@ -1,0 +1,42 @@
+# Monthly `pixi update`, opened as a PR, in place of Dependabot, which cannot
+# update pixi.lock. From pixi's docs:
+# https://pixi.prefix.dev/latest/integration/ci/updates_github_actions/
+#
+# The PR is opened with the default GITHUB_TOKEN, so GitHub creates its CI runs
+# awaiting approval: press "Approve workflows to run" on the PR to start them.
+name: Update pixi lock file
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 5 1 * *  # 05:00 UTC on the 1st of each month
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pixi-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # needed for setuptools-scm
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.81.0
+          run-install: false
+      - name: Update lock file
+        run: |
+          set -o pipefail
+          pixi update --json | pixi exec pixi-diff-to-markdown >> diff.md
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: Update pixi lock file
+          title: Update pixi lock file
+          body-path: diff.md
+          branch: update-pixi
+          base: master
+          delete-branch: true
+          add-paths: pixi.lock

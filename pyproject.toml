@@ -38,8 +38,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# windspharm/pyspharm require a Fortran compiler and legacy numpy.distutils.
-# Install via: conda install -c conda-forge windspharm
+# windspharm/pyspharm require a Fortran compiler and legacy numpy.distutils,
+# so pip cannot build them; conda-forge has prebuilt ones (see tool.pixi below).
 fortran = ["windspharm"]
 dev = [
   # For the tests on cftime calendars, such as noleap.
@@ -65,20 +65,80 @@ include = ["puffins*"]
 
 # --- Tool Configuration ---
 
-[tool.uv]
-# windspharm/pyspharm use legacy build tooling (numpy.distutils, removed in
-# numpy 2.0) that can't be built under modern numpy/Python. Declaring their
-# metadata lets uv resolve the optional [fortran] extra without building them,
-# so `uv lock` works here; installing the extra still requires conda.
-[[tool.uv.dependency-metadata]]
-name = "pyspharm"
-version = "1.0.9"
-requires-dist = ["numpy"]
+# Development and CI environments, managed by pixi and locked in pixi.lock.
+# Packages come from conda-forge, which has pyspharm prebuilt against numpy 2;
+# faceted (not on conda-forge) and puffins itself, editable, come from PyPI.
+#
+#   pixi run pytest                     # default environment, budget_adj included
+#   pixi run -e py311 pytest            # one of CI's four Python versions
+#   pixi run -e docs sphinx-build -W -b html docs docs/_build/html
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+requires-pixi = ">=0.81.0"
 
-[[tool.uv.dependency-metadata]]
-name = "windspharm"
-version = "2.0.0"
-requires-dist = ["numpy", "pyspharm"]
+# conda-forge builds of [project.dependencies], which pixi installs in place of
+# the PyPI packages of the same name.
+[tool.pixi.dependencies]
+eofs = "*"
+matplotlib-base = ">=3.11"
+# Capped below 2.5, as in uv.lock (2.4.3), for mypy: with numpy 2.5.4, mypy
+# 1.19.1 and 1.20.2 stop on a `type` statement in numpy's stubs under
+# python_version 3.11, and mypy 2.4.0 reports 29 errors (2026-10-25).
+numpy = "<2.5"
+pymannkendall = "*"
+scikit-learn = "*"
+scipy = "*"
+statsmodels = "*"
+xarray = "*"
+
+[tool.pixi.pypi-dependencies]
+puffins = { path = ".", editable = true }
+
+[tool.pixi.feature.fortran.dependencies]
+windspharm = "*"
+
+[tool.pixi.feature.dev.dependencies]
+cftime = "*"
+# Pinned to 1.19, as in uv.lock (see numpy above).
+mypy = "1.19.*"
+pre-commit = "*"
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+
+[tool.pixi.feature.docs.dependencies]
+sphinx = ">=7"
+pydata-sphinx-theme = ">=0.15"
+
+# For publish.yml: builds the sdist and wheel, without puffins installed.
+[tool.pixi.feature.build.dependencies]
+python-build = "*"
+twine = "*"
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+# Each environment pins its Python: left unpinned, the solver picked 3.11 for
+# one and 3.15, newer than puffins supports, for others. default and py314
+# share a solve group, so they lock to the same packages.
+[tool.pixi.environments]
+default = { features = ["dev", "fortran", "py314"], solve-group = "py314" }
+py311 = ["dev", "fortran", "py311"]
+py312 = ["dev", "fortran", "py312"]
+py313 = ["dev", "fortran", "py313"]
+py314 = { features = ["dev", "fortran", "py314"], solve-group = "py314" }
+docs = ["docs", "py314"]
+build = { features = ["build", "py314"], no-default-feature = true }
 
 [tool.ruff]
 target-version = "py311"

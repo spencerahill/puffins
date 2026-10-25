@@ -43,7 +43,7 @@ git push origin v0.1.0
 That's it. The workflow will:
 
 1. Run the test suite
-2. Build sdist + wheel with `uv build`
+2. Build sdist + wheel with `python -m build`, in pixi's `build` environment
 3. Verify the built version matches the tag
 4. `twine check` the artifacts
 5. Publish to PyPI via Trusted Publishing

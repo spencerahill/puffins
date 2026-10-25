@@ -8,15 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and Installation
 
-Install the package in editable mode:
+The development and CI environments are managed with pixi, configured under `[tool.pixi]` in `pyproject.toml` and locked in `pixi.lock`. Packages come from conda-forge, including pyspharm and windspharm, which pip cannot build; faceted and puffins itself (editable) come from PyPI.
+
+Run the tests in the default environment (Python 3.14):
 ```bash
-pip install -e .
+pixi run pytest
 ```
 
-Run tests:
-```bash
-pytest
-```
+CI runs the tests in the `py311` to `py314` environments, ruff and mypy in `default`, the docs in `docs`, and the release build in `build`; select one with `-e`, e.g. `pixi run -e py311 pytest`. For mypy's sake, `pyproject.toml` requires numpy below 2.5 and mypy 1.19; its comments give the measurements.
+
+Dependabot updates only the GitHub Actions versions. `.github/workflows/pixi-update.yml` runs `pixi update` monthly and opens a PR, whose CI runs start only once someone presses "Approve workflows to run" on it.
 
 ## Module Architecture
 

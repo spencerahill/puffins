@@ -5,7 +5,6 @@ updates:
     schedule:
       interval: "monthly"
 
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "monthly"
+# Dependabot cannot update pixi.lock
+# (https://github.com/dependabot/dependabot-core/issues/2227); the monthly
+# workflow .github/workflows/pixi-update.yml opens that PR instead.
