@@ -700,28 +700,33 @@ def label_curve(
             right = left + width
             if left < frame.x0 or right > frame.x1:
                 continue
-            own_span = (left - gap_px, right + gap_px)
-            other_span = (left - reach, right + reach)
+            # Each curve's range is found once for both sides.  Never None: the
+            # candidate's own point lies in its span.
+            own_lo, own_hi = cast(
+                tuple[float, float],
+                _drawn_range(px, py[which], left - gap_px, right + gap_px),
+            )
+            ranges = [
+                _drawn_range(px, curve_py, left - reach, right + reach)
+                for k, curve_py in enumerate(py)
+                if k != which
+            ]
+            drawn = [r for r in ranges if r is not None]
             for this_side in ("above", "below") if side == "auto" else (side,):
-                sign = 1.0 if this_side == "above" else -1.0
-                # Never None: the candidate's own point lies in its span.
-                own = cast(
-                    tuple[float, float],
-                    _drawn_range(px, sign * py[which], *own_span),
-                )
-                near_edge = own[1] + gap_px
+                # Heights are measured toward the label, so below the labeled
+                # curve they are negated, which negates and swaps each range.
+                if this_side == "above":
+                    own, others = own_hi, drawn
+                else:
+                    own, others = -own_lo, [(-hi, -lo) for lo, hi in drawn]
+                near_edge = own + gap_px
                 far_edge = near_edge + height
                 behind, ahead = [], []
-                for k, curve_py in enumerate(py):
-                    if k == which:
-                        continue
-                    drawn = _drawn_range(px, sign * curve_py, *other_span)
-                    if drawn is None:
-                        continue
-                    if drawn[1] < near_edge - reach:
-                        behind.append(own[1] - drawn[1])
-                    elif drawn[0] > far_edge + reach:
-                        ahead.append(drawn[0] - own[1])
+                for lo, hi in others:
+                    if hi < near_edge - reach:
+                        behind.append(own - hi)
+                    elif lo > far_edge + reach:
+                        ahead.append(lo - own)
                     else:
                         break
                 else:
