@@ -20,7 +20,7 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_pdf import PdfFile, RendererPdf
 from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
-from matplotlib.text import Text
+from matplotlib.text import Annotation, Text
 from matplotlib.transforms import Bbox
 
 from ._typing import ArrayLike
@@ -508,12 +508,32 @@ def _pdf_extent(text: Text, renderer: RendererPdf) -> Bbox:
     pixels.
 
     A PDF lays text out at 72 dpi from unhinted glyphs, so its box can be
-    wider or narrower than on the figure's canvas.  Measured on a copy, so
-    that the text keeps the renderer it caches for the canvas.
+    wider or narrower than on the figure's canvas.  The figure is set to 72
+    dpi for the measurement, as ``savefig`` sets it for a PDF, and its
+    canvas is detached from its window meanwhile, as ``savefig`` detaches
+    it: each change of dpi otherwise resizes the window, which on a screen
+    backend can change the figure's size.  Measured on a copy, so that the
+    text keeps the renderer it caches for the canvas.  An Annotation is
+    measured without its arrow, which the copy shares with the original and
+    which laying it out for a PDF would move.
     """
     fig = cast(Figure, text.get_figure(root=True))
-    box = copy.copy(text).get_window_extent(renderer=renderer, dpi=72.0)
-    return Bbox(box.get_points() * fig.dpi / 72.0)
+    canvas, dpi = fig.canvas, fig.dpi
+    manager = canvas.manager
+    measured = copy.copy(text)
+    if isinstance(measured, Annotation):
+        measured.arrowprops = None
+        measured.arrow_patch = None
+    canvas.manager = None
+    fig.dpi = 72.0
+    try:
+        # The dpi argument of Text.get_window_extent sets the figure's dpi
+        # with the window attached, and an Annotation's takes no dpi.
+        box = measured.get_window_extent(renderer)
+    finally:
+        fig.dpi = dpi
+        canvas.manager = manager
+    return Bbox(box.get_points() * dpi / 72.0)
 
 
 def _drawn_points(
@@ -659,8 +679,9 @@ def label_curve(
         near edge; positive.
     avoid : sequence of matplotlib.text.Text or None
         Labels already placed, which this one must not overlap on the canvas
-        or in a PDF.  None entries, as from earlier calls that placed
-        nothing, are skipped.
+        or in a PDF.  An Annotation's arrow counts as well, as the canvas
+        draws it.  None entries, as from earlier calls that placed nothing,
+        are skipped.
     **text_kwargs
         Passed to ``Axes.text``, such as ``color`` and ``fontsize``.  The
         alignment, the transform, the rotation mode and a bounding-box patch

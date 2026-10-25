@@ -4,6 +4,7 @@ import copy
 import io
 from collections.abc import Iterator
 from typing import Any
+from unittest import mock
 
 import matplotlib
 
@@ -194,6 +195,28 @@ class TestLabelCurve:
         width, height = fig.get_size_inches() * 72.0
         renderer = RendererPdf(PdfFile(io.BytesIO()), 72, height, width)
         box = copy.copy(label).get_window_extent(renderer=renderer, dpi=72.0)
+        return matplotlib.transforms.Bbox(box.get_points() * fig.dpi / 72.0)
+
+    @staticmethod
+    def saved_pdf_extent(
+        ax_: matplotlib.axes.Axes, text: Text
+    ) -> matplotlib.transforms.Bbox:
+        """The text's box, an Annotation's arrow included, as matplotlib
+        measures it while saving the figure to PDF, in the figure's display
+        pixels; the canvas is drawn again afterwards."""
+        fig = ax_.get_figure(root=True)
+        assert fig is not None
+        boxes = []
+        draw = text.draw
+
+        def draw_and_measure(renderer: Any) -> None:
+            draw(renderer)
+            boxes.append(text.get_window_extent())
+
+        with mock.patch.object(text, "draw", draw_and_measure):
+            fig.savefig(io.BytesIO(), format="pdf")
+        fig.canvas.draw()
+        (box,) = boxes
         return matplotlib.transforms.Bbox(box.get_points() * fig.dpi / 72.0)
 
     @staticmethod
@@ -1025,6 +1048,75 @@ class TestLabelCurve:
         for box in (self.extent(ax_, label), self.pdf_extent(ax_, label)):
             assert not box.overlaps(first_canvas)
             assert not box.overlaps(first_pdf)
+
+    def test_avoid_an_annotation_and_its_arrow(self) -> None:
+        """An Annotation in ``avoid`` is avoided with its arrow, on the canvas
+        and in a saved PDF, and is left as it was.
+
+        The note sits on the one curve at the left, with an arrow running
+        right from it to x = 6, through the heights a label above the curve
+        takes.  Of points 0.005 apart, about 0.15 pixels, the label starts at
+        the first past the arrow's end.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        x = np.linspace(0.0, 10.0, 2001)
+        own = np.ones_like(x)
+        note = ax_.annotate(
+            "note",
+            xy=(6.0, 1.3),
+            xytext=(0.0, 1.3),
+            va="center",
+            arrowprops={"arrowstyle": "->"},
+        )
+        assert note.arrow_patch is not None
+        note_pdf = self.saved_pdf_extent(ax_, note)
+        note_canvas = self.extent(ax_, note)
+        arrow_canvas = note.arrow_patch.get_window_extent()
+        # The premise above: the arrow reaches past x = 5.
+        assert note_canvas.x1 > ax_.transData.transform((5.0, 0.0))[0]
+        label = label_curve(ax_, x, [own], 0, "a", side="above", avoid=[note])
+        assert label is not None
+        # Measuring the PDF layout leaves the note and its arrow as they were,
+        # before any further draw.
+        assert note.arrow_patch.get_window_extent().bounds == arrow_canvas.bounds
+        assert note.get_window_extent().bounds == note_canvas.bounds
+        label_canvas = self.extent(ax_, label)
+        label_pdf = self.saved_pdf_extent(ax_, label)
+        for box in (label_canvas, label_pdf):
+            assert not box.overlaps(note_canvas)
+            assert not box.overlaps(note_pdf)
+        assert 0.0 < label_canvas.x0 - max(note_canvas.x1, note_pdf.x1) < 1.0
+
+    def test_resizes_no_window(
+        self, axes: matplotlib.axes.Axes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Measuring the PDF layout asks the figure's window for no resize,
+        and leaves the figure's dpi and window as they were.
+
+        Each resize can change the figure's size on a screen backend: on the
+        macOS backend with a Retina display, a figure 4.96 by 2.165 inches
+        at 200 dpi shrank to 4.75 by 2.00 inches over eight measurements.
+        Here the figure's window manager records each resize asked of it.
+
+        """
+        fig = axes.get_figure(root=True)
+        assert fig is not None
+        manager = fig.canvas.manager
+        assert manager is not None
+        resizes: list[tuple[int, int]] = []
+        monkeypatch.setattr(manager, "resize", lambda w, h: resizes.append((w, h)))
+        dpi = fig.dpi
+        first = axes.text(0.0, 4.0, "first")
+        label = label_curve(
+            axes, self.X, [self.A, self.B], 0, "rising", side="above", avoid=[first]
+        )
+        assert label is not None
+        assert resizes == []
+        assert fig.dpi == dpi
+        assert fig.canvas.manager is manager
 
     def test_label_wider_in_a_pdf(self) -> None:
         """A label wider in a PDF than on the canvas is placed by its PDF
