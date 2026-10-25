@@ -490,17 +490,49 @@ _LABEL_KWARGS_SET_HERE = (
 _LABEL_TIE_PX = 1e-6
 
 
+def _drawn_points(
+    px: np.ndarray, py: list[np.ndarray]
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Curves' display points from left to right, NaN where nothing is drawn.
+
+    Matplotlib joins each point to its neighbors in the arrays, so the points
+    keep that order, reversed when x decreases; an x that turns back on
+    itself raises a ``ValueError``.  A point with a NaN x or y is drawn as a
+    gap, and so is a point between two such points, since a segment needs
+    two points: the heights there are NaN.  A point with a NaN x takes the x
+    of the point before it, so that the x returned is sorted.
+    """
+    known_x = np.isfinite(px)
+    steps = np.diff(px[known_x])
+    if (steps < 0).any():
+        if (steps > 0).any():
+            raise ValueError("x must be monotonic, increasing or decreasing")
+        px, py, known_x = px[::-1], [h[::-1] for h in py], known_x[::-1]
+    drawn = []
+    for heights in py:
+        finite = known_x & np.isfinite(heights)
+        joined = np.zeros_like(finite)
+        joined[1:] |= finite[:-1]
+        joined[:-1] |= finite[1:]
+        drawn.append(np.where(finite & joined, heights, np.nan))
+    if known_x.any():
+        px = np.fmax.accumulate(px)
+        px = np.where(np.isnan(px), px[known_x][0], px)
+    return px, drawn
+
+
 def _drawn_range(
     px: np.ndarray, heights: np.ndarray, left: float, right: float
 ) -> tuple[float, float] | None:
     """Smallest and largest of a curve as drawn, over display x from ``left``
     to ``right``.
 
-    ``px`` is sorted.  The curve's finite points in the span count, and so do
-    its values interpolated at the span's two ends, but only along a segment
-    whose two points are both finite: a NaN gap, and the stretch past either
-    end of the curve, are drawn blank and count as no curve.  None when no
-    drawn part of the curve lies in the span.
+    ``px`` is sorted, and ``heights`` is NaN wherever no segment is drawn, as
+    ``_drawn_points`` gives them.  The curve's finite points in the span
+    count, and so do its values interpolated at the span's two ends, but only
+    along a segment whose two points are both finite: a NaN gap, and the
+    stretch past either end of the curve, are drawn blank and count as no
+    curve.  None when no drawn part of the curve lies in the span.
     """
     i_lo = int(np.searchsorted(px, left, side="left"))
     i_hi = int(np.searchsorted(px, right, side="right"))
@@ -554,7 +586,10 @@ def label_curve(
     fits.
 
     A curve counts only where it is drawn: along segments between two finite
-    points, so neither across a NaN gap nor past either end of the curve.
+    points, so neither across a NaN gap, nor at a lone point between two
+    missing ones, nor past either end of the curve.  Matplotlib joins the
+    points in the order given, so ``x`` must be monotonic, increasing or
+    decreasing, for that order to run along the x axis.
     Curves are taken as straight segments through their points, centered on
     the line: markers, a stepped drawstyle and the line's own width are not
     counted, so pass a larger ``gap`` for them.
@@ -571,11 +606,12 @@ def label_curve(
     ax : matplotlib.axes.Axes
         The axes holding the curves.
     x : array-like
-        The curves' shared x values, one-dimensional, as plotted; dates are
-        converted by the x axis's own units.
+        The curves' shared x values, one-dimensional and monotonic, as
+        plotted; dates are converted by the x axis's own units.  NaN or a
+        mask marks a missing point.
     ys : sequence of array-like
         Every curve on the axes that the label must keep clear of, each with
-        one value per ``x``; NaN marks a missing point.
+        one value per ``x``; NaN or a mask marks a missing point.
     which : int
         Index in ``ys`` of the curve to label.
     text : str
@@ -611,12 +647,17 @@ def label_curve(
     blocked = sorted(set(text_kwargs) & set(_LABEL_KWARGS_SET_HERE))
     if blocked:
         raise ValueError(f"label_curve sets or forbids {blocked}; do not pass them")
-    curves = [np.asarray(y, dtype=float) for y in ys]
-    x_vals = np.asarray(ax.xaxis.convert_units(np.asarray(x)), dtype=float)
+    # Masked values are drawn as gaps, as NaN is.
+    curves: list[np.ndarray] = [
+        np.ma.filled(np.ma.asarray(y, dtype=float), np.nan) for y in ys
+    ]
+    x_masked: np.ma.MaskedArray[Any, Any] = np.ma.asarray(x)
+    x_vals = np.asarray(ax.xaxis.convert_units(x_masked.data), dtype=float)
     if x_vals.ndim != 1 or any(c.shape != x_vals.shape for c in curves):
         raise ValueError("x must be one-dimensional and each curve must match it")
     if not 0 <= which < len(curves):
         raise ValueError(f"which must index ys, of length {len(curves)}; got {which}")
+    x_vals = np.where(np.ma.getmaskarray(x_masked), np.nan, x_vals)
     others_placed = [t for t in avoid if t is not None]
     fig = ax.figure
     fig.canvas.draw()
@@ -635,13 +676,13 @@ def label_curve(
         # which would drop the other curves' points where the labeled one is
         # missing.
         y_ref = np.full_like(x_vals, float(np.mean(ax.get_ylim())))
-        px = ax.transData.transform(np.column_stack([x_vals, y_ref]))[:, 0]
-        order = np.argsort(px)
-        px = px[order]
-        py = [
-            ax.transData.transform(np.column_stack([x_vals, c]))[order, 1]
-            for c in curves
-        ]
+        px, py = _drawn_points(
+            ax.transData.transform(np.column_stack([x_vals, y_ref]))[:, 0],
+            [
+                ax.transData.transform(np.column_stack([x_vals, c]))[:, 1]
+                for c in curves
+            ],
+        )
         frame = ax.bbox
         best_key: tuple[bool, float] | None = None
         best_place: tuple[float, float] | None = None

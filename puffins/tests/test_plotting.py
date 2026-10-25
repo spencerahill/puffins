@@ -550,6 +550,93 @@ class TestLabelCurve:
         assert label is not None
         self.check_beside(ax_, label, own, other, x=x)
 
+    @pytest.mark.parametrize("missing", ["nan y", "masked y", "nan x", "masked x"])
+    def test_lone_point_is_no_curve(self, missing: str) -> None:
+        """A point between two missing ones is drawn as nothing, so it counts
+        as no curve.
+
+        The labeled curve is flat at 1 but for a point of 3 at x = 5, whose
+        neighbors are missing; the other curve is flat at 2.5.  Counted, the
+        lone point would put the label above it, over the other curve and 118
+        pixels from the drawn line at 1.  Not counted, the two curves are
+        equally far apart everywhere, and the label starts at x = 0.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        x = np.linspace(0.0, 10.0, 101)
+        own = np.where(np.isclose(x, 5.0), 3.0, 1.0)
+        other = np.full_like(x, 2.5)
+        gone = np.isclose(x, 4.9) | np.isclose(x, 5.1)
+        x_in: np.ndarray = x
+        own_in: np.ndarray = own
+        if missing == "nan y":
+            own_in = np.where(gone, np.nan, own)
+        elif missing == "masked y":
+            own_in = np.ma.masked_where(gone, own)
+        elif missing == "nan x":
+            x_in = np.where(gone, np.nan, x)
+        else:
+            x_in = np.ma.masked_where(gone, x)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(0.0, 4.0)
+        label = label_curve(ax_, x_in, [own_in, other], 0, "a", side="above")
+        assert label is not None
+        box = self.check_beside(ax_, label, own, other, x=np.where(gone, np.nan, x))
+        x_left = ax_.transData.inverted().transform((box.x0, box.y0))[0]
+        np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
+
+    def test_masked_points_of_another_curve(self) -> None:
+        """Masked points are drawn as gaps, so they block nothing.
+
+        The other curve is 1.2, too near the labeled curve at 1 for a label
+        between them, and is masked past x = 5.  The label starts at the first
+        point whose span, widened by about 0.13 in x, lies past x = 5, which
+        is 5.2.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        x = np.linspace(0.0, 10.0, 101)
+        own = np.ones_like(x)
+        other = np.ma.masked_where(x > 5.0, np.full_like(x, 1.2))
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(0.0, 4.0)
+        label = label_curve(ax_, x, [own, other], 0, "a", side="above")
+        assert label is not None
+        box = self.check_beside(ax_, label, own, np.ma.filled(other, np.nan), x=x)
+        x_left = ax_.transData.inverted().transform((box.x0, box.y0))[0]
+        np.testing.assert_allclose(x_left, 5.2, atol=1e-6)
+
+    def test_decreasing_x_with_a_repeated_value(self) -> None:
+        """A step given right to left is placed as the same step left to right.
+
+        x runs 10, 5, 5, 0, so the labeled curve is 1 right of x = 5 and 3 left
+        of it, joined by a drop at x = 5; the other curve is 0.  Sorting the
+        points by x would join (0, 3) to (5, 1) and (5, 3) to (10, 1), two
+        segments never drawn, and put the label 60 pixels from its curve.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        x = np.array([10.0, 5.0, 5.0, 0.0])
+        own, other = np.array([1.0, 1.0, 3.0, 3.0]), np.zeros(4)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-0.5, 4.0)
+        boxes = []
+        for order in (slice(None), slice(None, None, -1)):
+            label = label_curve(
+                ax_,
+                x[order],
+                [own[order], other[order]],
+                0,
+                "a long label",
+                side="below",
+            )
+            assert label is not None
+            boxes.append(self.check_beside(ax_, label, own, other, above=False, x=x))
+            label.remove()
+        np.testing.assert_allclose(
+            boxes[0].get_points(), boxes[1].get_points(), atol=1e-6
+        )
+
     def test_middle_curve(self) -> None:
         """Flat curves at 0, 1 and 2: the middle one is labeled between two others.
 
@@ -960,6 +1047,13 @@ class TestLabelCurve:
             (np.arange(3.0), [np.zeros(3), np.ones(3)], 2, "above", "which must"),
             (np.arange(3.0), [np.zeros(3), np.ones(3)], -1, "above", "which must"),
             (np.zeros((3, 2)), [np.zeros(3)], 0, "above", "curve must"),
+            (
+                np.array([0.0, 2.0, 1.0]),
+                [np.zeros(3), np.ones(3)],
+                0,
+                "above",
+                "monoto",
+            ),
             (np.zeros((3, 2)), [np.zeros((3, 2))], 0, "above", "one-dimensional"),
             (np.arange(3.0), [np.zeros(4), np.zeros(3)], 0, "above", "curve must"),
         ],
