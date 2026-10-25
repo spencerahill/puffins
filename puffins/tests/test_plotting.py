@@ -576,17 +576,18 @@ class TestLabelCurve:
         """A point between two missing ones is drawn as nothing, so it counts
         as no curve.
 
-        The labeled curve is flat at 1 but for a point of 3 at x = 5, whose
-        neighbors are missing; the other curve is flat at 2.5.  Counted, the
-        lone point would put the label above it, over the other curve and 118
-        pixels from the drawn line at 1.  Not counted, the two curves are
+        The labeled curve is flat at 1 but for a point of 3.5 at x = 5, whose
+        neighbors are missing; the other curve is flat at 1.5, 29 pixels above
+        the labeled one.  Counted, the lone point would stand 115 pixels above
+        the other curve, and the label would go above it, over the other curve
+        and far from the drawn line at 1.  Not counted, the two curves are
         equally far apart everywhere, and the label starts at x = 0.
 
         """
         _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
         x = np.linspace(0.0, 10.0, 101)
-        own = np.where(np.isclose(x, 5.0), 3.0, 1.0)
-        other = np.full_like(x, 2.5)
+        own = np.where(np.isclose(x, 5.0), 3.5, 1.0)
+        other = np.full_like(x, 1.5)
         gone = np.isclose(x, 4.9) | np.isclose(x, 5.1)
         x_in: np.ndarray = x
         own_in: np.ndarray = own
@@ -996,28 +997,107 @@ class TestLabelCurve:
         else:
             assert label is None
 
-    def test_avoid_as_laid_out_in_a_pdf(self) -> None:
-        """A text in ``avoid`` is avoided as a PDF lays it out, too.
+    @pytest.mark.parametrize("dpi", [72, 100])
+    def test_avoid_as_laid_out_in_a_pdf(self, dpi: int) -> None:
+        """A text in ``avoid`` is avoided as the canvas and a PDF lay it out.
 
-        At 72 dpi, "Southern Oscillation Index" is about 2 points wider in a
-        PDF than on the canvas.  It sits on the one curve at the left, and the
-        label must start clear of both of its boxes, with points 0.1 pixels
-        apart to start at.
+        "Southern Oscillation Index" is about 2 points wider in a PDF than on
+        the canvas at 72 dpi, and about 2 points narrower at 100 dpi.  It sits
+        on the one curve at the left, and the label must start clear of both
+        of its boxes, with points under 0.2 pixels apart to start at.
 
         """
-        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=72)
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=dpi)
         ax_.set_xlim(0.0, 10.0)
         ax_.set_ylim(-1.0, 5.0)
         x = np.linspace(0.0, 10.0, 2001)
         own = np.ones_like(x)
         first = ax_.text(0.0, 1.0, "Southern Oscillation Index", va="bottom")
         first_canvas, first_pdf = self.extent(ax_, first), self.pdf_extent(ax_, first)
-        assert first_pdf.x1 > first_canvas.x1 + 1.0  # the premise above
+        assert abs(first_pdf.x1 - first_canvas.x1) > 1.0  # the premise above
         label = label_curve(ax_, x, [own], 0, "a", side="above", avoid=[first])
         assert label is not None
+        # Measuring the PDF layout leaves each text's canvas box as it was,
+        # before any further draw.
+        assert first.get_window_extent().bounds == first_canvas.bounds
+        undrawn = label.get_window_extent()
+        assert undrawn.bounds == self.extent(ax_, label).bounds
         for box in (self.extent(ax_, label), self.pdf_extent(ax_, label)):
             assert not box.overlaps(first_canvas)
             assert not box.overlaps(first_pdf)
+
+    def test_label_wider_in_a_pdf(self) -> None:
+        """A label wider in a PDF than on the canvas is placed by its PDF
+        width.
+
+        At 72 dpi, "Southern Oscillation Index" is about 2 points wider in a
+        PDF.  Over the extra width the rising curve a climbs, so the label's
+        near edge, and its distances, are checked against the wider box.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=72)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        text = "Southern Oscillation Index"
+        label = label_curve(ax_, self.X, [self.A, self.B], 0, text, side="above")
+        assert label is not None
+        canvas_box, pdf_box = self.extent(ax_, label), self.pdf_extent(ax_, label)
+        assert pdf_box.width > canvas_box.width + 1.0  # the premise above
+        self.check_beside(ax_, label, self.A, self.B)
+
+    @pytest.mark.parametrize(("ahead_px", "placed"), [(0.3, True), (-0.2, False)])
+    def test_far_edge_of_the_taller_box(self, ahead_px: float, placed: bool) -> None:
+        """Another curve beyond the label must clear the far edge of whichever
+        box is the taller.
+
+        At 200 dpi, "Niño-3.4 (negated)" at 9 points is about 0.4 pixels taller
+        in a PDF than on the canvas.  The other curve is flat, 0.3 pixels
+        beyond or 0.2 pixels short of the distance kept from other curves,
+        past the PDF box's far edge.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=200)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(0.0, 6.0)
+        text = "Niño-3.4 (negated)"
+        probe = ax_.text(0.5, 0.5, text, fontsize=9, transform=ax_.transAxes)
+        canvas_box = self.extent(ax_, probe)
+        pdf_box = self.pdf_extent(ax_, probe)
+        probe.remove()
+        assert pdf_box.height > canvas_box.height + 0.2  # the premise above
+        gap_px = 2.0 * 200.0 / 72.0
+        reach = np.hypot(gap_px, gap_px + abs(canvas_box.width - pdf_box.width))
+        own_px = ax_.transData.transform((0.0, 1.0))[1]
+        other_px = own_px + gap_px + pdf_box.height + reach + ahead_px
+        other_y = ax_.transData.inverted().transform((0.0, other_px))[1]
+        own, other = np.ones_like(self.X), np.full_like(self.X, other_y)
+        label = label_curve(
+            ax_, self.X, [own, other], 0, text, side="above", fontsize=9
+        )
+        if placed:
+            assert label is not None
+            self.check_beside(ax_, label, own, other)
+        else:
+            assert label is None
+
+    def test_missing_points_at_the_start_of_x(self, axes: matplotlib.axes.Axes) -> None:
+        """With x = 0, 1, 2 missing of 0 to 10, the lead 1 - 0.05x is largest
+        at the first point drawn, x = 3.
+
+        The label, one letter, is narrower than the space between points, so
+        the search for its span's right end runs down to the missing points,
+        which a binary search reads as larger than every x unless they are
+        given a value.
+
+        """
+        x_all = np.arange(11.0)
+        x = np.where(x_all < 3.0, np.nan, x_all)
+        own, other = 1.0 + 0.3 * x_all, 0.35 * x_all
+        label = label_curve(axes, x, [own, other], 0, "a", side="above")
+        assert label is not None
+        box = self.check_beside(axes, label, own, other, x=x)
+        x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
+        np.testing.assert_allclose(x_left, 3.0, atol=1e-6)
 
     def test_nearest_of_two_curves_behind_decides(
         self, axes: matplotlib.axes.Axes
