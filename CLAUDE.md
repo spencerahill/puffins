@@ -62,7 +62,7 @@ The package is structured into several functional groups:
 - `therm_inert.py`: Thermal inertia calculations
 
 ### Visualization
-- `plotting.py`: Matplotlib helpers with custom styling, latitude axis formatting (sine-latitude and standard), faceted plotting integration, colorbar levels fitted to the data, colorbar tick labels and band colors for given levels, heatmaps, annual-cycle and seasonal plots, and colormap truncation
+- `plotting.py`: Matplotlib helpers with custom styling, latitude axis formatting (sine-latitude and standard), faceted plotting integration, colorbar levels fitted to the data, colorbar tick labels and band colors for given levels, heatmaps, annual-cycle and seasonal plots, direct labels placed beside curves in place of a legend, and colormap truncation
 
 ## Key Design Patterns
 
