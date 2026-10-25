@@ -159,15 +159,20 @@ class TestLabelCurve:
     A = 0.3 * X
     B = 3.0 - 0.3 * X
 
+    @pytest.fixture(autouse=True)
+    def close_figures(self) -> Iterator[None]:
+        """Close every figure a test opens, also when the test fails."""
+        yield
+        plt.close("all")
+
     @pytest.fixture
-    def axes(self) -> Iterator[matplotlib.axes.Axes]:
-        fig, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+    def axes(self) -> matplotlib.axes.Axes:
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
         ax_.plot(self.X, self.A)
         ax_.plot(self.X, self.B)
         ax_.set_xlim(0.0, 10.0)
         ax_.set_ylim(-1.0, 5.0)
-        yield ax_
-        plt.close(fig)
+        return ax_
 
     @staticmethod
     def extent(ax_: matplotlib.axes.Axes, label: Text) -> matplotlib.transforms.Bbox:
@@ -175,15 +180,63 @@ class TestLabelCurve:
         return label.get_window_extent()
 
     @staticmethod
-    def segments(ax_: matplotlib.axes.Axes, x, y) -> list[np.ndarray]:
+    def segments(
+        ax_: matplotlib.axes.Axes, x: np.ndarray, y: np.ndarray
+    ) -> list[np.ndarray]:
         """A curve's drawn segments in display pixels: one array of two points
         for each pair of neighbors that are both finite."""
         pts = ax_.transData.transform(np.column_stack([x, y]))
         ok = np.all(np.isfinite(pts), axis=1)
         return [pts[i : i + 2] for i in range(len(pts) - 1) if ok[i] and ok[i + 1]]
 
+    @staticmethod
+    def segment_box_distance(
+        p: np.ndarray, q: np.ndarray, box: matplotlib.transforms.Bbox
+    ) -> float:
+        """Exact least distance, in pixels, from the segment pq to the box.
+
+        Zero where the segment meets the box, found by clipping the segment
+        to the box.  Otherwise the least distance between the two convex
+        shapes lies at a vertex of one of them: an end of the segment, or a
+        corner of the box.
+
+        """
+        t0, t1 = 0.0, 1.0
+        for start, step, lo, hi in (
+            (p[0], q[0] - p[0], box.x0, box.x1),
+            (p[1], q[1] - p[1], box.y0, box.y1),
+        ):
+            if step == 0.0:
+                if not lo <= start <= hi:
+                    t0, t1 = 1.0, 0.0
+            else:
+                ta, tb = (lo - start) / step, (hi - start) / step
+                t0, t1 = max(t0, min(ta, tb)), min(t1, max(ta, tb))
+        if t0 <= t1:
+            return 0.0
+        dists = [
+            float(
+                np.hypot(
+                    max(box.x0 - end[0], 0.0, end[0] - box.x1),
+                    max(box.y0 - end[1], 0.0, end[1] - box.y1),
+                )
+            )
+            for end in (p, q)
+        ]
+        d = q - p
+        if np.dot(d, d) > 0.0:
+            for corner in box.corners():
+                t = np.clip(np.dot(corner - p, d) / np.dot(d, d), 0.0, 1.0)
+                dists.append(float(np.hypot(*(p + t * d - corner))))
+        return min(dists)
+
     def under(
-        self, ax_: matplotlib.axes.Axes, box: matplotlib.transforms.Bbox, x, y, pad
+        self,
+        ax_: matplotlib.axes.Axes,
+        box: matplotlib.transforms.Bbox,
+        x: np.ndarray,
+        y: np.ndarray,
+        pad: float,
     ) -> np.ndarray:
         """Display heights of a curve's drawn segments over the box's width
         widened by ``pad`` pixels either side: the parts of each segment lying
@@ -200,20 +253,28 @@ class TestLabelCurve:
                 )
         return np.array(heights)
 
-    def distance(self, ax_: matplotlib.axes.Axes, box, x, y) -> float:
-        """Least distance, in pixels, from the box to a curve's drawn line,
-        sampled every tenth of a pixel or finer along each segment."""
-        best = np.inf
-        for p, q in self.segments(ax_, x, y):
-            n = max(int(np.hypot(*(q - p)) * 10), 2)
-            s = p + np.linspace(0.0, 1.0, n)[:, None] * (q - p)
-            dx = np.maximum(np.maximum(box.x0 - s[:, 0], s[:, 0] - box.x1), 0.0)
-            dy = np.maximum(np.maximum(box.y0 - s[:, 1], s[:, 1] - box.y1), 0.0)
-            best = min(best, float(np.hypot(dx, dy).min()))
-        return best
+    def distance(
+        self,
+        ax_: matplotlib.axes.Axes,
+        box: matplotlib.transforms.Bbox,
+        x: np.ndarray,
+        y: np.ndarray,
+    ) -> float:
+        """Exact least distance, in pixels, from the box to a curve's drawn line."""
+        return min(
+            (self.segment_box_distance(p, q, box) for p, q in self.segments(ax_, x, y)),
+            default=np.inf,
+        )
 
     def check_beside(
-        self, ax_, label, own, other, gap_pts: float = 2.0, above: bool = True, x=None
+        self,
+        ax_: matplotlib.axes.Axes,
+        label: Text,
+        own: np.ndarray,
+        other: np.ndarray,
+        gap_pts: float = 2.0,
+        above: bool = True,
+        x: np.ndarray | None = None,
     ) -> matplotlib.transforms.Bbox:
         x = self.X if x is None else x
         box = self.extent(ax_, label)
@@ -231,7 +292,7 @@ class TestLabelCurve:
         assert gap_px - 1e-6 <= own_d < other_d
         return box
 
-    def test_above_where_its_curve_leads_most(self, axes) -> None:
+    def test_above_where_its_curve_leads_most(self, axes: matplotlib.axes.Axes) -> None:
         """a leads b by more the further right, so the label ends at the frame.
 
         Its right edge lies within one data point, 0.1 in x, of the axes' right
@@ -244,7 +305,9 @@ class TestLabelCurve:
         point_px = axes.transData.transform([[0.0, 0.0], [0.1, 0.0]])
         assert box.x1 > axes.bbox.x1 - np.diff(point_px[:, 0])[0] - 1.0
 
-    def test_where_the_gap_is_largest_not_the_curve_highest(self, axes) -> None:
+    def test_where_the_gap_is_largest_not_the_curve_highest(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """Both curves rise, the labeled one by less, so it leads most at the left.
 
         The labeled curve, 1 + 0.3x, leads 0.35x by 1 - 0.05x, largest at x = 0,
@@ -258,26 +321,26 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_below(self, axes) -> None:
+    def test_below(self, axes: matplotlib.axes.Axes) -> None:
         label = label_curve(axes, self.X, [self.A, self.B], 1, "falling", side="below")
         assert label is not None
         self.check_beside(axes, label, self.B, self.A, above=False)
 
-    def test_gap(self, axes) -> None:
+    def test_gap(self, axes: matplotlib.axes.Axes) -> None:
         label = label_curve(
             axes, self.X, [self.A, self.B], 0, "rising", gap=10.0, side="above"
         )
         assert label is not None
         self.check_beside(axes, label, self.A, self.B, gap_pts=10.0)
 
-    def test_stays_inside_the_axes(self, axes) -> None:
+    def test_stays_inside_the_axes(self, axes: matplotlib.axes.Axes) -> None:
         """With the top at 3.1, the label must go where a is low enough."""
         axes.set_ylim(-1.0, 3.1)
         label = label_curve(axes, self.X, [self.A, self.B], 0, "rising", side="above")
         assert label is not None
         self.check_beside(axes, label, self.A, self.B)
 
-    def test_no_room_gives_none(self, axes) -> None:
+    def test_no_room_gives_none(self, axes: matplotlib.axes.Axes) -> None:
         """A curve 0.3 below another everywhere, 11.6 pixels on this figure,
         leaves no room above it for a label 13.9 pixels tall plus ``gap``
         either side."""
@@ -287,7 +350,7 @@ class TestLabelCurve:
         )
         assert len(axes.texts) == 0
 
-    def test_avoid(self, axes) -> None:
+    def test_avoid(self, axes: matplotlib.axes.Axes) -> None:
         first = label_curve(axes, self.X, [self.A, self.B], 0, "rising", side="above")
         assert first is not None
         second = label_curve(
@@ -297,11 +360,13 @@ class TestLabelCurve:
         assert not self.extent(axes, second).overlaps(self.extent(axes, first))
         self.check_beside(axes, second, self.A, self.B)
 
-    def test_text_kwargs(self, axes) -> None:
+    def test_text_kwargs(self, axes: matplotlib.axes.Axes) -> None:
         label = label_curve(axes, self.X, [self.A, self.B], 0, "rising", color="red")
         assert label is not None and label.get_color() == "red"
 
-    def test_missing_points_of_the_labeled_curve(self, axes) -> None:
+    def test_missing_points_of_the_labeled_curve(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """NaN in the labeled curve leaves no candidate there.
 
         A one-letter label would fit at the right edge, where a leads most,
@@ -315,7 +380,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         assert x_left <= 8.0 + 1e-9
 
-    def test_missing_points_of_another_curve(self, axes) -> None:
+    def test_missing_points_of_another_curve(self, axes: matplotlib.axes.Axes) -> None:
         """NaN in another curve is skipped, so it does not block a candidate.
 
         With b missing past x = 7, every candidate whose span, widened by
@@ -331,7 +396,9 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 7.2, atol=1e-6)
 
-    def test_other_curve_counted_where_the_labeled_one_is_missing(self, axes) -> None:
+    def test_other_curve_counted_where_the_labeled_one_is_missing(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """Another curve's spike inside a gap in the labeled curve still blocks it.
 
         The labeled curve peaks at x = 5.1 and is missing at x = 5, where the
@@ -357,7 +424,7 @@ class TestLabelCurve:
         assert 0.2 < x_right - x_left < 0.9  # the premise above
         np.testing.assert_allclose(x_left, 5.3, atol=1e-6)
 
-    def test_tie_goes_to_the_leftmost(self, axes) -> None:
+    def test_tie_goes_to_the_leftmost(self, axes: matplotlib.axes.Axes) -> None:
         """Two flat curves lead by the same everywhere, so the label starts at 0."""
         own, other = np.full_like(self.X, 2.0), np.full_like(self.X, 1.0)
         label = label_curve(axes, self.X, [own, other], 0, "flat")
@@ -366,7 +433,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_log_scale(self, axes) -> None:
+    def test_log_scale(self, axes: matplotlib.axes.Axes) -> None:
         """Distances are in display space, so a log axis is handled too."""
         axes.set_yscale("log")
         axes.set_ylim(0.1, 20.0)
@@ -375,7 +442,7 @@ class TestLabelCurve:
         assert label is not None
         self.check_beside(axes, label, own, other)
 
-    def test_inverted_x_axis(self, axes) -> None:
+    def test_inverted_x_axis(self, axes: matplotlib.axes.Axes) -> None:
         axes.invert_xaxis()
         label = label_curve(axes, self.X, [self.A, self.B], 0, "rising", side="above")
         assert label is not None
@@ -403,10 +470,13 @@ class TestLabelCurve:
         )
         assert 2.7 < x_right - x_left < 3.9  # the premise above
         np.testing.assert_allclose(x_left, 8.0, atol=1e-6)
-        plt.close(fig)
 
     @staticmethod
-    def flat_axes(levels: list[float], ylim: tuple[float, float]):
+    def flat_axes(
+        levels: list[float], ylim: tuple[float, float]
+    ) -> tuple[
+        matplotlib.figure.Figure, matplotlib.axes.Axes, np.ndarray, list[np.ndarray]
+    ]:
         """A figure of flat curves at ``levels``, x from 0 to 10."""
         fig, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
         x = np.linspace(0.0, 10.0, 101)
@@ -436,7 +506,6 @@ class TestLabelCurve:
         label = label_curve(ax_, x, [own, other], 0, "flat", side="above")
         assert label is not None
         self.check_beside(ax_, label, own, other, x=x)
-        plt.close(fig)
 
     def test_own_flank_just_past_the_label(self) -> None:
         """The labeled curve's own steep flank beside the label keeps ``gap`` too."""
@@ -449,8 +518,7 @@ class TestLabelCurve:
         label = label_curve(ax_, x, [own, other], 0, "rising", side="above")
         assert label is not None
         box = self.extent(ax_, label)
-        assert self.distance(ax_, box, x, own) >= 2.0 * ax_.figure.dpi / 72.0 - 1.0
-        plt.close(fig)
+        assert self.distance(ax_, box, x, own) >= 2.0 * ax_.figure.dpi / 72.0 - 1e-6
 
     def test_gap_in_the_labeled_curve_is_not_bridged(self) -> None:
         """No curve is counted across a NaN gap, so no label hangs over one.
@@ -469,7 +537,6 @@ class TestLabelCurve:
         ax_.set_xlim(0.0, 10.0)
         ax_.set_ylim(-1.0, 5.0)
         assert label_curve(ax_, x, [own, other], 0, "a", side="above") is None
-        plt.close(fig)
 
     def test_other_curve_not_extended_past_its_end(self) -> None:
         """A curve missing past x = 2 does not block labels beyond x = 2."""
@@ -482,7 +549,6 @@ class TestLabelCurve:
         label = label_curve(ax_, x, [own, other], 0, "rising", side="above")
         assert label is not None
         self.check_beside(ax_, label, own, other, x=x)
-        plt.close(fig)
 
     def test_middle_curve(self) -> None:
         """Flat curves at 0, 1 and 2: the middle one is labeled between two others.
@@ -498,7 +564,6 @@ class TestLabelCurve:
         d = [self.distance(ax_, box, x, c) for c in curves]
         assert d[1] < min(d[0], d[2]) and d[1] >= 2.0 * 100.0 / 72.0 - 1e-6
         assert box.y0 > ax_.transData.transform((0.0, 1.0))[1]
-        plt.close(fig)
 
     def test_toward_the_neighbor_only_when_away_does_not_fit(self) -> None:
         """Flat curves at 0 and 4, axes bottom at -0.1: below the lower curve
@@ -511,9 +576,10 @@ class TestLabelCurve:
         assert self.distance(ax_, box, x, curves[0]) < self.distance(
             ax_, box, x, curves[1]
         )
-        plt.close(fig)
 
-    def test_auto_takes_the_side_away_from_the_nearest_curve(self, axes) -> None:
+    def test_auto_takes_the_side_away_from_the_nearest_curve(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """a = 0.3x and b = 4 - 0.25x are farthest apart at x = 0, with a below,
         so a's label goes below it at the left."""
         b = 4.0 - 0.25 * self.X
@@ -523,7 +589,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_masked_log_axis(self, axes) -> None:
+    def test_masked_log_axis(self, axes: matplotlib.axes.Axes) -> None:
         """On a log axis that masks nonpositive values, the label is still placed."""
         axes.set_yscale("log", nonpositive="mask")
         axes.set_ylim(0.1, 20.0)
@@ -549,13 +615,12 @@ class TestLabelCurve:
         assert self.distance(ax_, box, x_days, own) < self.distance(
             ax_, box, x_days, other
         )
-        plt.close(fig)
 
-    def test_none_in_avoid_is_skipped(self, axes) -> None:
+    def test_none_in_avoid_is_skipped(self, axes: matplotlib.axes.Axes) -> None:
         label = label_curve(axes, self.X, [self.A, self.B], 0, "rising", avoid=[None])
         assert label is not None
 
-    def test_error_leaves_nothing_on_the_axes(self, axes) -> None:
+    def test_error_leaves_nothing_on_the_axes(self, axes: matplotlib.axes.Axes) -> None:
         not_a_label: Any = "not a label"
         with pytest.raises(AttributeError):
             label_curve(
@@ -564,13 +629,15 @@ class TestLabelCurve:
         assert len(axes.texts) == 0
 
     @pytest.mark.parametrize("key", ["ha", "va", "transform", "rotation_mode", "bbox"])
-    def test_keywords_set_here_raise(self, axes, key: str) -> None:
+    def test_keywords_set_here_raise(
+        self, axes: matplotlib.axes.Axes, key: str
+    ) -> None:
         kwargs: dict[str, Any] = {key: None}
         with pytest.raises(ValueError, match="sets or forbids"):
             label_curve(axes, self.X, [self.A, self.B], 0, "t", **kwargs)
         assert len(axes.texts) == 0
 
-    def test_single_curve_goes_leftmost(self, axes) -> None:
+    def test_single_curve_goes_leftmost(self, axes: matplotlib.axes.Axes) -> None:
         """With no other curve, every candidate ties, so the label starts at 0."""
         label = label_curve(axes, self.X, [self.A], 0, "alone", side="above")
         assert label is not None
@@ -578,7 +645,9 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_all_missing_other_curve_is_ignored(self, axes) -> None:
+    def test_all_missing_other_curve_is_ignored(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         ys = [self.A, np.full_like(self.X, np.nan)]
         label = label_curve(axes, self.X, ys, 0, "rising", side="above")
         assert label is not None
@@ -586,12 +655,14 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_identical_curves_give_none(self, axes) -> None:
+    def test_identical_curves_give_none(self, axes: matplotlib.axes.Axes) -> None:
         """A label for one of two equal curves is as near the other."""
         assert label_curve(axes, self.X, [self.A, self.A.copy()], 0, "twin") is None
         assert len(axes.texts) == 0
 
-    def test_small_lead_on_parallel_slopes_goes_leftmost(self, axes) -> None:
+    def test_small_lead_on_parallel_slopes_goes_leftmost(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """0.3x + 0.05 leads 0.3x by 1.9 pixels, and by 1.5 over the spans
         compared, the other curve's being the wider (1.9 less 0.37 pixels a
         pixel of slope times the 1.15 pixels the spans differ by).  That is
@@ -611,7 +682,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_sparse_gap_in_another_curve(self, axes) -> None:
+    def test_sparse_gap_in_another_curve(self, axes: matplotlib.axes.Axes) -> None:
         """The other curve is missing at x = 5 only, with points a unit apart.
 
         A label starting at 5 has, over its span, no part of the other curve
@@ -629,7 +700,9 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 5.0, atol=1e-6)
 
-    def test_away_side_judged_by_the_nearest_curve(self, axes) -> None:
+    def test_away_side_judged_by_the_nearest_curve(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """The labeled curve is flat at 2, between a curve below and one above.
 
         Left of x = 5 they are 50 and 51.5 pixels from it, so the nearest is
@@ -649,7 +722,9 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 0.0, atol=1e-6)
 
-    def test_nearest_of_two_curves_ahead_decides(self, axes) -> None:
+    def test_nearest_of_two_curves_ahead_decides(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """Two curves above the flat labeled curve, none below.
 
         Left of x = 5 they are 30 and 60 pixels above it, and right of 5, 45
@@ -726,9 +801,10 @@ class TestLabelCurve:
             )
         else:
             assert label is None
-        plt.close(fig)
 
-    def test_nearest_of_two_curves_behind_decides(self, axes) -> None:
+    def test_nearest_of_two_curves_behind_decides(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """The labeled curve is 2; behind it are 1 and 1.5 - 0.1x.
 
         The nearer of the two is 1.5 - 0.1x up to x = 5 and 1 after, so the
@@ -744,7 +820,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 5.2, atol=1e-6)
 
-    def test_slowly_rising_lead_goes_right(self, axes) -> None:
+    def test_slowly_rising_lead_goes_right(self, axes: matplotlib.axes.Axes) -> None:
         """A lead rising by 0.02 pixels a point is not taken for a tie, so the
         label ends within one point, 0.1 in x, of the axes' right edge."""
         own = 2.0 + 0.005 * self.X
@@ -756,7 +832,9 @@ class TestLabelCurve:
         point_px = np.diff(axes.transData.transform([[0.0, 0.0], [0.1, 0.0]])[:, 0])[0]
         assert box.x1 > axes.bbox.x1 - point_px - 1e-6
 
-    def test_nearest_of_several_curves_decides(self, axes) -> None:
+    def test_nearest_of_several_curves_decides(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """With a third curve 0.3 above a, 11.6 pixels, no label fits above a,
         though b alone would allow one."""
         ys = [self.A, self.B, self.A + 0.3]
@@ -777,9 +855,10 @@ class TestLabelCurve:
         ax_.set_xlim(4.0, 10.0)
         ax_.set_ylim(-1.0, 5.0)
         assert label_curve(ax_, x, [own, other], 0, "a", side="above") is None
-        plt.close(fig)
 
-    def test_candidates_only_where_the_labeled_curve_is(self, axes) -> None:
+    def test_candidates_only_where_the_labeled_curve_is(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
         """b, labeled below, is missing past x = 8, so its label starts at 8.
 
         With a gap of 10 points, a label starting at 8.4 would still have
@@ -795,7 +874,7 @@ class TestLabelCurve:
         np.testing.assert_allclose(x_left, 8.0, atol=1e-6)
 
     @pytest.mark.parametrize("far_first", [True, False])
-    def test_avoid_several(self, axes, far_first: bool) -> None:
+    def test_avoid_several(self, axes: matplotlib.axes.Axes, far_first: bool) -> None:
         """Every text in ``avoid`` is checked, whatever its order."""
         first = label_curve(axes, self.X, [self.A, self.B], 0, "rising", side="above")
         assert first is not None
@@ -807,7 +886,7 @@ class TestLabelCurve:
         assert second is not None
         assert not self.extent(axes, second).overlaps(self.extent(axes, first))
 
-    def test_fontsize_sets_the_measured_size(self, axes) -> None:
+    def test_fontsize_sets_the_measured_size(self, axes: matplotlib.axes.Axes) -> None:
         """At 24 points the label is wider, and must still end inside the axes."""
         label = label_curve(
             axes, self.X, [self.A, self.B], 0, "rising", side="above", fontsize=24
@@ -825,7 +904,6 @@ class TestLabelCurve:
         )
         assert label is not None
         self.check_beside(ax_, label, self.A, self.B, gap_pts=10.0)
-        plt.close(fig)
 
     def test_layout_settled_by_a_draw(self) -> None:
         """An equal aspect resizes the axes only when drawn, before measuring."""
@@ -838,9 +916,8 @@ class TestLabelCurve:
         )
         assert label is not None
         self.check_beside(ax_, label, self.A, self.B, gap_pts=10.0)
-        plt.close(fig)
 
-    def test_left_edge_of_the_axes(self, axes) -> None:
+    def test_left_edge_of_the_axes(self, axes: matplotlib.axes.Axes) -> None:
         """With x shown from 2, the lead 1 - 0.05x is largest at x = 2."""
         axes.set_xlim(2.0, 10.0)
         own, other = 1.0 + 0.3 * self.X, 0.35 * self.X
@@ -850,7 +927,7 @@ class TestLabelCurve:
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 2.0, atol=1e-6)
 
-    def test_bottom_edge_of_the_axes(self, axes) -> None:
+    def test_bottom_edge_of_the_axes(self, axes: matplotlib.axes.Axes) -> None:
         """With y shown from -0.3, a label below b must stay above that."""
         axes.set_ylim(-0.3, 5.0)
         label = label_curve(axes, self.X, [self.A, self.B], 1, "falling", side="below")
@@ -868,10 +945,11 @@ class TestLabelCurve:
         label = label_curve(ax_, x, [own, other], 0, "rising", side="above")
         assert label is not None
         self.check_beside(ax_, label, own, other, x=x)
-        plt.close(fig)
 
     @pytest.mark.parametrize("gap", [0.0, -1.0])
-    def test_nonpositive_gap_raises(self, axes, gap: float) -> None:
+    def test_nonpositive_gap_raises(
+        self, axes: matplotlib.axes.Axes, gap: float
+    ) -> None:
         with pytest.raises(ValueError, match="gap must be positive"):
             label_curve(axes, self.X, [self.A, self.B], 0, "t", gap=gap)
 
