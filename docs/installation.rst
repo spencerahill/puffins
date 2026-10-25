@@ -1,11 +1,18 @@
 Installation
 ============
 
+From PyPI
+---------
+
+.. code-block:: bash
+
+   pip install puffins
+
 From source (editable)
 ----------------------
 
-``puffins`` is not yet published to PyPI. Install it from a clone of the
-repository in editable mode:
+To work on ``puffins`` itself, install it from a clone of the repository in
+editable mode:
 
 .. code-block:: bash
 
@@ -13,19 +20,22 @@ repository in editable mode:
    cd puffins
    pip install -e .
 
-Or, with `uv <https://docs.astral.sh/uv/>`_:
+The development and CI environments are managed with
+`pixi <https://pixi.prefix.dev/>`_ and locked in ``pixi.lock``. Their packages
+come from conda-forge, windspharm included. In a clone, this builds the
+default environment and runs the tests:
 
 .. code-block:: bash
 
-   uv sync
+   pixi run pytest
 
 Optional dependencies
 ---------------------
 
 Some functionality in :mod:`puffins.budget_adj` depends on
 `windspharm <https://ajdawson.github.io/windspharm/>`_, which requires a
-Fortran toolchain and is therefore packaged as an optional extra. Install it
-via conda:
+Fortran toolchain and is therefore packaged as an optional extra. The pixi
+environments above include it; elsewhere, install it via conda:
 
 .. code-block:: bash
 

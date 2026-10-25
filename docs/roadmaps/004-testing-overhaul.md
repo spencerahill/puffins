@@ -30,19 +30,18 @@ The existing tests are well-structured and serve as good templates: they use xar
 
 ### Coverage by module
 
-Meets the ≥80% success criterion (24 modules): `bootstrap` 100, `calculus`
-98, `constants` 100, `dates` 99, `dynamics` 99, `enso` 100, `eofs` 100, `eq_area` 99,
+Meets the ≥80% success criterion (25 modules): `bootstrap` 100, `budget_adj`
+100, `calculus` 98, `constants` 100, `dates` 99, `dynamics` 99, `enso` 100, `eofs` 100, `eq_area` 99,
 `grad_bal` 97, `had_cell` 87, `held_hou_1980` 97, `hides` 96, `interp` 99,
 `lcl` 100, `longitude` 88, `names` 100, `num_solver` 98, `polar_amp` 100,
 `radiation` 100, `stats` 95, `therm_inert` 100, `thermodynamics` 97,
 `tropopause` 83, `vert_coords` 99.
 
-Below the bar — the remaining work (5 modules): `budget_adj` 16, `kuo_el` 19,
+Below the bar, the remaining work (4 modules): `kuo_el` 19,
 `lindzen_hou_1988` 36, `plumb_hou_1992` 78, `fixed_temp_tropo` 39.
-`budget_adj` has a full test file, but its numerical
-tests require `windspharm`/`pyspharm` (Fortran + legacy build tooling) which
-is not installed in CI, so they are skipped there and its coverage cannot
-rise without that dependency — a packaging limitation, not missing tests.
+`budget_adj` went from 16 to 100 on 2026-10-25, when CI moved to pixi
+environments that install `windspharm` and `pyspharm` from conda-forge, so
+its tests stopped skipping there.
 `plumb_hou_1992` gained an initial `test_plumb_hou_1992.py` (2 tests) in PR
 #60 alongside the fix of a latent crash in `u_ph92_rce` (it forwarded an
 unsupported `plus_solution` kwarg to `grad_wind_bouss`), lifting it to 78%.

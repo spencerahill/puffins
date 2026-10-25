@@ -51,8 +51,9 @@ uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 
 > **Note (what the "0 errors" figure depends on):** it holds for the
 > combination CI uses, namely `python_version = "3.11"` in `[tool.mypy]`
-> analyzed against the dependency versions that `uv sync --extra dev`
-> resolves on the runner's default interpreter. Raising `python_version` from
+> analyzed against the dependency versions in CI's environment, resolved by
+> `uv sync --extra dev` until 2026-10-25 and locked in pixi's `default`
+> environment since. Raising `python_version` from
 > 3.10 to 3.11, when support for Python 3.10 was dropped at its end of life
 > (2026-10-01), exposed 36 errors in 5 files under the newer numpy and xarray
 > stubs. 28 of them were `arg-type` errors from dictionaries unpacked into
@@ -63,6 +64,12 @@ uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 >   0 errors.
 > - an environment built on Python 3.11, the oldest supported interpreter
 >   (`uv run --isolated --python 3.11 --extra dev mypy puffins/`): 0 errors.
+>
+> Measured on 2026-10-25 in pixi's `default` environment (Python 3.14.9,
+> numpy 2.4.6, mypy 1.19.1): 0 errors. With numpy 2.5.4, mypy 1.19.1 and
+> 1.20.2 stop on a `type` statement in numpy's stubs under
+> `python_version = "3.11"`, and mypy 2.4.0 reports 29 errors, so
+> `pyproject.toml` requires numpy below 2.5 and mypy 1.19.
 
 > **Note (overload coverage is test-driven):** the 14 functions carrying
 > `@overload` stacks are the ones the test suite exercises, not a complete

@@ -58,9 +58,7 @@ import puffins
 f = puffins.dynamics.coriolis_param(30)
 
 # Same calculation for Mars
-f_mars = puffins.dynamics.coriolis_param(
-    30, rot_rate=puffins.constants.ROT_RATE_MARS
-)
+f_mars = puffins.dynamics.coriolis_param(30, rot_rate=puffins.constants.ROT_RATE_MARS)
 
 # Meridional mass streamfunction from v-wind and pressure thickness
 psi = puffins.had_cell.merid_streamfunc(v, dp)
@@ -89,6 +87,12 @@ cd puffins
 pip install -e .
 ```
 
+puffins' own development and CI environments are managed with
+[pixi](https://pixi.prefix.dev/) and locked in `pixi.lock`, with packages from
+conda-forge. In a clone, `pixi run pytest` builds the default environment and
+runs the tests; `pixi run -e py311 pytest` runs them on Python 3.11, one of the
+four versions CI tests (`py311` to `py314`).
+
 ### Dependencies
 
 puffins requires Python 3.11+ and the following packages (installed
@@ -107,7 +111,8 @@ automatically):
 The spherical-harmonics wind inversion in `budget_adj` additionally
 requires [windspharm](https://ajdawson.github.io/windspharm/), which is
 optional (the `fortran` extra) and on modern setups must be installed
-via conda: `conda install -c conda-forge windspharm`.
+via conda: `conda install -c conda-forge windspharm`. The pixi environments
+above include it.
 
 ## Using puffins in individual science projects
 

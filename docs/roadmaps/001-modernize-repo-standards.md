@@ -28,7 +28,9 @@ type coverage.
 Modernize the build system and local developer tooling.
 
 - [x] Modern `pyproject.toml` with `setuptools-scm` for git-based versioning
-- [x] `uv` for dependency management with `uv.lock` for reproducible environments
+- [x] `uv` for dependency management with `uv.lock` for reproducible environments;
+  replaced on 2026-10-25 by pixi and `pixi.lock`, whose conda-forge packages
+  include windspharm
 - [x] Ruff for linting and formatting (replaces black, isort, flake8)
 - [x] Pre-commit hooks (ruff, trailing whitespace, EOF fixer)
 - [x] `.editorconfig` for consistent editor settings
@@ -41,7 +43,9 @@ Automate quality checks and releases.
 - [x] GitHub Actions CI: lint + test matrix (Python 3.11–3.14; 3.10 dropped
   at its end of life, 2026-10-01)
 - [x] GitHub Actions publish workflow (PyPI trusted publishing)
-- [x] Dependabot for monthly dependency and Actions updates
+- [x] Monthly dependency and Actions updates: Dependabot for the Actions, and
+  since 2026-10-25 a `pixi update` workflow for `pixi.lock`, which Dependabot
+  cannot update
 - [x] `windspharm` moved to optional `[fortran]` extra (requires conda)
 
 ## Phase 3: README & Install Docs Refresh
@@ -49,7 +53,8 @@ Automate quality checks and releases.
 Update documentation to reflect the new tooling.
 
 - [x] Update README badges (Python 3.11+, PyPI, docs, and CI status badges)
-- [ ] Add `uv` installation instructions alongside pip
+- [x] Add development-environment instructions (pixi, since 2026-10-25)
+  alongside pip
 - [x] Note windspharm's move to optional `[fortran]` extra
 - [ ] Add "Contributing" section covering dev setup, pre-commit, and CI
 
@@ -83,13 +88,12 @@ mypy 2.3.0 and found not to exist; see [Roadmap 003](003-type-hints.md).
 The per-module checklist and testing strategies live there.
 
 Status (2026-10-13): from effectively 0% to **1140 tests passing across 28 test
-files, 92% total line coverage** (1 skipped, 10 xfailed). 24 modules meet the
+files, 92% total line coverage** (1 skipped, 10 xfailed). 25 modules meet the
 ≥80% target. The remaining gap is the theoretical-model cluster
 (`kuo_el` 19%, `lindzen_hou_1988` 36%, `fixed_temp_tropo` 39%,
-`plumb_hou_1992` 78%), plus `budget_adj` at 16%.
-`budget_adj` has a full test file, but its numerical tests need
-`windspharm`/`pyspharm`, which will not install in CI, so they skip there and
-its measured coverage understates what is actually tested. A CI coverage gate
+`plumb_hou_1992` 78%). `budget_adj` went from 16% to 100% on 2026-10-25, when
+CI moved to pixi environments that install `windspharm` and `pyspharm` from
+conda-forge, so its tests stopped skipping there. A CI coverage gate
 (`--cov-fail-under`) is not yet enabled.
 
 Target: ≥80% line coverage for all modules except `plotting.py` and `nb_utils.py`.

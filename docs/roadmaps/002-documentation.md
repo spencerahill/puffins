@@ -202,7 +202,7 @@ source links. Built automatically on every push.
 
 ### 3.1 Getting Started guide
 
-- Installation (pip, uv, editable mode, dependencies)
+- Installation (pip, pixi, editable mode, dependencies)
 - Quick-start code showing a complete workflow
 - Coordinate conventions and input expectations
 
