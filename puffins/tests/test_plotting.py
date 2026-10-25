@@ -638,20 +638,54 @@ class TestLabelCurve:
             boxes[0].get_points(), boxes[1].get_points(), atol=1e-6
         )
 
-    def test_middle_curve(self) -> None:
-        """Flat curves at 0, 1 and 2: the middle one is labeled between two others.
+    @pytest.mark.parametrize(
+        ("levels", "ylim"),
+        [
+            ([0.0, 1.0, 2.0], (-1.0, 3.0)),
+            ([0.15, 2 * 0.15, 3 * 0.15], (0.0, 0.6)),
+        ],
+    )
+    def test_middle_curve(self, levels: list[float], ylim: tuple[float, float]) -> None:
+        """Three equally spaced flat curves: the middle one is labeled between
+        two others.
 
         Above and below it, the nearest other curve is equally far, so the tie
-        goes to above.
+        goes to above.  At 0.15, 0.3 and 0.45 the gaps on the screen differ by
+        rounding, 57.75 pixels below and 57.74999999999997 above, which is
+        still a tie.
 
         """
-        fig, ax_, x, curves = self.flat_axes([0.0, 1.0, 2.0], (-1.0, 3.0))
+        fig, ax_, x, curves = self.flat_axes(levels, ylim)
         label = label_curve(ax_, x, curves, 1, "middle")
         assert label is not None
         box = self.extent(ax_, label)
         d = [self.distance(ax_, box, x, c) for c in curves]
         assert d[1] < min(d[0], d[2]) and d[1] >= 2.0 * 100.0 / 72.0 - 1e-6
-        assert box.y0 > ax_.transData.transform((0.0, 1.0))[1]
+        assert box.y0 > ax_.transData.transform((0.0, levels[1]))[1]
+
+    def test_given_side_ranked_by_clearance_alone(self) -> None:
+        """With the side given, the x is where the nearest other curve is
+        farthest, whichever side of the labeled curve that curve is on.
+
+        The labeled curve is flat at 2.  The other curve is 8 pixels below it
+        left of x = 5 and 120 pixels above it from x = 5.  Above the labeled
+        curve, the label fits under the far curve, starting at the first
+        point whose span, widened by about 0.13 in x, lies past the rise at
+        x = 5, which is 5.2.  Ranked first by the side away from the nearest
+        curve, it went to x = 0, 10.8 pixels from the other curve.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        per_px = 6.0 / ax_.bbox.height
+        own = np.full_like(self.X, 2.0)
+        other = np.where(self.X < 5.0, 2.0 - per_px * 8.0, 2.0 + per_px * 120.0)
+        label = label_curve(ax_, self.X, [own, other], 0, "a", side="above")
+        assert label is not None
+        box = self.check_beside(ax_, label, own, other)
+        x_left = ax_.transData.inverted().transform((box.x0, box.y0))[0]
+        np.testing.assert_allclose(x_left, 5.2, atol=1e-6)
 
     def test_toward_the_neighbor_only_when_away_does_not_fit(self) -> None:
         """Flat curves at 0 and 4, axes bottom at -0.1: below the lower curve
@@ -952,15 +986,16 @@ class TestLabelCurve:
     ) -> None:
         """b, labeled below, is missing past x = 8, so its label starts at 8.
 
-        With a gap of 10 points, a label starting at 8.4 would still have
-        b's last points within its span, and would win there, a leading b by
-        more the further right.
+        The other curve, 3.2 + 0.1x, is above b by more the further right.
+        With a gap of 10 points, a label starting at 8.4 would still have b's
+        last points within its span, and would win there.
 
         """
         own = np.where(self.X > 8.0, np.nan, self.B)
-        label = label_curve(axes, self.X, [self.A, own], 1, "f", side="below", gap=10.0)
+        other = 3.2 + 0.1 * self.X
+        label = label_curve(axes, self.X, [other, own], 1, "f", side="below", gap=10.0)
         assert label is not None
-        box = self.check_beside(axes, label, own, self.A, gap_pts=10.0, above=False)
+        box = self.check_beside(axes, label, own, other, gap_pts=10.0, above=False)
         x_left = axes.transData.inverted().transform((box.x0, box.y0))[0]
         np.testing.assert_allclose(x_left, 8.0, atol=1e-6)
 

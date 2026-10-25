@@ -488,8 +488,9 @@ _LABEL_KWARGS_SET_HERE = (
     "fontdict",
     "wrap",
 )
-# Display pixels by which one candidate must beat another to be preferred, so
-# that leads equal but for rounding go to the leftmost.
+# Display pixels by which one candidate must beat another to be preferred, and
+# within which the nearest curves behind and ahead are equally near, so that
+# distances equal but for rounding tie.
 _LABEL_TIE_PX = 1e-6
 
 
@@ -581,12 +582,11 @@ def label_curve(
     beyond the label's far edge, by more than that distance from the label.
     So the label is clear of every curve and nearer the labeled one.  Of the
     candidates lying wholly inside the axes and overlapping no text in
-    ``avoid``, those on the side away from the nearest other curve come
-    first, and among them the one where the labeled curve's extreme stands
-    farthest from the nearest other curve is taken, the leftmost on a tie,
-    and above on a tie at one point.  A candidate on the side toward the
-    nearest curve is taken only when no candidate on the side away from it
-    fits.
+    ``avoid``, the one where the labeled curve's extreme stands farthest from
+    the nearest other curve is taken, the leftmost on a tie, and above on a
+    tie at one point.  With ``side="auto"``, candidates on the side away from
+    the nearest other curve come first: one on the side toward it is taken
+    only when no candidate on the side away from it fits.
 
     A curve counts only where it is drawn: along segments between two finite
     points, so neither across a NaN gap, nor at a lone point between two
@@ -622,7 +622,8 @@ def label_curve(
     side : {"auto", "above", "below"}
         Which side of its curve the label goes on, as seen on the screen.
         ``"auto"`` tries both, preferring the side away from the nearest
-        other curve as the rules ask.
+        other curve as the rules specify.  With a side given, the x is chosen by
+        the distance to the nearest other curve alone.
     gap : float
         Distance, in points, from the labeled curve's line to the label's
         near edge; positive.
@@ -735,7 +736,10 @@ def label_curve(
                         continue
                     nearest_behind = min(behind, default=np.inf)
                     nearest_ahead = min(ahead, default=np.inf)
-                    away = nearest_behind <= nearest_ahead
+                    # With the side given, the clearance alone ranks them.
+                    away = side != "auto" or (
+                        nearest_behind <= nearest_ahead + _LABEL_TIE_PX
+                    )
                     clearance = min(nearest_behind, nearest_ahead)
                     if (
                         best_key is None
