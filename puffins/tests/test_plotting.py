@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
+from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
@@ -715,7 +716,10 @@ class TestLabelCurve:
             )
         assert len(axes.texts) == 0
 
-    @pytest.mark.parametrize("key", ["ha", "va", "transform", "rotation_mode", "bbox"])
+    @pytest.mark.parametrize(
+        "key",
+        ["ha", "va", "transform", "rotation_mode", "bbox", "fontdict", "wrap"],
+    )
     def test_keywords_set_here_raise(
         self, axes: matplotlib.axes.Axes, key: str
     ) -> None:
@@ -1003,6 +1007,38 @@ class TestLabelCurve:
         )
         assert label is not None
         self.check_beside(ax_, label, self.A, self.B, gap_pts=10.0)
+
+    def test_figure_made_without_pyplot(self) -> None:
+        """The canvas of a figure made without pyplot cannot draw, and the
+        layout is still settled before measuring.
+
+        With an equal aspect, measuring before the layout put the label 11.3
+        pixels from its curve once rendered, where the gap of 10 points is
+        13.9 pixels.
+
+        """
+        fig = matplotlib.figure.Figure(figsize=(4.0, 3.0), dpi=100)
+        ax_ = fig.subplots()
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        ax_.set_aspect("equal")
+        label = label_curve(
+            ax_, self.X, [self.A, self.B], 0, "rising", side="above", gap=10.0
+        )
+        assert label is not None
+        FigureCanvasAgg(fig)
+        self.check_beside(ax_, label, self.A, self.B, gap_pts=10.0)
+
+    def test_axes_on_a_subfigure(self) -> None:
+        """Axes on a subfigure are labeled, the layout settled through the
+        root figure."""
+        fig = plt.figure(figsize=(8.0, 3.0), dpi=100)
+        ax_ = fig.add_subfigure(fig.add_gridspec(1, 2)[0, 1]).subplots()
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        label = label_curve(ax_, self.X, [self.A, self.B], 0, "rising", side="above")
+        assert label is not None
+        self.check_beside(ax_, label, self.A, self.B)
 
     def test_left_edge_of_the_axes(self, axes: matplotlib.axes.Axes) -> None:
         """With x shown from 2, the lead 1 - 0.05x is largest at x = 2."""

@@ -475,7 +475,8 @@ def panel_label(
 
 # Curve labeling.
 # Keywords label_curve sets itself, or that would move the drawn text off the
-# box it checks.
+# box it checks: fontdict can carry any of the others, and wrap sets the text's
+# width by where it is drawn.
 _LABEL_KWARGS_SET_HERE = (
     "ha",
     "va",
@@ -484,6 +485,8 @@ _LABEL_KWARGS_SET_HERE = (
     "transform",
     "rotation_mode",
     "bbox",
+    "fontdict",
+    "wrap",
 )
 # Display pixels by which one candidate must beat another to be preferred, so
 # that leads equal but for rounding go to the leftmost.
@@ -630,7 +633,9 @@ def label_curve(
         Passed to ``Axes.text``, such as ``color`` and ``fontsize``.  The
         alignment, the transform, the rotation mode and a bounding-box patch
         are set here or would move the drawn text off the box checked, and
-        raise a ``ValueError`` if passed.
+        raise a ``ValueError`` if passed; so do ``fontdict``, which can carry
+        any of them, and ``wrap``, which sets the text's width by where it
+        is drawn.
 
     Returns
     -------
@@ -659,8 +664,12 @@ def label_curve(
         raise ValueError(f"which must index ys, of length {len(curves)}; got {which}")
     x_vals = np.where(np.ma.getmaskarray(x_masked), np.nan, x_vals)
     others_placed = [t for t in avoid if t is not None]
-    fig = ax.figure
-    fig.canvas.draw()
+    # The root figure, which a subfigure's axes reach through their subfigure;
+    # an Axes always belongs to one.
+    fig = cast(Figure, ax.get_figure(root=True))
+    # Settles the layout, such as an equal aspect, on any canvas: the canvas
+    # of a figure made without pyplot draws nothing.
+    fig.draw_without_rendering()
     # Measured at the axes' center, a point every axis scale can place.
     label = ax.text(
         0.5, 0.5, text, transform=ax.transAxes, ha="left", va="bottom", **text_kwargs
