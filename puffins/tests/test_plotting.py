@@ -1,6 +1,5 @@
 """Tests for the plotting module."""
 
-import copy
 import io
 from collections.abc import Iterator
 from typing import Any
@@ -15,7 +14,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
-from matplotlib.backends.backend_pdf import PdfFile, RendererPdf  # noqa: E402
+from matplotlib.backends.backend_pdf import RendererPdf  # noqa: E402
 from matplotlib.colors import BoundaryNorm, ListedColormap  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
@@ -185,22 +184,7 @@ class TestLabelCurve:
         return label.get_window_extent()
 
     @staticmethod
-    def pdf_extent(
-        ax_: matplotlib.axes.Axes, label: Text
-    ) -> matplotlib.transforms.Bbox:
-        """The label's box as matplotlib's PDF backend lays it out, at 72 dpi,
-        in the figure's display pixels; measured on a copy of the label."""
-        fig = ax_.get_figure(root=True)
-        assert fig is not None
-        width, height = fig.get_size_inches() * 72.0
-        renderer = RendererPdf(PdfFile(io.BytesIO()), 72, height, width)
-        box = copy.copy(label).get_window_extent(renderer=renderer, dpi=72.0)
-        return matplotlib.transforms.Bbox(box.get_points() * fig.dpi / 72.0)
-
-    @staticmethod
-    def saved_pdf_extent(
-        ax_: matplotlib.axes.Axes, text: Text
-    ) -> matplotlib.transforms.Bbox:
+    def pdf_extent(ax_: matplotlib.axes.Axes, text: Text) -> matplotlib.transforms.Bbox:
         """The text's box, an Annotation's arrow included, as matplotlib
         measures it while saving the figure to PDF, in the figure's display
         pixels; the canvas is drawn again afterwards."""
@@ -1072,7 +1056,7 @@ class TestLabelCurve:
             arrowprops={"arrowstyle": "->"},
         )
         assert note.arrow_patch is not None
-        note_pdf = self.saved_pdf_extent(ax_, note)
+        note_pdf = self.pdf_extent(ax_, note)
         note_canvas = self.extent(ax_, note)
         arrow_canvas = note.arrow_patch.get_window_extent()
         # The premise above: the arrow reaches past x = 5.
@@ -1084,7 +1068,7 @@ class TestLabelCurve:
         assert note.arrow_patch.get_window_extent().bounds == arrow_canvas.bounds
         assert note.get_window_extent().bounds == note_canvas.bounds
         label_canvas = self.extent(ax_, label)
-        label_pdf = self.saved_pdf_extent(ax_, label)
+        label_pdf = self.pdf_extent(ax_, label)
         for box in (label_canvas, label_pdf):
             assert not box.overlaps(note_canvas)
             assert not box.overlaps(note_pdf)
@@ -1202,7 +1186,7 @@ class TestLabelCurve:
             )
 
         label_canvas = self.extent(ax_, label)
-        label_pdf = self.saved_pdf_extent(ax_, label)
+        label_pdf = self.pdf_extent(ax_, label)
         # Inside the rectangle around the note and its arrow.
         assert label_canvas.x0 < note_canvas.x1
         for box in (label_canvas, label_pdf):
