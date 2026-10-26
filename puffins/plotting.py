@@ -524,16 +524,31 @@ def _pdf_extent(text: Text, renderer: RendererPdf) -> Bbox:
     if isinstance(measured, Annotation):
         measured.arrowprops = None
         measured.arrow_patch = None
-    canvas.manager = None
-    fig.dpi = 72.0
     try:
+        canvas.manager = None
+        fig.dpi = 72.0
         # The dpi argument of Text.get_window_extent sets the figure's dpi
         # with the window attached, and an Annotation's takes no dpi.
         box = measured.get_window_extent(renderer)
     finally:
-        fig.dpi = dpi
-        canvas.manager = manager
+        # The dpi first, with the window still detached; the window is
+        # reattached even if restoring the dpi raises.
+        try:
+            fig.dpi = dpi
+        finally:
+            canvas.manager = manager
     return Bbox(box.get_points() * dpi / 72.0)
+
+
+def _drawn(text: Text) -> bool:
+    """Whether the text is drawn: not hidden, and for an Annotation, not
+    clipped for having its point outside the axes, which draws neither its
+    text nor its arrow."""
+    if not text.get_visible():
+        return False
+    # Annotation.draw makes the same check, with a method its stubs omit.
+    check_xy = getattr(text, "_check_xy", None)
+    return check_xy is None or bool(check_xy())
 
 
 def _drawn_points(
@@ -630,12 +645,12 @@ def label_curve(
     side, it must lie wholly behind the labeled curve's extreme, or wholly
     beyond the label's far edge, by more than that distance from the label.
     So the label is clear of every curve and nearer the labeled one.  Of the
-    candidates lying wholly inside the axes and overlapping no text in
-    ``avoid``, the one where the labeled curve's extreme stands farthest from
-    the nearest other curve is taken, the leftmost on a tie, and above on a
-    tie at one point.  With ``side="auto"``, candidates on the side away from
-    the nearest other curve come first: one on the side toward it is taken
-    only when no candidate on the side away from it fits.
+    candidates lying wholly inside the axes and overlapping no text or arrow
+    in ``avoid``, the one where the labeled curve's extreme stands farthest
+    from the nearest other curve is taken, the leftmost on a tie, and above
+    on a tie at one point.  With ``side="auto"``, candidates on the side away
+    from the nearest other curve come first: one on the side toward it is
+    taken only when no candidate on the side away from it fits.
 
     A curve counts only where it is drawn: along segments between two finite
     points, so neither across a NaN gap, nor at a lone point between two
@@ -679,9 +694,15 @@ def label_curve(
         near edge; positive.
     avoid : sequence of matplotlib.text.Text or None
         Labels already placed, which this one must not overlap on the canvas
-        or in a PDF.  An Annotation's arrow counts as well, as the canvas
-        draws it.  None entries, as from earlier calls that placed nothing,
-        are skipped.
+        or in a PDF.  An Annotation's arrow counts as well, as the path the
+        canvas draws it along, widened by half its line width either side.
+        An Annotation positioned in pixels, by ``"figure pixels"``,
+        ``"axes pixels"`` or ``"offset pixels"``, has its arrow elsewhere in
+        a PDF, where the label can overlap it.  Measuring an Annotation
+        positioned relative to another artist leaves that artist's own
+        measurement wrong until the next draw, so list that artist before
+        the Annotation.  Texts not drawn, being hidden or clipped, and None
+        entries, as from earlier calls that placed nothing, are skipped.
     **text_kwargs
         Passed to ``Axes.text``, such as ``color`` and ``fontsize``.  The
         alignment, the transform, the rotation mode and a bounding-box patch
@@ -739,10 +760,22 @@ def label_curve(
         # The farthest the labeled curve can be from the label: at a corner of
         # the narrower of the two, with its extreme up to gap past the wider.
         reach = float(np.hypot(gap_px, gap_px + abs(on_canvas.width - in_pdf.width)))
+        avoided = [t for t in avoid if t is not None and _drawn(t)]
+        # Each text's own box, without an Annotation's arrow, which
+        # Text.get_window_extent leaves out.
         others_placed = [
-            Bbox.union([t.get_window_extent(), _pdf_extent(t, pdf_renderer)])
-            for t in avoid
-            if t is not None
+            Bbox.union([Text.get_window_extent(t), _pdf_extent(t, pdf_renderer)])
+            for t in avoided
+        ]
+        # Each arrow as the path the canvas draws, with half its line width,
+        # by which a label must clear the path.
+        arrows = [
+            (
+                t.arrow_patch.get_transform().transform_path(t.arrow_patch.get_path()),
+                t.arrow_patch.get_linewidth() * fig.dpi / 72.0 / 2.0,
+            )
+            for t in avoided
+            if isinstance(t, Annotation) and t.arrow_patch is not None
         ]
         # Display x from x alone: a NaN y makes the transform's x NaN as well,
         # which would drop the other curves' points where the labeled one is
@@ -800,7 +833,12 @@ def label_curve(
                     if y_lo < frame.y0 or y_hi > frame.y1:
                         continue
                     box = Bbox([[left, y_lo], [right, y_hi]])
-                    if any(box.overlaps(placed_box) for placed_box in others_placed):
+                    if any(
+                        box.overlaps(placed_box) for placed_box in others_placed
+                    ) or any(
+                        path.intersects_bbox(box.padded(half_width))
+                        for path, half_width in arrows
+                    ):
                         continue
                     nearest_behind = min(behind, default=np.inf)
                     nearest_ahead = min(ahead, default=np.inf)

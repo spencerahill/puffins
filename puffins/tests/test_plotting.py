@@ -1056,7 +1056,7 @@ class TestLabelCurve:
         The note sits on the one curve at the left, with an arrow running
         right from it to x = 6, through the heights a label above the curve
         takes.  Of points 0.005 apart, about 0.15 pixels, the label starts at
-        the first past the arrow's end.
+        the first past the arrow's end by half the arrow's line width.
 
         """
         _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
@@ -1088,7 +1088,9 @@ class TestLabelCurve:
         for box in (label_canvas, label_pdf):
             assert not box.overlaps(note_canvas)
             assert not box.overlaps(note_pdf)
-        assert 0.0 < label_canvas.x0 - max(note_canvas.x1, note_pdf.x1) < 1.0
+        half_width = note.arrow_patch.get_linewidth() * 100 / 72.0 / 2.0
+        past_end = label_canvas.x0 - max(note_canvas.x1, note_pdf.x1)
+        assert 0.0 < past_end - half_width < 1.0
 
     def test_resizes_no_window(
         self, axes: matplotlib.axes.Axes, monkeypatch: pytest.MonkeyPatch
@@ -1117,6 +1119,133 @@ class TestLabelCurve:
         assert resizes == []
         assert fig.dpi == dpi
         assert fig.canvas.manager is manager
+
+    def test_restores_the_figure_when_measuring_raises(
+        self, axes: matplotlib.axes.Axes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An error while measuring a text's PDF layout leaves the figure's dpi,
+        its window manager and the axes' texts as they were."""
+        fig = axes.get_figure(root=True)
+        assert fig is not None
+        manager, dpi, n_texts = fig.canvas.manager, fig.dpi, len(axes.texts)
+
+        def fail(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("measuring failed")
+
+        monkeypatch.setattr(RendererPdf, "get_text_width_height_descent", fail)
+        with pytest.raises(RuntimeError, match="measuring failed"):
+            label_curve(axes, self.X, [self.A, self.B], 0, "rising")
+        assert fig.dpi == dpi
+        assert fig.canvas.manager is manager
+        assert len(axes.texts) == n_texts
+
+    def test_restores_the_figure_when_changing_its_dpi_raises(
+        self, axes: matplotlib.axes.Axes
+    ) -> None:
+        """An error while the figure's window is detached, here from the
+        figure's stale callback each time the dpi changes, leaves the figure's
+        dpi and window manager as they were.
+
+        The error is raised both on setting the figure to 72 dpi and on
+        restoring its dpi, so the window manager is reattached after a second
+        error.
+
+        """
+        fig = axes.get_figure(root=True)
+        assert fig is not None
+        manager, dpi = fig.canvas.manager, fig.dpi
+
+        def fail_while_detached(artist: Any, val: bool) -> None:
+            if fig.canvas.manager is None:
+                raise RuntimeError("redraw failed")
+
+        fig.stale_callback = fail_while_detached
+        with pytest.raises(RuntimeError, match="redraw failed"):
+            label_curve(axes, self.X, [self.A, self.B], 0, "rising")
+        assert fig.dpi == dpi
+        assert fig.canvas.manager is manager
+
+    def test_avoid_an_arrow_as_its_line(self) -> None:
+        """An avoided arrow blocks the line it is drawn along, widened by half
+        its line width, and leaves free the rest of the rectangle around it.
+
+        The note sits at the top left, with a steep arrow running down from it
+        through the heights a label above the one curve takes, near x = 0.7.
+        The rectangle around the note and its arrow reaches x = 1.  Of points
+        0.005 apart, about 0.15 pixels, the label starts at the first whose
+        box clears the arrow's line by half the line's width, measured here
+        exactly from the line's segments to the box.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        x = np.linspace(0.0, 10.0, 2001)
+        own = np.ones_like(x)
+        note = ax_.annotate(
+            "note", xy=(1.0, -0.8), xytext=(0.2, 4.5), arrowprops={"arrowstyle": "->"}
+        )
+        label = label_curve(ax_, x, [own], 0, "rising", side="above", avoid=[note])
+        assert label is not None
+        note_canvas = self.extent(ax_, note)
+        arrow = note.arrow_patch
+        assert arrow is not None
+        path = arrow.get_transform().transform_path(arrow.get_path())
+        lines = [np.asarray(line) for line in path.to_polygons(closed_only=False)]
+        half_width = arrow.get_linewidth() * 100 / 72.0 / 2.0
+
+        def clearance(box: matplotlib.transforms.Bbox) -> float:
+            return min(
+                self.segment_box_distance(p, q, box)
+                for line in lines
+                for p, q in zip(line[:-1], line[1:], strict=True)
+            )
+
+        label_canvas = self.extent(ax_, label)
+        label_pdf = self.saved_pdf_extent(ax_, label)
+        # Inside the rectangle around the note and its arrow.
+        assert label_canvas.x0 < note_canvas.x1
+        for box in (label_canvas, label_pdf):
+            assert clearance(box) >= half_width
+        both = matplotlib.transforms.Bbox.union([label_canvas, label_pdf])
+        assert clearance(both) < half_width + 0.3
+
+    @pytest.mark.parametrize("not_drawn", ["hidden", "clipped"])
+    def test_skips_texts_not_drawn(self, not_drawn: str) -> None:
+        """A text in ``avoid`` that is not drawn is not avoided, nor is its
+        arrow.
+
+        The note sits at x = 6, with an arrow running left from it to x = 0,
+        through the heights a label above the one curve takes, so the two push
+        the label past x = 5.  The note is then hidden, or clipped by moving
+        the point it annotates outside the axes; its arrow keeps the place it
+        was last drawn in, across the leftmost point.  The label then takes
+        that point, x = 0, as with nothing to avoid.
+
+        """
+        _, ax_ = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+        ax_.set_xlim(0.0, 10.0)
+        ax_.set_ylim(-1.0, 5.0)
+        x = np.linspace(0.0, 10.0, 2001)
+        own = np.ones_like(x)
+        note = ax_.annotate(
+            "note",
+            xy=(0.0, 1.3),
+            xytext=(6.0, 1.3),
+            va="center",
+            arrowprops={"arrowstyle": "->"},
+        )
+        shown = label_curve(ax_, x, [own], 0, "a", side="above", avoid=[note])
+        assert shown is not None
+        assert shown.get_position()[0] > 5.0
+        shown.remove()
+        if not_drawn == "hidden":
+            note.set_visible(False)
+        else:
+            note.xy = (20.0, 1.3)
+        label = label_curve(ax_, x, [own], 0, "a", side="above", avoid=[note])
+        assert label is not None
+        assert label.get_position()[0] == 0.0
 
     def test_label_wider_in_a_pdf(self) -> None:
         """A label wider in a PDF than on the canvas is placed by its PDF
