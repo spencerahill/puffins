@@ -1,5 +1,7 @@
 """Tests for the stats module."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,6 +11,7 @@ import sklearn.metrics
 import xarray as xr
 from sklearn import linear_model
 from statsmodels.distributions.empirical_distribution import ECDF
+from statsmodels.tsa.stattools import acf
 
 from puffins.names import LAT_STR, LON_STR, YEAR_STR
 from puffins.stats import (
@@ -21,11 +24,13 @@ from puffins.stats import (
     corr_detrended,
     detrend,
     dt_std_anom,
+    eff_sample_size,
     eof_solver,
     false_disc_rate_thresh_pval,
     half_year_symmetry,
     hist,
     hist2d,
+    lag1_autocorr,
     lag_corr,
     lin_regress,
     merid_centroid,
@@ -426,6 +431,107 @@ class TestAutocorr:
         assert isinstance(result, xr.DataArray)
         assert result.dims == ("lag",)
         np.testing.assert_allclose(result.sel(lag=0).item(), 1.0)
+
+
+class TestLag1Autocorr:
+    """Tests for lag1_autocorr."""
+
+    def test_known_value(self) -> None:
+        """[1, 2, 3, 4]: anomalies -1.5, -0.5, 0.5, 1.5, so r1 = 1.25 / 5."""
+        r1 = lag1_autocorr(_timeseries(np.array([1.0, 2.0, 3.0, 4.0])))
+        np.testing.assert_allclose(r1.item(), 0.25)
+
+    def test_matches_statsmodels_acf(self) -> None:
+        """Agrees with statsmodels' acf at lag 1, an independent implementation."""
+        vals = np.random.default_rng(4).standard_normal(50).cumsum()
+        expected = acf(vals, nlags=1, fft=False)[1]
+        np.testing.assert_allclose(lag1_autocorr(_timeseries(vals)).item(), expected)
+
+    def test_other_dims_and_dim_not_first(self) -> None:
+        """Each point of another dimension gets its own r1, whatever the axis order."""
+        vals = np.random.default_rng(5).standard_normal((3, 40))
+        arr = xr.DataArray(
+            vals,
+            dims=[LAT_STR, "time"],
+            coords={LAT_STR: [-10.0, 0.0, 10.0], "time": np.arange(40)},
+        )
+        expected = [acf(row, nlags=1, fft=False)[1] for row in vals]
+        result = lag1_autocorr(arr, "time")
+        assert result.dims == (LAT_STR,)
+        np.testing.assert_allclose(result.values, expected)
+        np.testing.assert_allclose(lag1_autocorr(arr.T, "time").values, expected)
+
+    def test_zero_variance_is_nan_without_warning(self) -> None:
+        """A constant series has no autocorrelation to estimate."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            r1 = lag1_autocorr(_timeseries(np.full(10, 3.0)))
+        assert np.isnan(r1.item())
+
+    def test_nan_propagates(self) -> None:
+        """A NaN in the series gives NaN rather than being skipped."""
+        vals = np.random.default_rng(6).standard_normal(20)
+        vals[7] = np.nan
+        assert np.isnan(lag1_autocorr(_timeseries(vals)).item())
+
+    def test_2d_without_dim_raises(self) -> None:
+        arr = xr.DataArray(np.zeros((2, 5)), dims=[LAT_STR, "time"])
+        with pytest.raises(ValueError):
+            lag1_autocorr(arr)
+
+
+class TestEffSampleSize:
+    """Tests for eff_sample_size."""
+
+    def test_known_value(self) -> None:
+        """[1, 2, 3, 4] has r1 = 0.25, so n_eff = 4 * 0.75 / 1.25."""
+        n_eff = eff_sample_size(_timeseries(np.array([1.0, 2.0, 3.0, 4.0])))
+        np.testing.assert_allclose(n_eff.item(), 2.4)
+
+    def test_matches_formula_from_statsmodels_r1(self) -> None:
+        """n (1 - r1) / (1 + r1) with r1 from statsmodels, for a positively correlated series."""
+        vals = np.random.default_rng(7).standard_normal(200)
+        vals = vals + np.roll(vals, 1)  # a moving sum, r1 near 0.5
+        r1 = acf(vals, nlags=1, fft=False)[1]
+        assert 0.3 < r1 < 0.7
+        expected = 200 * (1.0 - r1) / (1.0 + r1)
+        np.testing.assert_allclose(eff_sample_size(_timeseries(vals)).item(), expected)
+
+    def test_negative_r1_gives_n(self) -> None:
+        """An alternating series has r1 < 0, which is set to 0, so n_eff = n."""
+        vals = np.tile([1.0, -1.0], 10)
+        assert lag1_autocorr(_timeseries(vals)).item() < 0
+        np.testing.assert_allclose(eff_sample_size(_timeseries(vals)).item(), 20.0)
+
+    def test_max_lag1_caps_r1(self) -> None:
+        """A ramp has r1 above 0.5, so with max_lag1 = 0.5, n_eff = n * 0.5 / 1.5."""
+        vals = np.arange(30.0)
+        assert lag1_autocorr(_timeseries(vals)).item() > 0.5
+        n_eff = eff_sample_size(_timeseries(vals), max_lag1=0.5)
+        np.testing.assert_allclose(n_eff.item(), 10.0)
+
+    def test_default_cap(self) -> None:
+        """Below the default cap of 0.99 the ramp's own r1 is used."""
+        vals = np.arange(30.0)
+        r1 = lag1_autocorr(_timeseries(vals)).item()
+        assert r1 < 0.99
+        np.testing.assert_allclose(
+            eff_sample_size(_timeseries(vals)).item(), 30 * (1 - r1) / (1 + r1)
+        )
+
+    def test_other_dims(self) -> None:
+        """Each point of another dimension gets its own n_eff."""
+        vals = np.random.default_rng(8).standard_normal((2, 60)).cumsum(axis=1)
+        arr = xr.DataArray(vals, dims=[LAT_STR, "time"])
+        r1 = np.clip([acf(row, nlags=1, fft=False)[1] for row in vals], 0.0, 0.99)
+        np.testing.assert_allclose(
+            eff_sample_size(arr, "time").values, 60 * (1 - r1) / (1 + r1)
+        )
+
+    @pytest.mark.parametrize("max_lag1", [-0.1, 1.0])
+    def test_invalid_max_lag1_raises(self, max_lag1: float) -> None:
+        with pytest.raises(ValueError):
+            eff_sample_size(_timeseries(np.arange(5.0)), max_lag1=max_lag1)
 
 
 class TestHalfYearSymmetry:

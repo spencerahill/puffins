@@ -289,6 +289,65 @@ def autocorr(
     )
 
 
+def lag1_autocorr(arr: xr.DataArray, dim: str | None = None) -> xr.DataArray:
+    """Lag-1 autocorrelation along a dimension, by the standard sample estimator.
+
+    With ``a`` the deviation of ``arr`` from its mean along ``dim`` and ``n``
+    the length of ``dim``::
+
+        r1 = sum_{t=1}^{n-1} a_t a_{t+1} / sum_{t=1}^{n} a_t**2
+
+    This is the estimator of ``statsmodels.tsa.stattools.acf`` at lag 1,
+    computed here at every point of the other dimensions at once.  It is not
+    ``autocorr(arr, 1)``, which is the Pearson correlation of ``arr[:-1]``
+    with ``arr[1:]``: that removes a separate mean from each of the two and
+    divides by their own standard deviations.  For ``[1, 2, 3, 4]`` this
+    function gives 0.25 and ``autocorr`` gives 1.
+
+    A series with zero variance along ``dim`` gives NaN, and so does a series
+    containing NaN.
+
+    """
+    dim = _infer_dim_if_1d(arr, dim)
+    anom = arr - arr.mean(dim)
+    # Drop the coordinate along dim, so that the two offset slices multiply
+    # position by position rather than aligning on their coordinate values.
+    head = anom.isel({dim: slice(None, -1)}).drop_vars(dim, errors="ignore")
+    tail = anom.isel({dim: slice(1, None)}).drop_vars(dim, errors="ignore")
+    num = (head * tail).sum(dim, skipna=False)
+    den = (anom**2).sum(dim, skipna=False)
+    return cast(xr.DataArray, (num / den.where(den > 0)).rename("lag1_autocorr"))
+
+
+def eff_sample_size(
+    arr: xr.DataArray, dim: str | None = None, max_lag1: float = 0.99
+) -> xr.DataArray:
+    """Sample size along a dimension, reduced for lag-1 autocorrelation.
+
+    ``n_eff = n (1 - r1) / (1 + r1)``, where ``n`` is the length of ``dim``
+    and ``r1`` is ``lag1_autocorr(arr, dim)`` clipped to ``[0, max_lag1]``.
+
+    For a first-order autoregressive series with lag-1 autocorrelation ``r``
+    and variance ``sigma**2``, the variance of the sample mean is
+    ``sigma**2 / n * [1 + 2 sum_{k=1}^{n-1} (1 - k/n) r**k]``, which for
+    large ``n`` tends to ``sigma**2 / n * (1 + r) / (1 - r)``.  ``n_eff`` is
+    the number of independent samples whose mean would have that variance,
+    so ``sigma / sqrt(n_eff)`` estimates the standard error of the mean.
+
+    A negative ``r1`` is set to 0, so ``n_eff`` never exceeds ``n``.  The cap
+    ``max_lag1`` keeps ``n_eff`` at or above ``n (1 - max_lag1) / (1 +
+    max_lag1)``, which is ``n / 199`` at the default.  Zero variance or a NaN
+    along ``dim`` gives NaN, as in ``lag1_autocorr``.
+
+    """
+    if not 0.0 <= max_lag1 < 1.0:
+        raise ValueError(f"max_lag1 must be in [0, 1), got {max_lag1}")
+    dim = _infer_dim_if_1d(arr, dim)
+    r1 = lag1_autocorr(arr, dim).clip(0.0, max_lag1)
+    n = arr.sizes[dim]
+    return cast(xr.DataArray, (n * (1.0 - r1) / (1.0 + r1)).rename("eff_sample_size"))
+
+
 @overload
 def half_year_symmetry(
     arr: xr.DataArray, dim: str = ..., axis: int = ...
