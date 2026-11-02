@@ -304,19 +304,27 @@ def lag1_autocorr(arr: xr.DataArray, dim: str | None = None) -> xr.DataArray:
     divides by their own standard deviations.  For ``[1, 2, 3, 4]`` this
     function gives 0.25 and ``autocorr`` gives 1.
 
-    A series with zero variance along ``dim`` gives NaN, and so does a series
-    containing NaN.
+    A constant series gives NaN, and so does a series containing NaN.  The
+    test for a constant is that the maximum equals the minimum, since the
+    anomalies of a constant whose floating-point mean is inexact are all the
+    same rounding residual and would otherwise give ``(n - 1) / n``.
+
+    The input's attributes, such as its units, are not carried over.
 
     """
     dim = _infer_dim_if_1d(arr, dim)
     anom = arr - arr.mean(dim)
-    # Drop the coordinate along dim, so that the two offset slices multiply
-    # position by position rather than aligning on their coordinate values.
-    head = anom.isel({dim: slice(None, -1)}).drop_vars(dim, errors="ignore")
-    tail = anom.isel({dim: slice(1, None)}).drop_vars(dim, errors="ignore")
+    # Drop every coordinate along dim, indexed or not, so that the two offset
+    # slices multiply position by position rather than aligning on labels.
+    along = [name for name, coord in anom.coords.items() if dim in coord.dims]
+    head = anom.isel({dim: slice(None, -1)}).drop_vars(along)
+    tail = anom.isel({dim: slice(1, None)}).drop_vars(along)
     num = (head * tail).sum(dim, skipna=False)
     den = (anom**2).sum(dim, skipna=False)
-    return cast(xr.DataArray, (num / den.where(den > 0)).rename("lag1_autocorr"))
+    varies = arr.max(dim, skipna=False) > arr.min(dim, skipna=False)
+    r1 = (num / den.where(varies)).rename("lag1_autocorr")
+    r1.attrs = {}
+    return cast(xr.DataArray, r1)
 
 
 def eff_sample_size(
@@ -333,11 +341,13 @@ def eff_sample_size(
     large ``n`` tends to ``sigma**2 / n * (1 + r) / (1 - r)``.  ``n_eff`` is
     the number of independent samples whose mean would have that variance,
     so ``sigma / sqrt(n_eff)`` estimates the standard error of the mean.
+    For a short series that estimate is too small: the sample ``r1`` is
+    biased low, so ``n_eff`` is biased high.
 
     A negative ``r1`` is set to 0, so ``n_eff`` never exceeds ``n``.  The cap
     ``max_lag1`` keeps ``n_eff`` at or above ``n (1 - max_lag1) / (1 +
-    max_lag1)``, which is ``n / 199`` at the default.  Zero variance or a NaN
-    along ``dim`` gives NaN, as in ``lag1_autocorr``.
+    max_lag1)``, which is ``n / 199`` at the default.  A constant series or
+    a NaN along ``dim`` gives NaN, as in ``lag1_autocorr``.
 
     """
     if not 0.0 <= max_lag1 < 1.0:

@@ -479,6 +479,64 @@ class TestLag1Autocorr:
         with pytest.raises(ValueError):
             lag1_autocorr(arr)
 
+    @pytest.mark.parametrize("value, n", [(0.1, 7), (288.15, 12), (1 / 3, 30)])
+    def test_constant_with_inexact_mean_is_nan(self, value: float, n: int) -> None:
+        """A constant whose float mean is inexact has anomalies all equal to one
+        rounding residual, which must not give (n - 1) / n."""
+        vals = np.full(n, value)
+        assert vals.mean() != value
+        assert np.isnan(lag1_autocorr(_timeseries(vals)).item())
+
+    def test_ramp_exact(self) -> None:
+        """For a ramp of length n the estimator gives exactly 1 - 3 / n."""
+        np.testing.assert_allclose(
+            lag1_autocorr(_timeseries(np.arange(600.0))).item(), 0.995
+        )
+
+    def test_scale_and_offset_invariant(self) -> None:
+        """Neither a tiny scale nor a large offset changes r1."""
+        x = np.random.default_rng(9).standard_normal(20)
+        r1 = lag1_autocorr(_timeseries(x)).item()
+        np.testing.assert_allclose(lag1_autocorr(_timeseries(1e-8 * x)).item(), r1)
+        np.testing.assert_allclose(
+            lag1_autocorr(_timeseries(300.0 + 1e-4 * x)).item(), r1, rtol=1e-6
+        )
+
+    def test_indexed_coords_along_dim(self) -> None:
+        """An index on another coordinate along dim, unique or repeated, does not
+        make the offset slices align."""
+        vals = np.random.default_rng(10).standard_normal(36).cumsum()
+        expected = acf(vals, nlags=1, fft=False)[1]
+        arr = _timeseries(vals)
+        label = arr.assign_coords(label=("time", np.arange(100, 136))).set_xindex(
+            "label"
+        )
+        month = arr.assign_coords(month=("time", np.tile(np.arange(1, 13), 3)))
+        month = month.set_xindex("month")
+        np.testing.assert_allclose(lag1_autocorr(label, "time").item(), expected)
+        np.testing.assert_allclose(lag1_autocorr(month, "time").item(), expected)
+
+    def test_multiindex_along_dim_without_warning(self) -> None:
+        """A stacked (year, month) dimension gives the statsmodels value and no
+        warning about dropping one level of the MultiIndex."""
+        vals = np.random.default_rng(11).standard_normal(36).cumsum()
+        arr = xr.DataArray(
+            vals.reshape(3, 12),
+            dims=["year", "month"],
+            coords={"year": [1, 2, 3], "month": np.arange(1, 13)},
+        ).stack(time=("year", "month"))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            r1 = lag1_autocorr(arr, "time").item()
+        np.testing.assert_allclose(r1, acf(vals, nlags=1, fft=False)[1])
+
+    def test_name_and_no_attrs(self) -> None:
+        """r1 is named, and does not carry the input's units."""
+        arr = _timeseries(np.arange(10.0)).assign_attrs(units="K")
+        r1 = lag1_autocorr(arr)
+        assert r1.name == "lag1_autocorr"
+        assert r1.attrs == {}
+
 
 class TestEffSampleSize:
     """Tests for eff_sample_size."""
@@ -532,6 +590,56 @@ class TestEffSampleSize:
     def test_invalid_max_lag1_raises(self, max_lag1: float) -> None:
         with pytest.raises(ValueError):
             eff_sample_size(_timeseries(np.arange(5.0)), max_lag1=max_lag1)
+
+    def test_max_lag1_zero_gives_n(self) -> None:
+        """max_lag1 = 0 is allowed, and caps r1 at 0."""
+        np.testing.assert_allclose(
+            eff_sample_size(_timeseries(np.arange(30.0)), max_lag1=0.0).item(), 30.0
+        )
+
+    def test_default_cap_binds(self) -> None:
+        """A 600-point ramp has r1 = 0.995, above the default cap of 0.99."""
+        np.testing.assert_allclose(
+            eff_sample_size(_timeseries(np.arange(600.0))).item(), 600 * 0.01 / 1.99
+        )
+
+    def test_constant_and_nan_give_nan(self) -> None:
+        """NaN from lag1_autocorr passes through the clip, rather than becoming n."""
+        vals = np.random.default_rng(12).standard_normal(20)
+        vals[7] = np.nan
+        assert np.isnan(eff_sample_size(_timeseries(np.full(10, 3.0))).item())
+        assert np.isnan(eff_sample_size(_timeseries(np.full(12, 288.15))).item())
+        assert np.isnan(eff_sample_size(_timeseries(vals)).item())
+
+    def test_dim_not_last(self) -> None:
+        """n is the length of dim, wherever dim is."""
+        vals = np.random.default_rng(13).standard_normal((3, 40)).cumsum(axis=1)
+        arr = xr.DataArray(vals, dims=[LAT_STR, "time"])
+        np.testing.assert_allclose(
+            eff_sample_size(arr.T, "time").values, eff_sample_size(arr, "time").values
+        )
+
+    def test_2d_without_dim_raises(self) -> None:
+        arr = xr.DataArray(np.zeros((2, 5)), dims=[LAT_STR, "time"])
+        with pytest.raises(ValueError):
+            eff_sample_size(arr)
+
+    def test_name_and_no_attrs(self) -> None:
+        arr = _timeseries(np.arange(10.0)).assign_attrs(units="K")
+        n_eff = eff_sample_size(arr)
+        assert n_eff.name == "eff_sample_size"
+        assert n_eff.attrs == {}
+
+    def test_variance_of_mean_for_ar1(self) -> None:
+        """sigma**2 / n_eff matches the variance of the sample mean over many
+        first-order autoregressive series (phi = 0.5, n = 400)."""
+        phi, n, members = 0.5, 400, 4000
+        eps = np.random.default_rng(0).standard_normal((members, n + 200))
+        x = scipy.signal.lfilter([1.0], [1.0, -phi], eps, axis=1)[:, 200:]
+        n_eff = eff_sample_size(xr.DataArray(x, dims=["member", "time"]), "time")
+        sigma2 = 1.0 / (1.0 - phi**2)
+        ratio = (sigma2 / n_eff.mean().item()) / x.mean(axis=1).var(ddof=1)
+        assert 0.85 < ratio < 1.15
 
 
 class TestHalfYearSymmetry:
