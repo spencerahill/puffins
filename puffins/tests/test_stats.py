@@ -487,6 +487,41 @@ class TestLag1Autocorr:
         assert vals.mean() != value
         assert np.isnan(lag1_autocorr(_timeseries(vals)).item())
 
+    @pytest.mark.parametrize("value, n", [(0.1, 30), (288.15, 12), (1 / 3, 30)])
+    def test_near_constant_gives_exact_value(self, value: float, n: int) -> None:
+        """One interior value raised by the smallest float step gets the exact r1
+        of the stored values, -(n + 1) / (n (n - 1)), whatever the step's size.
+
+        Removing the floating-point mean directly gave 0.957 for 0.1 and 1/3
+        and 0.818 for 288.15, because that mean's rounding error is as large
+        as the step.
+
+        """
+        vals = np.full(n, value)
+        vals[n // 2] = np.nextafter(value, np.inf)
+        np.testing.assert_allclose(
+            lag1_autocorr(_timeseries(vals)).item(),
+            -(n + 1) / (n * (n - 1)),
+            rtol=1e-12,
+        )
+
+    def test_extreme_magnitudes(self) -> None:
+        """Values near 1e-170 or 1e160 give the same r1, with no warning, where
+        squaring them directly underflows or overflows."""
+        x = np.random.default_rng(9).standard_normal(20)
+        r1 = lag1_autocorr(_timeseries(x)).item()
+        for factor in (1e-170, 1e160):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                scaled = lag1_autocorr(_timeseries(factor * x)).item()
+            np.testing.assert_allclose(scaled, r1, rtol=1e-12)
+
+    def test_empty_dim_raises(self) -> None:
+        with pytest.raises(ValueError, match="length 0"):
+            lag1_autocorr(_timeseries(np.array([])))
+        with pytest.raises(ValueError, match="length 0"):
+            eff_sample_size(_timeseries(np.array([])))
+
     def test_ramp_exact(self) -> None:
         """For a ramp of length n the estimator gives exactly 1 - 3 / n."""
         np.testing.assert_allclose(
@@ -641,6 +676,23 @@ class TestEffSampleSize:
         ratio = (sigma2 / n_eff.mean().item()) / x.mean(axis=1).var(ddof=1)
         assert 0.85 < ratio < 1.15
 
+    @pytest.mark.parametrize(
+        "phi, low, high, seed", [(0.0, 1.14, 1.18, 14), (0.5, 0.84, 0.88, 15)]
+    )
+    def test_short_series_bias_direction(
+        self, phi: float, low: float, high: float, seed: int
+    ) -> None:
+        """For length-20 first-order autoregressive series, sigma**2 / n_eff
+        overestimates the variance of the mean by about 16% at phi = 0 and
+        underestimates it by about 14% at phi = 0.5, as the docstring says."""
+        n, members = 20, 100_000
+        eps = np.random.default_rng(seed).standard_normal((members, n + 200))
+        x = scipy.signal.lfilter([1.0], [1.0, -phi], eps, axis=1)[:, 200:]
+        n_eff = eff_sample_size(xr.DataArray(x, dims=["member", "time"]), "time")
+        sigma2 = 1.0 / (1.0 - phi**2)
+        implied = sigma2 * (1.0 / n_eff).mean().item()
+        assert low < implied / x.mean(axis=1).var(ddof=1) < high
+
 
 class TestHalfYearSymmetry:
     """Tests for half_year_symmetry (lag-6 autocorrelation rho_6)."""
@@ -687,6 +739,25 @@ class TestHalfYearSymmetry:
     def test_constant_cycle_is_nan(self) -> None:
         """A constant (zero-variance) cycle returns NaN, not an error."""
         assert np.isnan(half_year_symmetry(np.ones(12)))
+
+    @pytest.mark.parametrize("value", [0.1, 288.15])
+    def test_constant_cycle_with_inexact_mean_is_nan(self, value: float) -> None:
+        """A constant whose float mean is inexact is still NaN, not the +1 that
+        one rounding residual repeated in every month would give."""
+        x = np.full(12, value)
+        assert x.mean() != value
+        assert np.isnan(half_year_symmetry(x))
+
+    @pytest.mark.parametrize("value", [0.1, 288.15])
+    @pytest.mark.parametrize("month", [0, 5, 11])
+    def test_near_constant_cycle_gives_exact_value(
+        self, value: float, month: int
+    ) -> None:
+        """One month raised by the smallest float step gives the exact rho_6 of
+        the stored values, -1/11, whatever the step's size."""
+        x = np.full(12, value)
+        x[month] = np.nextafter(value, np.inf)
+        np.testing.assert_allclose(half_year_symmetry(x), -1.0 / 11.0, rtol=1e-12)
 
     def test_wrong_length_raises(self) -> None:
         """A month axis not of length 12 raises ValueError."""

@@ -304,25 +304,39 @@ def lag1_autocorr(arr: xr.DataArray, dim: str | None = None) -> xr.DataArray:
     divides by their own standard deviations.  For ``[1, 2, 3, 4]`` this
     function gives 0.25 and ``autocorr`` gives 1.
 
-    A constant series gives NaN, and so does a series containing NaN.  The
-    test for a constant is that the maximum equals the minimum, since the
-    anomalies of a constant whose floating-point mean is inexact are all the
-    same rounding residual and would otherwise give ``(n - 1) / n``.
+    The first value is subtracted before the mean is removed.  That
+    subtraction is exact for values close to the first, so the mean of a
+    nearly constant series has no rounding error comparable to the series'
+    own variation.  A series that varies only by rounding error therefore
+    gets the exact autocorrelation of its stored values, which says nothing
+    about the quantity they represent, and a constant series gets anomalies
+    of exactly zero and gives NaN.  The anomalies are divided by their
+    largest magnitude before the sums, so that the sums neither overflow nor
+    underflow.
 
-    The input's attributes, such as its units, are not carried over.
+    A series containing NaN gives NaN, and a zero-length ``dim`` raises
+    ValueError.  The input's attributes, such as its units, are not carried
+    over.
 
     """
     dim = _infer_dim_if_1d(arr, dim)
-    anom = arr - arr.mean(dim)
+    if arr.sizes[dim] == 0:
+        raise ValueError(f"dimension '{dim}' has length 0")
+    anom = anomaly(arr - arr.isel({dim: 0}, drop=True), dim)
+    # The largest magnitude, from two reductions rather than a full-size abs().
+    # A constant series has scale 0 and becomes NaN here, with no 0 / 0; any
+    # other series then has a sum of squares of at least 1.
+    scale = cast(xr.DataArray, np.maximum(anom.max(dim), -anom.min(dim)))
+    anom = anom / scale.where(scale > 0)
     # Drop every coordinate along dim, indexed or not, so that the two offset
     # slices multiply position by position rather than aligning on labels.
     along = [name for name, coord in anom.coords.items() if dim in coord.dims]
     head = anom.isel({dim: slice(None, -1)}).drop_vars(along)
     tail = anom.isel({dim: slice(1, None)}).drop_vars(along)
-    num = (head * tail).sum(dim, skipna=False)
-    den = (anom**2).sum(dim, skipna=False)
-    varies = arr.max(dim, skipna=False) > arr.min(dim, skipna=False)
-    r1 = (num / den.where(varies)).rename("lag1_autocorr")
+    # xr.dot propagates NaN, as sum(skipna=False) would.
+    num = xr.dot(head, tail, dim=dim)
+    den = xr.dot(anom, anom, dim=dim)
+    r1 = (num / den).rename("lag1_autocorr")
     r1.attrs = {}
     return cast(xr.DataArray, r1)
 
@@ -341,13 +355,23 @@ def eff_sample_size(
     large ``n`` tends to ``sigma**2 / n * (1 + r) / (1 - r)``.  ``n_eff`` is
     the number of independent samples whose mean would have that variance,
     so ``sigma / sqrt(n_eff)`` estimates the standard error of the mean.
-    For a short series that estimate is too small: the sample ``r1`` is
-    biased low, so ``n_eff`` is biased high.
+    For a short series that estimate is biased, in a direction that depends
+    on ``r``.  The sample ``r1`` is biased low, which raises ``n_eff``, and a
+    negative ``r1`` is set to 0, which lowers it.  Over first-order
+    autoregressive series of length 20, ``sigma**2 / n_eff`` overestimates
+    the variance of the mean by about 16% for ``r = 0`` and underestimates it
+    by about 14% for ``r = 0.5``.
 
-    A negative ``r1`` is set to 0, so ``n_eff`` never exceeds ``n``.  The cap
-    ``max_lag1`` keeps ``n_eff`` at or above ``n (1 - max_lag1) / (1 +
-    max_lag1)``, which is ``n / 199`` at the default.  A constant series or
-    a NaN along ``dim`` gives NaN, as in ``lag1_autocorr``.
+    Because a negative ``r1`` is set to 0, ``n_eff`` never exceeds ``n``.
+    The cap ``max_lag1`` keeps ``n_eff`` at or above ``n (1 - max_lag1) / (1
+    + max_lag1)``, which is ``n / 199`` at the default, so ``n_eff`` can fall
+    below 1 for a series shorter than 199.  A caller using ``n_eff - 1`` or
+    ``n_eff - 2`` as the degrees of freedom of a t-test should set a floor
+    on ``n_eff`` first.
+
+    A constant series or a NaN along ``dim`` gives NaN, as in
+    ``lag1_autocorr``.  A caller that treats a constant series as having
+    ``n_eff = n`` must detect it separately.
 
     """
     if not 0.0 <= max_lag1 < 1.0:
@@ -412,6 +436,9 @@ def half_year_symmetry(
         vals = np.moveaxis(np.asarray(vals, dtype=float), ax, 0)
         if vals.shape[0] != 12:
             raise ValueError(f"month axis must have length 12, got {vals.shape[0]}")
+        # Subtracting the first month is exact for values close to it, so a
+        # constant cycle de-means to exactly zero whatever its float mean.
+        vals = vals - vals[:1]
         vals = vals - vals.mean(axis=0, keepdims=True)
         shifted = np.roll(vals, 6, axis=0)
         with np.errstate(invalid="ignore", divide="ignore"):
