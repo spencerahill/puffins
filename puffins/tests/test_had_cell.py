@@ -482,6 +482,63 @@ class TestHadCellsStrength:
         assert nh.item() == pytest.approx(2e11)
         assert result.sel(cell="had_cell_sh").item() >= 0.0
 
+    @pytest.mark.parametrize(
+        ("sf", "expected"),
+        [
+            (_two_cell_streamfunc(), [(-15.0, -1e11), (15.0, 1e11)]),
+            (
+                _bump_cells_streamfunc(
+                    [
+                        (-8e10, -12.0, 12.0),
+                        (7.5e10, 14.0, 14.0),
+                        (2e10, -36.0, 12.0),
+                        (-2e10, 42.0, 14.0),
+                    ]
+                ),
+                [(-12.0, -8e10), (14.0, 7.5e10)],
+            ),
+            (_bump_cells_streamfunc(_SH_WINTER_CELLS), [(-5.0, -2e11), (25.0, 3e10)]),
+            (_bump_cells_streamfunc(_NH_WINTER_CELLS), [(-25.0, -3e10), (5.0, 2e11)]),
+            (
+                _bump_cells_streamfunc(
+                    [
+                        (2e11, 5.0, 25.0),
+                        (-0.3e11, -25.5, 10.0),
+                        (-0.6e11, 45.0, 12.0),
+                        (0.2e11, 72.0, 9.0),
+                        (0.1e11, -50.0, 12.0),
+                    ]
+                ),
+                [(-25.5, -3e10), (5.0, 2e11)],
+            ),
+        ],
+        ids=[
+            "equinox",
+            "asymmetric_equinox",
+            "sh_winter",
+            "nh_winter",
+            "nh_winter_off_grid",
+        ],
+    )
+    def test_do_interp_lat(
+        self, sf: xr.DataArray, expected: list[tuple[float, float]]
+    ) -> None:
+        # With do_interp_lat, each candidate's latitude is interpolated, and
+        # the searches for each extremum's partner must still find the cells
+        # on either side. Each cell is symmetric about its center, so the
+        # interpolated center is the cell's center. In the last field the
+        # southern cell is centered between gridpoints, and is the partner
+        # found south of the global maximum, so its interpolated center
+        # requires the search for that partner to interpolate.
+        result = had_cells_strength(sf, do_interp_lat=True)
+        for cell, (lat_center, strength) in zip(
+            ("had_cell_sh", "had_cell_nh"), expected, strict=True
+        ):
+            assert result.sel(cell=cell)[LAT_STR].item() == pytest.approx(
+                lat_center, abs=1e-6
+            )
+            assert result.sel(cell=cell).item() == pytest.approx(strength, rel=1e-3)
+
     def test_no_pair_raises(self) -> None:
         # A field decreasing northward at every level has its maximum at the
         # southernmost latitude and its minimum at the northernmost, so no
@@ -511,6 +568,115 @@ class TestHadCellsStrength:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             had_cells_strength(sf)
+
+    def test_lone_southern_cell_warns(self) -> None:
+        # The mirror image of test_one_cell_warns. A lone negative cell is
+        # the southern Hadley cell. The global maximum is zero at the
+        # southernmost latitude, so only the pair built on the global minimum
+        # exists, and its northern entry is not positive.
+        sf = _bump_cells_streamfunc([(-1e11, -10.0, 30.0)])
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            result = had_cells_strength(sf)
+        sh = result.sel(cell="had_cell_sh")
+        assert sh[LAT_STR].item() == -10.0
+        assert sh[LEV_STR].item() == 550.0
+        assert sh.item() == pytest.approx(-1e11)
+        assert result.sel(cell="had_cell_nh").item() <= 0.0
+
+    def test_pair_measured_by_its_center_nearest_the_equator(self) -> None:
+        # A southern-winter field whose southern Hadley cell is centered at
+        # 2S and whose northern Hadley cell lies far north, at 35N. The other
+        # candidate pair, the southern polar and Ferrel cells, has its
+        # northern member nearer the equator (30S) than the Hadley pair's
+        # northern member, but its center nearest the equator is farther.
+        sf = _bump_cells_streamfunc(
+            [
+                (-2e11, -2.0, 20.0),
+                (0.3e11, 35.0, 15.0),
+                (0.6e11, -30.0, 8.0),
+                (-0.2e11, -50.0, 10.0),
+            ]
+        )
+        result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-2.0, 35.0]
+        assert result.values.tolist() == pytest.approx([-2e11, 0.3e11])
+
+    def test_cells_at_different_levels(self) -> None:
+        # The southern cell peaks at plev=550 and the northern at plev=400,
+        # and each cell's level must be its own.
+        lats = np.arange(-85.0, 86.0, 1.0)
+        plevs = np.arange(100.0, 1001.0, 50.0)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        plev = xr.DataArray(plevs, dims=[LEV_STR], coords={LEV_STR: plevs})
+        vert_sh = cast(xr.DataArray, np.sin(np.pi * (plev - 100.0) / 900.0))
+        vert_nh = xr.where(plev <= 700.0, np.sin(np.pi * (plev - 100.0) / 600.0), 0.0)
+        sf = -1e11 * vert_sh * _bump(lat, -15.0, 15.0) + 1e11 * vert_nh * _bump(
+            lat, 15.0, 15.0
+        )
+        result = had_cells_strength(sf)
+        assert result.sel(cell="had_cell_sh")[LEV_STR].item() == 550.0
+        assert result.sel(cell="had_cell_nh")[LEV_STR].item() == 400.0
+        assert result.sel(cell="had_cell_sh").item() == pytest.approx(-1e11)
+        assert result.sel(cell="had_cell_nh").item() == pytest.approx(1e11)
+
+    @pytest.mark.parametrize(
+        ("plev_spike", "kwargs", "strength", "level"),
+        [
+            (150.0, {"min_plev": 300.0}, 1e11, 550.0),
+            (950.0, {"max_plev": 900.0}, 1e11, 550.0),
+            (
+                150.0,
+                {"do_avg_vert": True},
+                1e11 * np.mean(np.sin(np.pi * np.arange(0.0, 901.0, 50.0) / 900.0)),
+                550.0,
+            ),
+        ],
+        ids=["min_plev", "max_plev", "do_avg_vert"],
+    )
+    def test_vertical_options_reach_every_search(
+        self, plev_spike: float, kwargs: dict[str, Any], strength: float, level: float
+    ) -> None:
+        # Single-gridpoint spikes at 2S (negative) and 2N (positive), at a
+        # level the option excludes or averages away, each five times the
+        # Hadley cells' peak. Without the option they are the global extrema.
+        # With it, any of the four extremum searches that did not receive the
+        # option would return a spike, nearer the equator than the Hadley
+        # cells, and the pair containing it would be chosen.
+        sf = _two_cell_streamfunc().copy(deep=True)
+        sf.loc[{LAT_STR: -2.0, LEV_STR: plev_spike}] = -5e11
+        sf.loc[{LAT_STR: 2.0, LEV_STR: plev_spike}] = 5e11
+        assert had_cells_strength(sf)[LAT_STR].values.tolist() == [-2.0, 2.0]
+        result = had_cells_strength(sf, **kwargs)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-strength, strength])
+        assert result[LEV_STR].values.tolist() == pytest.approx([level, level])
+
+    def test_stronger_ferrel_polar_pair_not_selected(self) -> None:
+        # The northern Ferrel and polar cells (2e11 and 0.5e11) together
+        # outweigh the two Hadley cells (1e11 each), and both pairs have the
+        # expected senses, but the Hadley cells are the pair containing the
+        # center nearest the equator.
+        sf = _bump_cells_streamfunc(
+            [
+                (-1e11, -15.0, 15.0),
+                (1e11, 15.0, 15.0),
+                (-2e11, 45.0, 15.0),
+                (0.5e11, 72.0, 9.0),
+            ]
+        )
+        result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1e11])
+
+    def test_compat_forwarded(self) -> None:
+        # An auxiliary coordinate along latitude takes a different value at
+        # each cell center. The default compat="override" keeps the first,
+        # and a strict compat refuses to combine them.
+        sf = _two_cell_streamfunc()
+        sf = sf.assign_coords(sinlat=(LAT_STR, np.sin(np.deg2rad(sf[LAT_STR].values))))
+        assert had_cells_strength(sf)[LAT_STR].values.tolist() == [-15.0, 15.0]
+        with pytest.raises(xr.MergeError):
+            had_cells_strength(sf, compat="equals")
 
 
 class TestHadCellEdgeCoords:

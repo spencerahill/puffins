@@ -220,14 +220,17 @@ def had_cells_strength(
     cell_pos_max_strength = had_cell_strength(strmfunc, **kwargs_hc_strength)
     cell_neg_max_strength = -1 * had_cell_strength(-1 * strmfunc, **kwargs_hc_strength)
 
-    lat_pos_max = cell_pos_max_strength.coords[lat_str]
-    lat_neg_max = cell_neg_max_strength.coords[lat_str]
+    # As plain numbers: with do_interp_lat, each latitude is a coordinate
+    # along a length-one dimension, and comparing the latitude axis with it
+    # would align the two on latitude values they do not share.
+    lat_pos_max = cell_pos_max_strength.coords[lat_str].item()
+    lat_neg_max = cell_neg_max_strength.coords[lat_str].item()
 
     # The two candidate (southern cell, northern cell) pairs.
     pairs: list[tuple[xr.DataArray, xr.DataArray]] = []
     try:
         cell_south_of_pos_strength = -1 * had_cell_strength(
-            -1 * strmfunc.where(lat < lat_pos_max),
+            -1 * strmfunc.where(lat < lat_pos_max, drop=True),
             **kwargs_hc_strength,
         )
     except ValueError:
@@ -236,7 +239,7 @@ def had_cells_strength(
         pairs.append((cell_south_of_pos_strength, cell_pos_max_strength))
     try:
         cell_north_of_neg_strength = had_cell_strength(
-            strmfunc.where(lat > lat_neg_max),
+            strmfunc.where(lat > lat_neg_max, drop=True),
             **kwargs_hc_strength,
         )
     except ValueError:
