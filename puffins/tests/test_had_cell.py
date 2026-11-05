@@ -1,5 +1,6 @@
 """Tests for had_cell module."""
 
+import warnings
 from typing import Any, cast
 
 import numpy as np
@@ -89,6 +90,73 @@ def _tilted_streamfunc() -> xr.DataArray:
     )
     vert = np.sin(np.pi * (plev - 100.0) / 900.0)
     return cast(xr.DataArray, (1e11 * vert * merid).rename("streamfunc"))
+
+
+def _bump(lat: xr.DataArray, center: float, halfwidth: float) -> xr.DataArray:
+    """cos**2 bump in latitude: 1 at `center`, 0 beyond `halfwidth` from it."""
+    x = (lat - center) / halfwidth
+    return cast(
+        xr.DataArray, xr.where(np.abs(x) < 1, np.cos(0.5 * np.pi * x) ** 2, 0.0)
+    )
+
+
+def _bump_cells_streamfunc(cells: list[tuple[float, float, float]]) -> xr.DataArray:
+    """Sum of cos**2 cells on the grid of `_two_cell_streamfunc`.
+
+    Each cell is (signed peak, center latitude, half-width in latitude). The
+    vertical structure is that of `_two_cell_streamfunc`, peaking at
+    plev=550, so each cell's extremum is its signed peak at (center, 550)
+    wherever no other cell overlaps it.
+    """
+    lats = np.arange(-85.0, 86.0, 1.0)
+    plevs = np.arange(100.0, 1001.0, 50.0)
+    lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+    plev = xr.DataArray(plevs, dims=[LEV_STR], coords={LEV_STR: plevs})
+    merid = xr.zeros_like(lat)
+    for peak, center, halfwidth in cells:
+        merid = merid + peak * _bump(lat, center, halfwidth)
+    vert = cast(xr.DataArray, np.sin(np.pi * (plev - 100.0) / 900.0))
+    return (vert * merid).rename("streamfunc")
+
+
+# A southern-winter field: a strong southern Hadley cell centered at 5S, a
+# weak northern (summer) Hadley cell at 25N, and a southern Ferrel cell at
+# 45S stronger than the northern Hadley cell, so the global maximum is the
+# Ferrel cell. The field also has polar and northern Ferrel cells, so that
+# the southern polar and Ferrel cells are also a pair of the Hadley cells'
+# senses (negative south of positive).
+_SH_WINTER_CELLS = [
+    (-2e11, -5.0, 25.0),  # southern Hadley cell
+    (0.3e11, 25.0, 10.0),  # northern Hadley cell
+    (0.6e11, -45.0, 12.0),  # southern Ferrel cell
+    (-0.2e11, -72.0, 9.0),  # southern polar cell
+    (-0.1e11, 50.0, 12.0),  # northern Ferrel cell
+]
+# Its mirror image, a northern-winter field: each cell moved to the mirrored
+# latitude, with its sign reversed, as the sense of circulation reverses.
+_NH_WINTER_CELLS = [(-peak, -center, width) for peak, center, width in _SH_WINTER_CELLS]
+
+
+def _issue_112_streamfunc() -> xr.DataArray:
+    """The reproducer of issue #112.
+
+    A dominant positive cell centered at 2.57S, plus weak negative cells at
+    43.71S and 43.71N, the southern one stronger. The grid has EMARS's
+    180/35-degree spacing, built with np.arange, so mirrored latitudes
+    differ in magnitude in the last bits. The vertical structure peaks at
+    plev=4.
+    """
+    lats = np.arange(-90 + 180 / 35, 90 - 90 / 35, 180 / 35)
+    plevs = np.linspace(0.5, 7.5, 15)
+    lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+    plev = xr.DataArray(plevs, dims=[LEV_STR], coords={LEV_STR: plevs})
+    merid = (
+        16.6e9 * _bump(lat, lats[16], 40.0)
+        - 0.566e9 * _bump(lat, lats[8], 10.0)
+        - 0.131e9 * _bump(lat, lats[25], 10.0)
+    )
+    vert = cast(xr.DataArray, np.sin(np.pi * plev / 8.0))
+    return (vert * merid).rename("streamfunc")
 
 
 class TestMeridStreamfunc:
@@ -305,6 +373,144 @@ class TestHadCellsStrength:
         assert result.sel(cell="had_cell_sh")["latitude"].item() == -15.0
         assert result.sel(cell="had_cell_nh")["latitude"].item() == 15.0
         assert result.sel(cell="had_cell_nh")["pressure"].item() == 550.0
+
+    def test_symmetric_min_max_lat(self) -> None:
+        # Symmetric bounds leave exactly two candidates, at mirrored
+        # latitudes, which raised before:
+        # https://github.com/spencerahill/puffins/issues/55
+        sf = _two_cell_streamfunc()
+        result = had_cells_strength(sf, min_lat=-10.0, max_lat=10.0)
+        sh = result.sel(cell="had_cell_sh")
+        nh = result.sel(cell="had_cell_nh")
+        assert sh[LAT_STR].item() == -9.0
+        assert nh[LAT_STR].item() == 9.0
+        assert sh.item() == pytest.approx(-1e11 * np.sin(np.pi * 9.0 / 30.0))
+        assert nh.item() == pytest.approx(1e11 * np.sin(np.pi * 9.0 / 30.0))
+
+    @pytest.mark.parametrize(
+        ("cells", "lat_sh", "lat_nh"),
+        [(_SH_WINTER_CELLS, -5.0, 25.0), (_NH_WINTER_CELLS, -25.0, 5.0)],
+        ids=["sh_winter", "nh_winter"],
+    )
+    def test_winter_ferrel_stronger_than_summer_hadley(
+        self, cells: list[tuple[float, float, float]], lat_sh: float, lat_nh: float
+    ) -> None:
+        # The winter Ferrel cell is a global extremum, and it and the polar
+        # cell beside it are a pair of the Hadley cells' senses. The Hadley
+        # cells are the pair containing the cell nearest the equator.
+        sf = _bump_cells_streamfunc(cells)
+        peaks = {center: peak for peak, center, _ in cells}
+        result = had_cells_strength(sf)
+        sh = result.sel(cell="had_cell_sh")
+        nh = result.sel(cell="had_cell_nh")
+        assert sh[LAT_STR].item() == lat_sh
+        assert nh[LAT_STR].item() == lat_nh
+        assert sh.item() == pytest.approx(peaks[lat_sh])
+        assert nh.item() == pytest.approx(peaks[lat_nh])
+        assert sh[LEV_STR].item() == 550.0
+        assert nh[LEV_STR].item() == 550.0
+
+    def test_cross_equatorial_cell_beside_mirrored_weak_cells(self) -> None:
+        # https://github.com/spencerahill/puffins/issues/112: the dominant
+        # positive cell is the northern Hadley cell though its center lies
+        # south of the equator. The southern Hadley cell is the negative
+        # cell south of it, not the weaker negative cell at the mirrored
+        # latitude in the north, which is a northern Ferrel cell.
+        sf = _issue_112_streamfunc()
+        lats = sf[LAT_STR].values
+        result = had_cells_strength(sf)
+        sh = result.sel(cell="had_cell_sh")
+        nh = result.sel(cell="had_cell_nh")
+        assert nh[LAT_STR].item() == lats[16]
+        assert sh[LAT_STR].item() == lats[8]
+        assert nh.item() == pytest.approx(16.6e9)
+        assert sh.item() == pytest.approx(-0.566e9)
+        assert nh[LEV_STR].item() == 4.0
+        assert sh[LEV_STR].item() == 4.0
+        # The north edge is the dominant cell's own: the first crossing of
+        # 0.1 of its peak north of its center, at the level of its peak,
+        # interpolated linearly between gridpoints.
+        prof = sf.sel({LEV_STR: 4.0}).values / 16.6e9 - 0.1
+        i = 16 + int(np.argmax(prof[16:] < 0))
+        expected = np.interp(0.0, [prof[i], prof[i - 1]], [lats[i], lats[i - 1]])
+        north = _edge_arr(had_cells_north_edge(sf))
+        assert north.item() == pytest.approx(expected)
+        assert north.item() < lats[25]
+
+    def test_negated_issue_112_field(self) -> None:
+        # Negating the field reverses every cell's sense of circulation. The
+        # dominant cell is then the southern Hadley cell, the northern
+        # Hadley cell is the weak positive cell north of it, and the
+        # stronger weak positive cell, south of it, is a southern Ferrel
+        # cell.
+        sf = -_issue_112_streamfunc()
+        lats = sf[LAT_STR].values
+        result = had_cells_strength(sf)
+        sh = result.sel(cell="had_cell_sh")
+        nh = result.sel(cell="had_cell_nh")
+        assert sh[LAT_STR].item() == lats[16]
+        assert nh[LAT_STR].item() == lats[25]
+        assert sh.item() == pytest.approx(-16.6e9)
+        assert nh.item() == pytest.approx(0.131e9)
+
+    def test_one_cell_warns(self) -> None:
+        # A lone positive cell is the northern Hadley cell. With no southern
+        # cell, the southern entry is not negative, and a warning is issued.
+        sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0)])
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            result = had_cells_strength(sf)
+        nh = result.sel(cell="had_cell_nh")
+        assert nh[LAT_STR].item() == 10.0
+        assert nh[LEV_STR].item() == 550.0
+        assert nh.item() == pytest.approx(1e11)
+        assert result.sel(cell="had_cell_sh").item() >= 0.0
+
+    def test_missing_summer_cell(self) -> None:
+        # A northern-winter field with no southern Hadley cell, and northern
+        # Ferrel and polar cells close together. Those two are the only pair
+        # of the Hadley cells' senses, but the pair containing the center
+        # nearest the equator is the northern Hadley cell with no partner,
+        # so the northern cell is identified, the southern entry is not
+        # negative, and a warning is issued.
+        sf = _bump_cells_streamfunc(
+            [(2e11, 5.0, 25.0), (-0.6e11, 36.0, 6.0), (0.2e11, 48.0, 6.0)]
+        )
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            result = had_cells_strength(sf)
+        nh = result.sel(cell="had_cell_nh")
+        assert nh[LAT_STR].item() == 5.0
+        assert nh.item() == pytest.approx(2e11)
+        assert result.sel(cell="had_cell_sh").item() >= 0.0
+
+    def test_no_pair_raises(self) -> None:
+        # A field decreasing northward at every level has its maximum at the
+        # southernmost latitude and its minimum at the northernmost, so no
+        # cell lies south of the one or north of the other.
+        two_cell = _two_cell_streamfunc()
+        sf = -two_cell[LAT_STR] * xr.ones_like(two_cell)
+        with pytest.raises(ValueError, match="no pair of cells"):
+            had_cells_strength(sf)
+
+    def test_opposite_sign_warns(self) -> None:
+        # A streamfunction signed opposite to merid_streamfunc's, with the
+        # northern cell negative, has no pair of the expected senses.
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            had_cells_strength(-_two_cell_streamfunc())
+
+    @pytest.mark.parametrize(
+        "sf",
+        [
+            _two_cell_streamfunc(),
+            _issue_112_streamfunc(),
+            _bump_cells_streamfunc(_SH_WINTER_CELLS),
+            _bump_cells_streamfunc(_NH_WINTER_CELLS),
+        ],
+        ids=["equinox", "issue_112", "sh_winter", "nh_winter"],
+    )
+    def test_no_warning_when_both_cells_exist(self, sf: xr.DataArray) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            had_cells_strength(sf)
 
 
 class TestHadCellEdgeCoords:

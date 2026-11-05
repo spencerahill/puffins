@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
@@ -174,19 +175,36 @@ def had_cells_strength(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> xr.DataArray:
-    """Location and signed magnitude of both Hadley cell centers."""
+    """Location and signed magnitude of both Hadley cell centers.
+
+    Each cell is identified by its sense of circulation, which requires the
+    sign that `merid_streamfunc` returns: positive for the northern Hadley
+    cell, whose flow aloft is northward, and negative for the southern cell.
+    Negate a streamfunction of the opposite sign before passing it.
+
+    The southern cell is a negative extremum lying south of the northern
+    cell's positive one. The candidates are two such pairs: the global
+    maximum with the most negative value south of it, and the global minimum
+    with the most positive value north of it. When the minimum lies south of
+    the maximum, the two pairs are the same. Otherwise, in a field of the
+    expected sign with both Hadley cells present, at least one of the two
+    global extrema is a Ferrel cell, which can be stronger than the summer
+    Hadley cell, and the Hadley cells are the pair containing the center
+    nearest the equator.
+
+    If the chosen southern cell is not negative or the chosen northern cell
+    not positive, a `UserWarning` is issued, as when one Hadley cell is
+    missing. A streamfunction of the opposite sign is not reliably flagged:
+    on reanalysis fields its weaker features usually still include a pair of
+    the expected senses, and the cells returned are then wrong.
+
+    """
     lat = strmfunc[lat_str]
 
     if min_lat is not None:
         strmfunc = strmfunc.where(lat > min_lat, drop=True)
     if max_lat is not None:
         strmfunc = strmfunc.where(lat < max_lat, drop=True)
-
-    # Sometimes the winter Ferrel cell is stronger than the summer Hadley cell.
-    # So find the global extremal negative and positive values as well as the
-    # opposite-signed cell on either side.  The Hadley cells will be the two of
-    # these whose centers are nearest the equator.
-    cell_strength_vals = []
 
     kwargs_hc_strength: dict[str, Any] = dict(
         min_plev=min_plev,
@@ -199,12 +217,12 @@ def had_cells_strength(
 
     cell_pos_max_strength = had_cell_strength(strmfunc, **kwargs_hc_strength)
     cell_neg_max_strength = -1 * had_cell_strength(-1 * strmfunc, **kwargs_hc_strength)
-    cell_strength_vals.append(cell_pos_max_strength)
-    cell_strength_vals.append(cell_neg_max_strength)
 
     lat_pos_max = cell_pos_max_strength.coords[lat_str]
     lat_neg_max = cell_neg_max_strength.coords[lat_str]
 
+    # The two candidate (southern cell, northern cell) pairs.
+    pairs: list[tuple[xr.DataArray, xr.DataArray]] = []
     try:
         cell_south_of_pos_strength = -1 * had_cell_strength(
             -1 * strmfunc.where(lat < lat_pos_max),
@@ -213,26 +231,7 @@ def had_cells_strength(
     except ValueError:
         pass
     else:
-        cell_strength_vals.append(cell_south_of_pos_strength)
-    try:
-        cell_north_of_pos_strength = -1 * had_cell_strength(
-            -1 * strmfunc.where(lat > lat_pos_max),
-            **kwargs_hc_strength,
-        )
-    except ValueError:
-        pass
-    else:
-        cell_strength_vals.append(cell_north_of_pos_strength)
-    try:
-        cell_south_of_neg_strength = had_cell_strength(
-            strmfunc.where(lat < lat_neg_max),
-            **kwargs_hc_strength,
-        )
-    except ValueError:
-        pass
-    else:
-        cell_strength_vals.append(cell_south_of_neg_strength)
-
+        pairs.append((cell_south_of_pos_strength, cell_pos_max_strength))
     try:
         cell_north_of_neg_strength = had_cell_strength(
             strmfunc.where(lat > lat_neg_max),
@@ -241,36 +240,30 @@ def had_cells_strength(
     except ValueError:
         pass
     else:
-        cell_strength_vals.append(cell_north_of_neg_strength)
+        pairs.append((cell_neg_max_strength, cell_north_of_neg_strength))
+    if not pairs:
+        raise ValueError(
+            "No data south of the streamfunction's global maximum and none "
+            "north of its global minimum, so no pair of cells can be identified."
+        )
 
-    # The above procedure generates up to 6 cells, of which up to 2 are
-    # duplicates.  Now, get rid of the duplicates.
-    cell_strengths = xr.concat(
-        cell_strength_vals, dim=lat_str, coords=[lev_str], compat=compat
+    cell_sh, cell_nh = min(
+        pairs, key=lambda pair: min(abs(cell[lat_str].item()) for cell in pair)
     )
-    dupes = cell_strengths.get_index(lat_str).duplicated()
-    cell_strengths = cell_strengths[~dupes]
+    if not cell_sh.item() < 0 < cell_nh.item():
+        warnings.warn(
+            "The cells chosen as the Hadley cells lack the expected sense of "
+            f"circulation: the southern cell's strength is {cell_sh.item():.3g}, "
+            "where negative is expected, and the northern cell's is "
+            f"{cell_nh.item():.3g}, where positive is expected. Either one "
+            "Hadley cell is missing, or the streamfunction is signed opposite "
+            "to merid_streamfunc's, with the northern cell negative.",
+            stacklevel=2,
+        )
 
-    # Pick the two cells closest to the equator.
-    # But sometimes two cells can be at identical but mirror latitudes,
-    # which the logic would otherwise always select the NH one.  So
-    # in that case pick the one with the larger strength.
-    # For now, the logic only checks this for the first and last values, but
-    # in principle this could occur for other indices and thus this logic would
-    # need to be generalized.
-    center_lats = cell_strengths[lat_str]
-    if np.isclose(np.abs(center_lats[0]), np.abs(center_lats[-1])):
-        if np.abs(cell_strengths)[0] > np.abs(cell_strengths)[-1]:
-            center_lats = center_lats[:-1]
-            cell_strengths = cell_strengths[:-1]
-        else:
-            center_lats = center_lats[1:]
-            cell_strengths = cell_strengths[1:]
-
-    hc_strengths = cell_strengths.sortby(abs(center_lats))[:2]
-
-    # Order the cells from south to north.
-    hc_strengths = hc_strengths.sortby(hc_strengths[lat_str])
+    hc_strengths = xr.concat(
+        [cell_sh, cell_nh], dim=lat_str, coords=[lev_str], compat=compat
+    )
 
     # Create DataArray with one label for each cell, the cell strengths
     # as the values, and the cell center latitudes and levels as coords.
