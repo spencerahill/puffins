@@ -57,9 +57,11 @@ def merid_streamfunc(
     Returns
     -------
     xarray.DataArray
-        The meridional mass streamfunction, signed such that
-        counter-clockwise circulation in lat-height plane
-        (i.e. Southern Hemisphere Hadley Cell) is positive.
+        The meridional mass streamfunction, signed such that clockwise
+        circulation in the latitude-height plane, drawn with latitude
+        increasing to the right and height upward, is positive. So the
+        Northern Hemisphere Hadley cell, with northward flow aloft, is
+        positive, and the Southern Hemisphere Hadley cell negative.
 
     """
     # Zonally average v and dp.
