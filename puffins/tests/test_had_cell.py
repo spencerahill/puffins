@@ -137,14 +137,16 @@ _SH_WINTER_CELLS = [
 _NH_WINTER_CELLS = [(-peak, -center, width) for peak, center, width in _SH_WINTER_CELLS]
 
 
-def _issue_112_streamfunc() -> xr.DataArray:
+def _issue_112_streamfunc(i_north: int = 25) -> xr.DataArray:
     """The reproducer of issue #112.
 
     A dominant positive cell centered at 2.57S, plus weak negative cells at
-    43.71S and 43.71N, the southern one stronger. The grid has EMARS's
-    180/35-degree spacing, built with np.arange, so mirrored latitudes
-    differ in magnitude in the last bits. The vertical structure peaks at
-    plev=4.
+    43.71S and at latitude index `i_north`, the southern one stronger. The
+    grid has EMARS's 180/35-degree spacing, built with np.arange. At the
+    default index the northern cell is at 43.71N, and master's identification
+    fails there only because the mirrored latitudes differ in magnitude in
+    their last bits. At index 24 (38.57N) it fails whatever the rounding.
+    The vertical structure peaks at plev=4.
     """
     lats = np.arange(-90 + 180 / 35, 90 - 90 / 35, 180 / 35)
     plevs = np.linspace(0.5, 7.5, 15)
@@ -153,7 +155,7 @@ def _issue_112_streamfunc() -> xr.DataArray:
     merid = (
         16.6e9 * _bump(lat, lats[16], 40.0)
         - 0.566e9 * _bump(lat, lats[8], 10.0)
-        - 0.131e9 * _bump(lat, lats[25], 10.0)
+        - 0.131e9 * _bump(lat, lats[i_north], 10.0)
     )
     vert = cast(xr.DataArray, np.sin(np.pi * plev / 8.0))
     return (vert * merid).rename("streamfunc")
@@ -355,9 +357,7 @@ class TestHadCellsStrength:
         assert result.sel(cell="had_cell_nh").item() == pytest.approx(1e11)
 
     def test_min_max_lat(self) -> None:
-        # Asymmetric bounds, so that the two surviving candidates aren't
-        # at exactly mirrored latitudes, which trips a separate bug:
-        # https://github.com/spencerahill/puffins/issues/55
+        # Asymmetric bounds; test_symmetric_min_max_lat covers symmetric ones.
         sf = _two_cell_streamfunc()
         result = had_cells_strength(sf, min_lat=-12.0, max_lat=10.0)
         sh = result.sel(cell="had_cell_sh")
@@ -410,13 +410,15 @@ class TestHadCellsStrength:
         assert sh[LEV_STR].item() == 550.0
         assert nh[LEV_STR].item() == 550.0
 
-    def test_cross_equatorial_cell_beside_mirrored_weak_cells(self) -> None:
+    @pytest.mark.parametrize("i_north", [25, 24], ids=["mirrored", "nearer"])
+    def test_cross_equatorial_cell_beside_weak_cells(self, i_north: int) -> None:
         # https://github.com/spencerahill/puffins/issues/112: the dominant
         # positive cell is the northern Hadley cell though its center lies
         # south of the equator. The southern Hadley cell is the negative
-        # cell south of it, not the weaker negative cell at the mirrored
-        # latitude in the north, which is a northern Ferrel cell.
-        sf = _issue_112_streamfunc()
+        # cell south of it, not the weaker negative cell in the north, at
+        # the mirrored latitude or nearer the equator, which is a northern
+        # Ferrel cell.
+        sf = _issue_112_streamfunc(i_north)
         lats = sf[LAT_STR].values
         result = had_cells_strength(sf)
         sh = result.sel(cell="had_cell_sh")
@@ -435,7 +437,7 @@ class TestHadCellsStrength:
         expected = np.interp(0.0, [prof[i], prof[i - 1]], [lats[i], lats[i - 1]])
         north = _edge_arr(had_cells_north_edge(sf))
         assert north.item() == pytest.approx(expected)
-        assert north.item() < lats[25]
+        assert north.item() < lats[i_north]
 
     def test_negated_issue_112_field(self) -> None:
         # Negating the field reverses every cell's sense of circulation. The
@@ -548,9 +550,10 @@ class TestHadCellsStrength:
         with pytest.raises(ValueError, match="no pair of cells"):
             had_cells_strength(sf)
 
-    def test_opposite_sign_warns(self) -> None:
-        # A streamfunction signed opposite to merid_streamfunc's, with the
-        # northern cell negative, has no pair of the expected senses.
+    def test_opposite_sign_two_cell_field_warns(self) -> None:
+        # A two-cell streamfunction signed opposite to merid_streamfunc's,
+        # with the northern cell negative, has no pair of the expected
+        # senses. A field with Ferrel cells has one, and is not flagged.
         with pytest.warns(UserWarning, match="sense of circulation"):
             had_cells_strength(-_two_cell_streamfunc())
 
@@ -566,7 +569,11 @@ class TestHadCellsStrength:
     )
     def test_no_warning_when_both_cells_exist(self, sf: xr.DataArray) -> None:
         with warnings.catch_warnings():
-            warnings.simplefilter("error")
+            warnings.filterwarnings(
+                "error",
+                message="The cells chosen as the Hadley cells",
+                category=UserWarning,
+            )
             had_cells_strength(sf)
 
     def test_lone_southern_cell_warns(self) -> None:

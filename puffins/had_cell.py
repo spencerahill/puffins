@@ -191,14 +191,20 @@ def had_cells_strength(
     the maximum, the two pairs are the same. Otherwise, in a field of the
     expected sign with both Hadley cells present, at least one of the two
     global extrema is a Ferrel cell, which can be stronger than the summer
-    Hadley cell, and the Hadley cells are the pair containing the center
-    nearest the equator.
+    Hadley cell, and the pair containing the center nearest the equator is
+    kept as the Hadley cells.
 
-    If the chosen southern cell is not negative or the chosen northern cell
-    not positive, a `UserWarning` is issued, as when one Hadley cell is
-    missing. A streamfunction of the opposite sign is not reliably flagged:
-    on reanalysis fields its weaker features usually still include a pair of
-    the expected senses, and the cells returned are then wrong.
+    Each partner is the most negative or most positive value anywhere on its
+    side of the global extremum, which need not be the adjacent cell. So a
+    summer Hadley cell that is missing, or weaker than the polar cell beyond
+    it, is usually replaced by that polar cell, without a warning.
+
+    A `UserWarning` is issued when the chosen southern cell is not negative
+    or the chosen northern cell not positive, that is, when no value of the
+    needed sign exists where the partner is sought. A streamfunction of the
+    opposite sign gives wrong cells on any field with Ferrel cells, usually
+    without the warning, because a Hadley cell and a Ferrel cell then make up
+    a pair of the expected senses.
 
     """
     lat = strmfunc[lat_str]
