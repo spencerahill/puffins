@@ -78,7 +78,15 @@ def therm_ross_num(
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
 ) -> ArrayLike:
-    """Thermal Rossby number."""
+    """Planetary Burger number times delta_h times sin(lat_max).
+
+    At the default lat_max of 90 degrees this is g H delta_h / (Omega a)^2,
+    the thermal Rossby number of Held and Hou (1980, Eq. 6), which other
+    puffins functions take as ``burg_delh``. With lat_max the latitude of
+    maximum forcing, it is the thermal Rossby number Ro_th of Hill, Bordoni
+    and Mitchell (2021, Eq. 7), which other puffins functions take as
+    ``burg_delh_sin_latmax``.
+    """
     return cast(
         ArrayLike,
         delta_h

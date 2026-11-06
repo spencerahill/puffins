@@ -1010,19 +1010,43 @@ def lin_ro_bci_edge_small_angle_lata0(
 
 
 # Edge solutions using supercriticality to predict ascent location.
-def lat_ascent_eta0_approx(therm_ro: ArrayLike, c_ascent: float = 1.0) -> ArrayLike:
-    """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing."""
-    if np.all(therm_ro == 0):
+def lat_ascent_eta0_approx(
+    burg_delh_sin_latmax: ArrayLike, c_ascent: float = 1.0
+) -> ArrayLike:
+    """Approx. zero cross of abs. vort. of Lindzen-Hou solstice forcing.
+
+    Returns c_ascent (Ro_th / 2)^(1/3) in degrees: Eq. 13 of Hill et al.
+    (2022), which is Eq. 12 of Hill, Bordoni and Mitchell (2021), the
+    approximate small-angle solution of their Eq. 10, times the fitting
+    constant c_ascent.
+
+    Parameters
+    ----------
+    burg_delh_sin_latmax : float or array-like
+        Planetary Burger number times delta_h times sin(lat_max), with lat_max
+        the latitude of maximum forcing: the thermal Rossby number Ro_th of
+        Hill, Bordoni and Mitchell (2021, Eq. 7) and Hill et al. (2022,
+        Eq. 14). A negative value gives the latitude mirrored about the
+        equator.
+    c_ascent : float, optional
+        Fitting constant multiplying the solution. Default: 1.
+
+    Returns
+    -------
+    float or array-like
+        Latitude (degrees).
+    """
+    if np.all(burg_delh_sin_latmax == 0):
         return 0.0
     return cast(
         ArrayLike,
-        np.sign(therm_ro)
-        * np.rad2deg(c_ascent * (0.5 * np.abs(therm_ro)) ** (1.0 / 3.0)),
+        np.sign(burg_delh_sin_latmax)
+        * np.rad2deg(c_ascent * (0.5 * np.abs(burg_delh_sin_latmax)) ** (1.0 / 3.0)),
     )
 
 
 def fixed_ro_bci_edge_supercrit_ascent(
-    therm_ross: ArrayLike,
+    burg_delh_sin_latmax: ArrayLike,
     max_lat: float = 90,
     c_ascent: float = 1,
     c_descent: float = 1,
@@ -1035,20 +1059,20 @@ def fixed_ro_bci_edge_supercrit_ascent(
     From Hill, Bordoni, and Mitchell, 2022, JAS, "A Theory for the Hadley Cell
     Descending and Ascending Edges throughout the Annual Cycle."
 
-    The ascending latitude is assumed equal to the c_ascent times the thermal
-    Rossby number to the one-third power.  Then the descending edge assumes a
-    uniform Rossby number and the 2-layer BCI condition.
+    The ascending latitude is assumed equal to c_ascent times
+    (burg_delh_sin_latmax / 2) to the one-third power.  Then the descending
+    edge assumes a uniform Rossby number and the 2-layer BCI condition.
 
-    Note that this is the seasonally varying thermal Rossby number that
-    includes `max_lat`: therm_ross = burg_num * delta_h * sin(max_lat), where
-    burg_num is the planetary Burger number.  `max_lat` also appears separately
-    in the expression, which is why it also must be provided separately.
+    ``burg_delh_sin_latmax`` is the planetary Burger number times delta_h
+    times sin(max_lat): the seasonally varying thermal Rossby number Ro_th
+    of Hill et al. (2022, Eq. 14).  `max_lat` also appears separately in the
+    expression, which is why it also must be provided separately.
 
     """
-    lat_ascent = lat_ascent_eta0_approx(therm_ross, c_ascent=c_ascent)
+    lat_ascent = lat_ascent_eta0_approx(burg_delh_sin_latmax, c_ascent=c_ascent)
     term1 = (2 ** (4.0 / 3.0)) / (c_ascent**4)
     term2 = delta_v / (delta_h * sindeg(max_lat))
-    term3 = 1.0 / (ross_num * (therm_ross ** (1.0 / 3.0)))
+    term3 = 1.0 / (ross_num * (burg_delh_sin_latmax ** (1.0 / 3.0)))
     return cast(
         ArrayLike,
         c_descent

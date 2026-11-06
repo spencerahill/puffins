@@ -56,41 +56,41 @@ from .nb_utils import sin2deg
 @overload
 def eq_pot_temp_mean_ro(
     ross_num: xr.DataArray,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     delta_h: float,
     theta_ref: float = ...,
 ) -> xr.DataArray: ...
 @overload
 def eq_pot_temp_mean_ro(
     ross_num: ArrayLike,
-    therm_ross_num: xr.DataArray,
+    burg_delh: xr.DataArray,
     delta_h: float,
     theta_ref: float = ...,
 ) -> xr.DataArray: ...
 @overload
 def eq_pot_temp_mean_ro(
     ross_num: np.ndarray,
-    therm_ross_num: np.ndarray | Scalar,
+    burg_delh: np.ndarray | Scalar,
     delta_h: float,
     theta_ref: float = ...,
 ) -> np.ndarray: ...
 @overload
 def eq_pot_temp_mean_ro(
     ross_num: Scalar,
-    therm_ross_num: np.ndarray,
+    burg_delh: np.ndarray,
     delta_h: float,
     theta_ref: float = ...,
 ) -> np.ndarray: ...
 @overload
 def eq_pot_temp_mean_ro(
     ross_num: Scalar,
-    therm_ross_num: Scalar,
+    burg_delh: Scalar,
     delta_h: float,
     theta_ref: float = ...,
 ) -> Scalar: ...
 def eq_pot_temp_mean_ro(
     ross_num: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     delta_h: float,
     theta_ref: float = THETA_REF,
 ) -> ArrayLike:
@@ -100,8 +100,9 @@ def eq_pot_temp_mean_ro(
     ----------
     ross_num : float or array-like
         Rossby number.
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     delta_h : float
         Fractional horizontal temperature difference.
     theta_ref : float, optional
@@ -115,15 +116,14 @@ def eq_pot_temp_mean_ro(
     """
     return cast(
         ArrayLike,
-        theta_ref
-        * (1 + delta_h / 3 - 5.0 * therm_ross_num * delta_h / (18.0 * ross_num)),
+        theta_ref * (1 + delta_h / 3 - 5.0 * burg_delh * delta_h / (18.0 * ross_num)),
     )
 
 
 def pot_temp_mean_ro(
     lat: ArrayLike,
     ross_num: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     delta_h: float,
     theta_ref: float = THETA_REF,
 ) -> ArrayLike:
@@ -135,8 +135,9 @@ def pot_temp_mean_ro(
         Latitude (degrees).
     ross_num : float or array-like
         Rossby number.
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     delta_h : float
         Fractional horizontal temperature difference.
     theta_ref : float, optional
@@ -155,7 +156,7 @@ def pot_temp_mean_ro(
     """
     pot_temp_eq = eq_pot_temp_mean_ro(
         ross_num,
-        therm_ross_num,
+        burg_delh,
         delta_h,
         theta_ref=theta_ref,
     )
@@ -164,29 +165,25 @@ def pot_temp_mean_ro(
         pot_temp_eq,
         ross_num=ross_num,
         theta_ref=theta_ref,
-        burg_num=therm_ross_num / delta_h,
+        burg_num=burg_delh / delta_h,
     )
 
 
 @overload
-def cell_edge_mean_ro(
-    ross_num: xr.DataArray, therm_ross_num: ArrayLike
-) -> xr.DataArray: ...
+def cell_edge_mean_ro(ross_num: xr.DataArray, burg_delh: ArrayLike) -> xr.DataArray: ...
+@overload
+def cell_edge_mean_ro(ross_num: ArrayLike, burg_delh: xr.DataArray) -> xr.DataArray: ...
 @overload
 def cell_edge_mean_ro(
-    ross_num: ArrayLike, therm_ross_num: xr.DataArray
-) -> xr.DataArray: ...
-@overload
-def cell_edge_mean_ro(
-    ross_num: np.ndarray, therm_ross_num: np.ndarray | Scalar
+    ross_num: np.ndarray, burg_delh: np.ndarray | Scalar
 ) -> np.ndarray: ...
 @overload
-def cell_edge_mean_ro(ross_num: Scalar, therm_ross_num: np.ndarray) -> np.ndarray: ...
+def cell_edge_mean_ro(ross_num: Scalar, burg_delh: np.ndarray) -> np.ndarray: ...
 @overload
-def cell_edge_mean_ro(ross_num: Scalar, therm_ross_num: Scalar) -> Scalar: ...
+def cell_edge_mean_ro(ross_num: Scalar, burg_delh: Scalar) -> Scalar: ...
 def cell_edge_mean_ro(
     ross_num: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
 ) -> ArrayLike:
     """Hadley cell edge for the fixed-Ro, small-angle, equatorial-ascent case.
 
@@ -194,8 +191,9 @@ def cell_edge_mean_ro(
     ----------
     ross_num : float or array-like
         Rossby number, positive.
-    therm_ross_num : float or array-like
-        Thermal Rossby number, positive.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980). Positive.
 
     Returns
     -------
@@ -205,12 +203,12 @@ def cell_edge_mean_ro(
         ratio of the two Rossby numbers is negative.
     """
     # Float literals, so that a Python list raises instead of being repeated.
-    return cast(ArrayLike, np.rad2deg(np.sqrt(5.0 * therm_ross_num / (3.0 * ross_num))))
+    return cast(ArrayLike, np.rad2deg(np.sqrt(5.0 * burg_delh / (3.0 * ross_num))))
 
 
 def heat_flux_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     ross_num: ArrayLike,
     theta_ref: float = THETA_REF,
     radius: float = RAD_EARTH,
@@ -224,8 +222,9 @@ def heat_flux_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_num : float or array-like
         Rossby number.
     theta_ref : float, optional
@@ -243,7 +242,7 @@ def heat_flux_mean_ro(
     -------
     array-like
         Meridional heat flux (K m^2/s), zero poleward of the cell edge
-        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+        ``cell_edge_mean_ro(ross_num, burg_delh)`` in either hemisphere.
 
     Notes
     -----
@@ -258,9 +257,9 @@ def heat_flux_mean_ro(
         * height
         * delta_h
         / tau
-        * (therm_ross_num / ross_num) ** 1.5
+        * (burg_delh / ross_num) ** 1.5
     )
-    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, burg_delh)
     # The circulation, and with it the flux, vanishes poleward of the cell
     # edge, where the polynomial would otherwise extrapolate.
     in_cell = abs(lat_div_lat_ro) <= 1
@@ -275,7 +274,7 @@ def heat_flux_mean_ro(
 
 def mom_flux_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     ross_num: ArrayLike,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
@@ -290,8 +289,9 @@ def mom_flux_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_num : float or array-like
         Rossby number.
     radius : float, optional
@@ -311,7 +311,7 @@ def mom_flux_mean_ro(
     -------
     array-like
         Meridional momentum flux (m^3/s^2), zero poleward of the cell edge
-        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+        ``cell_edge_mean_ro(ross_num, burg_delh)`` in either hemisphere.
 
     Notes
     -----
@@ -324,14 +324,14 @@ def mom_flux_mean_ro(
     latrad2 = latrad**2
     # The circulation, and with it the flux, vanishes poleward of the cell
     # edge, where the polynomial would otherwise extrapolate.
-    in_cell = abs(lat / cell_edge_mean_ro(ross_num, therm_ross_num)) <= 1
+    in_cell = abs(lat / cell_edge_mean_ro(ross_num, burg_delh)) <= 1
     return cast(
         ArrayLike,
         prefac
         * latrad**3
         * (
-            5 * therm_ross_num / 3
-            - ross_num * latrad2 * (2 - 3 * ross_num * latrad2 / (5 * therm_ross_num))
+            5 * burg_delh / 3
+            - ross_num * latrad2 * (2 - 3 * ross_num * latrad2 / (5 * burg_delh))
         )
         * in_cell,
     )
@@ -339,7 +339,7 @@ def mom_flux_mean_ro(
 
 def u_sfc_mean_ro(
     lat: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     ross_num: ArrayLike,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
@@ -355,8 +355,9 @@ def u_sfc_mean_ro(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_num : float or array-like
         Rossby number.
     radius : float, optional
@@ -378,7 +379,7 @@ def u_sfc_mean_ro(
     -------
     array-like
         Surface zonal wind (m/s), zero poleward of the cell edge
-        ``cell_edge_mean_ro(ross_num, therm_ross_num)`` in either hemisphere.
+        ``cell_edge_mean_ro(ross_num, burg_delh)`` in either hemisphere.
 
     Notes
     -----
@@ -389,14 +390,14 @@ def u_sfc_mean_ro(
     prefac = (
         -25 * rot_rate * radius * height * delta_h / (18 * drag_coeff * tau * delta_v)
     )
-    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, therm_ross_num)
+    lat_div_lat_ro = lat / cell_edge_mean_ro(ross_num, burg_delh)
     # The circulation, and with it the surface wind, vanishes poleward of
     # the cell edge, where the polynomial would otherwise extrapolate.
     in_cell = abs(lat_div_lat_ro) <= 1
     return cast(
         ArrayLike,
         prefac
-        * (therm_ross_num / ross_num) ** 2
+        * (burg_delh / ross_num) ** 2
         * (
             lat_div_lat_ro**2
             - (10 / 3) * lat_div_lat_ro**4
@@ -408,7 +409,7 @@ def u_sfc_mean_ro(
 
 # Solutions for small-angle, linear meridional profile in Ro
 def cell_edge_lin_ro_lata0_full(
-    therm_ross: float, ross_ascent: float, ross_descent: float
+    burg_delh: float, ross_ascent: float, ross_descent: float
 ) -> float:
     """Cell edge for the linear-Ro, equatorial-ascent, small-angle case (full solution).
 
@@ -417,8 +418,9 @@ def cell_edge_lin_ro_lata0_full(
 
     Parameters
     ----------
-    therm_ross : float
-        Thermal Rossby number.
+    burg_delh : float
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_ascent : float
         Rossby number at the ascent latitude.
     ross_descent : float
@@ -437,12 +439,12 @@ def cell_edge_lin_ro_lata0_full(
     def _term_latd2(ross_ascent: float, delro: float) -> float:
         return 2 * ross_ascent / 5 - 2 * delro / 9
 
-    def _term_latd0(therm_ro: float) -> float:
-        return -2 * therm_ro / 3
+    def _term_latd0(burg_delh: float) -> float:
+        return -2 * burg_delh / 3
 
     poly_obj = np.polynomial.Polynomial(
         [
-            _term_latd0(therm_ross),
+            _term_latd0(burg_delh),
             _term_latd2(ross_ascent, delro),
             _term_latd4(ross_ascent, delro),
         ]
@@ -462,43 +464,44 @@ def cell_edge_lin_ro_lata0_full(
 
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: xr.DataArray, ross_ascent: ArrayLike, ross_descent: ArrayLike
+    burg_delh: xr.DataArray, ross_ascent: ArrayLike, ross_descent: ArrayLike
 ) -> xr.DataArray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: ArrayLike, ross_ascent: xr.DataArray, ross_descent: ArrayLike
+    burg_delh: ArrayLike, ross_ascent: xr.DataArray, ross_descent: ArrayLike
 ) -> xr.DataArray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: ArrayLike, ross_ascent: ArrayLike, ross_descent: xr.DataArray
+    burg_delh: ArrayLike, ross_ascent: ArrayLike, ross_descent: xr.DataArray
 ) -> xr.DataArray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: np.ndarray,
+    burg_delh: np.ndarray,
     ross_ascent: np.ndarray | Scalar,
     ross_descent: np.ndarray | Scalar,
 ) -> np.ndarray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: Scalar, ross_ascent: np.ndarray, ross_descent: np.ndarray | Scalar
+    burg_delh: Scalar, ross_ascent: np.ndarray, ross_descent: np.ndarray | Scalar
 ) -> np.ndarray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: Scalar, ross_ascent: Scalar, ross_descent: np.ndarray
+    burg_delh: Scalar, ross_ascent: Scalar, ross_descent: np.ndarray
 ) -> np.ndarray: ...
 @overload
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: Scalar, ross_ascent: Scalar, ross_descent: Scalar
+    burg_delh: Scalar, ross_ascent: Scalar, ross_descent: Scalar
 ) -> Scalar: ...
 def cell_edge_lin_ro_lata0_approx(
-    therm_ross: ArrayLike, ross_ascent: ArrayLike, ross_descent: ArrayLike
+    burg_delh: ArrayLike, ross_ascent: ArrayLike, ross_descent: ArrayLike
 ) -> ArrayLike:
     """Leading-order approximation for cell edge with a linear Rossby number profile.
 
     Parameters
     ----------
-    therm_ross : float or array-like
-        Thermal Rossby number, positive.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980). Positive.
     ross_ascent : float or array-like
         Rossby number at the ascent latitude, positive.
     ross_descent : float or array-like
@@ -519,12 +522,12 @@ def cell_edge_lin_ro_lata0_approx(
     # Float literals, so that a Python list raises instead of being repeated.
     return cast(
         ArrayLike,
-        np.rad2deg(np.sqrt(15.0 * therm_ross / (9.0 * ross_ascent - 5.0 * delta_ross))),
+        np.rad2deg(np.sqrt(15.0 * burg_delh / (9.0 * ross_ascent - 5.0 * delta_ross))),
     )
 
 
 def eq_pot_temp_lin_ro_lata0_small_ang(
-    therm_ross: float,
+    burg_delh: float,
     ross_ascent: float,
     ross_descent: float,
     delta_h: float = DELTA_H,
@@ -534,8 +537,9 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
 
     Parameters
     ----------
-    therm_ross : float
-        Thermal Rossby number.
+    burg_delh : float
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_ascent : float
         Rossby number at the ascent latitude.
     ross_descent : float
@@ -551,9 +555,9 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
         Equatorial potential temperature (K).
     """
     delro = ross_ascent - ross_descent
-    burg_num = therm_ross / delta_h
+    burg_num = burg_delh / delta_h
     latd2 = (
-        np.deg2rad(cell_edge_lin_ro_lata0_full(therm_ross, ross_ascent, ross_descent))
+        np.deg2rad(cell_edge_lin_ro_lata0_full(burg_delh, ross_ascent, ross_descent))
         ** 2
     )
     return float(
@@ -583,7 +587,7 @@ def eq_pot_temp_lin_ro_lata0_small_ang(
 
 def pot_temp_lin_ro_eq_area(
     lat: ArrayLike,
-    therm_ross: float,
+    burg_delh: float,
     ross_ascent: float,
     ross_descent: float,
     delta_h: float = DELTA_H,
@@ -598,8 +602,9 @@ def pot_temp_lin_ro_eq_area(
     ----------
     lat : array-like
         Latitude (degrees).
-    therm_ross : float
-        Thermal Rossby number.
+    burg_delh : float
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     ross_ascent : float
         Rossby number at the ascent latitude.
     ross_descent : float
@@ -617,21 +622,21 @@ def pot_temp_lin_ro_eq_area(
     Notes
     -----
     The profile shape is computed with the Burger number implied by the
-    given thermal Rossby number, ``therm_ross / delta_h``, so that it is
+    given ``burg_delh``, namely ``burg_delh / delta_h``, so that it is
     consistent with the cell edge and equatorial temperature (which are
-    parameterized by ``therm_ross``).  This function formerly accepted
+    parameterized by ``burg_delh``).  This function formerly accepted
     planetary parameters that set an independent (and generally
     inconsistent) Burger number for the profile shape.
     """
     pot_temp_eq = eq_pot_temp_lin_ro_lata0_small_ang(
-        therm_ross=therm_ross,
+        burg_delh=burg_delh,
         ross_ascent=ross_ascent,
         ross_descent=ross_descent,
         delta_h=delta_h,
         theta_ref=theta_ref,
     )
     lat_descent = cell_edge_lin_ro_lata0_full(
-        therm_ross=therm_ross,
+        burg_delh=burg_delh,
         ross_ascent=ross_ascent,
         ross_descent=ross_descent,
     )
@@ -642,7 +647,7 @@ def pot_temp_lin_ro_eq_area(
         ross_descent=ross_descent,
         pot_temp_lat0=pot_temp_eq,
         theta_ref=theta_ref,
-        burg_num=therm_ross / delta_h,
+        burg_num=burg_delh / delta_h,
     )
 
 
@@ -690,7 +695,7 @@ def _lh88_amc_rce_theta_hat_diff(
     theta_hat_1: float,
     theta_ref: float,
     delta_h: float,
-    thermal_ro: float,
+    burg_delh: float,
 ) -> float:
     """Difference between AMC and RCE depth-averaged potential temperatures.
 
@@ -698,7 +703,7 @@ def _lh88_amc_rce_theta_hat_diff(
 
     """
     return _theta_hat_amc_lh88(
-        sinlat, sinlat_1, theta_hat_1, theta_ref, delta_h / thermal_ro
+        sinlat, sinlat_1, theta_hat_1, theta_ref, delta_h / burg_delh
     ) - _theta_hat_rce_lh88(sinlat, sinlat_0, theta_ref, delta_h)
 
 
@@ -709,14 +714,14 @@ def _lh88_cons_energy_integral(
     theta_hat_1: float,
     theta_ref: float,
     delta_h: float,
-    thermal_ro: float,
+    burg_delh: float,
 ) -> float:
     return float(
         scipy.integrate.quad(
             _lh88_amc_rce_theta_hat_diff,
             sinlat_1,
             sinlat_edge,
-            args=(sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro),
+            args=(sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, burg_delh),
         )[0]
     )
 
@@ -726,7 +731,7 @@ def _lh88_model(
     sinlat_0: float,
     theta_ref: float,
     delta_h: float,
-    thermal_ro: float,
+    burg_delh: float,
 ) -> np.ndarray:
     """Matrix representation of the Lindzen-Hou 1988 equal-area model.
 
@@ -743,11 +748,12 @@ def _lh88_model(
     sinlat_0 : sine of latitude of the prescribed heating maximum
     theta_ref : the reference potential temperature ($\theta_hat_0$ in LH88)
     delta_h : the prescribed fractional horizontal temperature difference
-    thermal_ro : the prescribed thermal rossby number
+    burg_delh : the planetary Burger number times delta_h, g H delta_h /
+        (Omega a)^2, which is the thermal Rossby number of Held and Hou (1980)
 
     """
     sinlat_south, sinlat_1, sinlat_north, theta_hat_1 = x
-    args = (sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, thermal_ro)
+    args = (sinlat_0, sinlat_1, theta_hat_1, theta_ref, delta_h, burg_delh)
     x0 = _lh88_amc_rce_theta_hat_diff(sinlat_south, *args)
     x1 = _lh88_amc_rce_theta_hat_diff(sinlat_north, *args)
     x2 = _lh88_cons_energy_integral(sinlat_south, *args)
@@ -760,7 +766,7 @@ def equal_area_lh88(
     sinlat_0: float,
     theta_ref: float = THETA_REF,
     delta_h: float = DELTA_H,
-    thermal_ro: float = 0.15,
+    burg_delh: float = 0.15,
 ) -> np.ndarray:
     """Solve the Lindzen-Hou 1988 equal-area model numerically.
 
@@ -779,8 +785,9 @@ def equal_area_lh88(
         Reference potential temperature (K). Default: THETA_REF.
     delta_h : float, optional
         Fractional horizontal temperature difference. Default: DELTA_H.
-    thermal_ro : float, optional
-        Thermal Rossby number. Default: 0.15.
+    burg_delh : float, optional
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980). Default: 0.15.
 
     Returns
     -------
@@ -794,7 +801,7 @@ def equal_area_lh88(
        2416-2427.
     """
     return _checked_root_solve(
-        _lh88_model, init_guess, (sinlat_0, theta_ref, delta_h, thermal_ro)
+        _lh88_model, init_guess, (sinlat_0, theta_ref, delta_h, burg_delh)
     )
 
 
@@ -1090,8 +1097,8 @@ def equal_area_bouss(
     theta_ref : float
         Reference potential temperature (K).
     del_h_over_ro : float
-        Ratio of delta_h to the thermal Rossby number, equal to
-        Omega^2 a^2 / (gH).
+        Ratio of delta_h to ``burg_delh``, the planetary Burger number times
+        delta_h, so equal to Omega^2 a^2 / (gH).
     _theta_rce_func : callable
         Function of sin(latitude) returning the RCE depth-averaged
         potential temperature.

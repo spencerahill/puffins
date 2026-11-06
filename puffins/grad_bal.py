@@ -276,8 +276,9 @@ def pot_temp_lin_ro_lata0_small_ang(
 
     If ``burg_num`` is given it overrides the planetary Burger number
     computed from ``grav``, ``height``, ``rot_rate``, and ``radius``; pass
-    ``burg_num = therm_ross_num / delta_h`` for consistency with a
-    thermal-Rossby-number parameterized equal-area solution.
+    ``burg_num = burg_delh / delta_h`` for consistency with an equal-area
+    solution parameterized by ``burg_delh``, the planetary Burger number
+    times delta_h.
 
     """
     if burg_num is None:

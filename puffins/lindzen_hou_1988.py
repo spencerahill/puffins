@@ -54,10 +54,10 @@ def dtheta_rce_lh88_dlat(lats, lat_max, delta_h, theta_ref=THETA_REF):
     return (-2 * delta_h * cosdeg(lats) * (sindeg(lats) - sindeg(lat_max))) / theta_ref
 
 
-def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+def u_rce_lh88(lats, lat_max, burg_delh, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
     """Gradient balance wind for the Lindzen and Hou 1988 forcing."""
     return (
-        (((1 + 2 * thermal_ro * (1 - sindeg(lat_max) / sindeg(lats))) ** 0.5) - 1)
+        (((1 + 2 * burg_delh * (1 - sindeg(lat_max) / sindeg(lats))) ** 0.5) - 1)
         * rot_rate
         * radius
         * cosdeg(lats)
@@ -65,29 +65,29 @@ def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EA
 
 
 def ang_mom_rce_lh88(
-    lat, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
+    lat, lat_max, burg_delh, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
 ):
     """Angular momentum under the Lindzen and Hou 1988 forcing."""
-    sqrt_arg = 1.0 + 2 * thermal_ro * (1 - sindeg(lat_max) / sindeg(lat))
+    sqrt_arg = 1.0 + 2 * burg_delh * (1 - sindeg(lat_max) / sindeg(lat))
     return rot_rate * radius**2 * cosdeg(lat) ** 2 * np.sqrt(sqrt_arg)
 
 
-def ang_mom_rce_lh88_zero(lat_max, thermal_ro):
+def ang_mom_rce_lh88_zero(lat_max, burg_delh):
     """LH88 forcing angular momentum zero cross approx."""
-    return sin2deg(sindeg(lat_max) * (2 * thermal_ro) / (2 * thermal_ro + 1))
+    return sin2deg(sindeg(lat_max) * (2 * burg_delh) / (2 * burg_delh + 1))
 
 
-def ang_mom_rce_lh88_zero_small_r(lat_max, thermal_ro):
+def ang_mom_rce_lh88_zero_small_r(lat_max, burg_delh):
     """LH88 forcing angular momentum zero cross approx; small thermal Ro."""
-    return sin2deg(2 * thermal_ro * sindeg(lat_max))
+    return sin2deg(2 * burg_delh * sindeg(lat_max))
 
 
-def ang_mom_rce_lh88_zero_unity_r(lat_max, thermal_ro):
+def ang_mom_rce_lh88_zero_unity_r(lat_max, burg_delh):
     """LH88 forcing angular momentum zero cross approx; unity thermal Ro."""
     return sin2deg(2.0 / 3.0 * sindeg(lat_max))
 
 
-def ang_mom_rce_lh88_zero_large_r(lat_max, thermal_ro=None):
+def ang_mom_rce_lh88_zero_large_r(lat_max, burg_delh=None):
     """LH88 forcing angular momentum zero cross approx; large thermal Ro."""
     return lat_max
 
@@ -102,7 +102,7 @@ def crit_vort_metric_rce_lh88(
     radius=RAD_EARTH,
 ):
     """Analytical solution for PH92 criticality applied to LH88 forcing."""
-    thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
+    burg_delh = therm_ross_num(delta_h, height, grav, rot_rate, radius)
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     return (
@@ -111,7 +111,7 @@ def crit_vort_metric_rce_lh88(
         * radius**2
         * coslat**3
         * sinlat
-        * (2 + thermal_ro * (4 - sindeg(ascent_lat) / sinlat * (3 + sinlat**-2)))
+        * (2 + burg_delh * (4 - sindeg(ascent_lat) / sinlat * (3 + sinlat**-2)))
     )
 
 
@@ -123,32 +123,32 @@ def abs_vort_rce_lh88(
     grav=GRAV_EARTH,
     rot_rate=ROT_RATE_EARTH,
     radius=RAD_EARTH,
-    thermal_ro=None,
+    burg_delh=None,
 ):
     """Analytical expression for absolute vorticity of LH88 forcing."""
-    if thermal_ro is None:
-        thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
+    if burg_delh is None:
+        burg_delh = therm_ross_num(delta_h, height, grav, rot_rate, radius)
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     sin_latmax = sindeg(lat_max)
-    power_arg = 1 + 2 * thermal_ro * (1 - sin_latmax / sinlat)
+    power_arg = 1 + 2 * burg_delh * (1 - sin_latmax / sinlat)
     term1 = 2 * rot_rate * power_arg**0.5
     term2 = 2 * sinlat - (
-        thermal_ro * (coslat**2) * sin_latmax / ((sinlat**2) * power_arg)
+        burg_delh * (coslat**2) * sin_latmax / ((sinlat**2) * power_arg)
     )
     return term1 * term2
 
 
-def _eta_rce_zero_lh88(lat, lat_max, therm_ro):
+def _eta_rce_zero_lh88(lat, lat_max, burg_delh):
     mu = sindeg(lat)
     mu_m = sindeg(lat_max)
-    r_star = therm_ro * mu_m
+    r_star = burg_delh * mu_m
     return np.rad2deg(
         (mu_m + 2 * r_star) * mu**3 - 1.5 * r_star * mu_m * mu**2 - 0.5 * r_star * mu_m
     )
 
 
-def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
+def abs_vort_rce_zero_lh88(lat_max, burg_delh, init_guess=5):
     """Numerically solved zero cross of LH88 forcing absolute vorticity.
 
     The zero crossing being solved for is that of last of three multiplicative
@@ -167,7 +167,7 @@ def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
         np.abs(lat_max),
         np.abs(init_guess),
         zero_bounds_guess_range,
-        funcargs=(therm_ro,),
+        funcargs=(burg_delh,),
     )
 
 

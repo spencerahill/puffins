@@ -213,41 +213,41 @@ def pot_temp_rce_hh80_small_ang(
 @overload
 def u_rce_hh80(
     lats: xr.DataArray,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     rot_rate: float = ...,
     radius: float = ...,
 ) -> xr.DataArray: ...
 @overload
 def u_rce_hh80(
     lats: ArrayLike,
-    therm_ross_num: xr.DataArray,
+    burg_delh: xr.DataArray,
     rot_rate: float = ...,
     radius: float = ...,
 ) -> xr.DataArray: ...
 @overload
 def u_rce_hh80(
     lats: np.ndarray,
-    therm_ross_num: np.ndarray | Scalar,
+    burg_delh: np.ndarray | Scalar,
     rot_rate: float = ...,
     radius: float = ...,
 ) -> np.ndarray: ...
 @overload
 def u_rce_hh80(
     lats: Scalar,
-    therm_ross_num: np.ndarray,
+    burg_delh: np.ndarray,
     rot_rate: float = ...,
     radius: float = ...,
 ) -> np.ndarray: ...
 @overload
 def u_rce_hh80(
     lats: Scalar,
-    therm_ross_num: Scalar,
+    burg_delh: Scalar,
     rot_rate: float = ...,
     radius: float = ...,
 ) -> Scalar: ...
 def u_rce_hh80(
     lats: ArrayLike,
-    therm_ross_num: ArrayLike,
+    burg_delh: ArrayLike,
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
 ) -> ArrayLike:
@@ -257,8 +257,9 @@ def u_rce_hh80(
     ----------
     lats : array-like
         Latitude (degrees).
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
     rot_rate : float, optional
         Planetary rotation rate (rad/s). Default: Earth.
     radius : float, optional
@@ -271,7 +272,7 @@ def u_rce_hh80(
     """
     return cast(
         ArrayLike,
-        rot_rate * radius * cosdeg(lats) * ((1 + 2 * therm_ross_num) ** 0.5 - 1),
+        rot_rate * radius * cosdeg(lats) * ((1 + 2 * burg_delh) ** 0.5 - 1),
     )
 
 
@@ -300,12 +301,12 @@ def dpot_temp_rce_hh80_dlat(lats: ArrayLike, delta_h: float) -> ArrayLike:
 
 
 @overload
-def u_crit_switch_lat_hh80(therm_ross_num: xr.DataArray) -> xr.DataArray: ...
+def u_crit_switch_lat_hh80(burg_delh: xr.DataArray) -> xr.DataArray: ...
 @overload
-def u_crit_switch_lat_hh80(therm_ross_num: np.ndarray) -> np.ndarray: ...
+def u_crit_switch_lat_hh80(burg_delh: np.ndarray) -> np.ndarray: ...
 @overload
-def u_crit_switch_lat_hh80(therm_ross_num: Scalar) -> Scalar: ...
-def u_crit_switch_lat_hh80(therm_ross_num: ArrayLike) -> ArrayLike:
+def u_crit_switch_lat_hh80(burg_delh: Scalar) -> Scalar: ...
+def u_crit_switch_lat_hh80(burg_delh: ArrayLike) -> ArrayLike:
     """Latitude where RCE and AMC winds are equal in the Held-Hou 1980 model.
 
     This is the supercriticality boundary: equatorward of this latitude,
@@ -313,32 +314,34 @@ def u_crit_switch_lat_hh80(therm_ross_num: ArrayLike) -> ArrayLike:
 
     Parameters
     ----------
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
 
     Returns
     -------
     float or array-like
         Critical latitude (degrees).
     """
-    return cast(ArrayLike, np.rad2deg(np.arccos((1 + 2 * therm_ross_num) ** -0.25)))
+    return cast(ArrayLike, np.rad2deg(np.arccos((1 + 2 * burg_delh) ** -0.25)))
 
 
 @overload
 def u_crit_switch_lat_hh80_small_angle(
-    therm_ross_num: xr.DataArray,
+    burg_delh: xr.DataArray,
 ) -> xr.DataArray: ...
 @overload
-def u_crit_switch_lat_hh80_small_angle(therm_ross_num: np.ndarray) -> np.ndarray: ...
+def u_crit_switch_lat_hh80_small_angle(burg_delh: np.ndarray) -> np.ndarray: ...
 @overload
-def u_crit_switch_lat_hh80_small_angle(therm_ross_num: Scalar) -> Scalar: ...
-def u_crit_switch_lat_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
+def u_crit_switch_lat_hh80_small_angle(burg_delh: Scalar) -> Scalar: ...
+def u_crit_switch_lat_hh80_small_angle(burg_delh: ArrayLike) -> ArrayLike:
     """Critical latitude in the small-angle limit of the HH80 model.
 
     Parameters
     ----------
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
 
     Returns
     -------
@@ -349,22 +352,23 @@ def u_crit_switch_lat_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     --------
     u_crit_switch_lat_hh80 : Full (non-small-angle) version.
     """
-    return cast(ArrayLike, np.rad2deg(therm_ross_num**0.5))
+    return cast(ArrayLike, np.rad2deg(burg_delh**0.5))
 
 
 @overload
-def hc_edge_hh80_small_angle(therm_ross_num: xr.DataArray) -> xr.DataArray: ...
+def hc_edge_hh80_small_angle(burg_delh: xr.DataArray) -> xr.DataArray: ...
 @overload
-def hc_edge_hh80_small_angle(therm_ross_num: np.ndarray) -> np.ndarray: ...
+def hc_edge_hh80_small_angle(burg_delh: np.ndarray) -> np.ndarray: ...
 @overload
-def hc_edge_hh80_small_angle(therm_ross_num: Scalar) -> Scalar: ...
-def hc_edge_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
+def hc_edge_hh80_small_angle(burg_delh: Scalar) -> Scalar: ...
+def hc_edge_hh80_small_angle(burg_delh: ArrayLike) -> ArrayLike:
     """Hadley cell edge in the small-angle limit (Eq. 16 of HH80).
 
     Parameters
     ----------
-    therm_ross_num : float or array-like
-        Thermal Rossby number.
+    burg_delh : float or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980).
 
     Returns
     -------
@@ -375,17 +379,17 @@ def hc_edge_hh80_small_angle(therm_ross_num: ArrayLike) -> ArrayLike:
     --------
     hc_edge_hh80 : Numerical solution of the full (non-small-angle) Eq. 17.
     """
-    return cast(ArrayLike, np.rad2deg((5 * therm_ross_num / 3) ** 0.5))
+    return cast(ArrayLike, np.rad2deg((5 * burg_delh / 3) ** 0.5))
 
 
 _DEFAULT_BOUND_GUESS_RANGE = np.arange(0.1, 90.1, 10)
 
 
-def _hc_edge_hh80_lhs(lat: float, therm_ross_num: float) -> float:
+def _hc_edge_hh80_lhs(lat: float, burg_delh: float) -> float:
     """Left hand side of Eq. 17 of Held Hou 1980 (right hand side is zero)."""
     y = sindeg(lat)
     return float(
-        (1 / 3) * (4 * therm_ross_num - 1) * y**3
+        (1 / 3) * (4 * burg_delh - 1) * y**3
         - y**5 / (1 - y**2)
         - y
         + 0.5 * np.log((1 + y) / (1 - y))
@@ -393,7 +397,7 @@ def _hc_edge_hh80_lhs(lat: float, therm_ross_num: float) -> float:
 
 
 def hc_edge_hh80(
-    therm_ross_num: SolverParamRange,
+    burg_delh: SolverParamRange,
     init_guess: float = 0.1,
     bound_guess_range: SolverGuessRange | None = None,
 ) -> xr.DataArray:
@@ -410,8 +414,9 @@ def hc_edge_hh80(
     Parameters
     ----------
 
-    therm_ross_num : scalar or array-like
-        Thermal rossby number value(s) for which to solve.
+    burg_delh : scalar or array-like
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
+        the thermal Rossby number of Held and Hou (1980). The value or values for which to solve.
     init_guess : float, optional
         Latitude (degrees) marking one end of the initial bracket. Default:
         0.1, just off the equator, where Eq. 17 is positive for any physical
@@ -425,7 +430,7 @@ def hc_edge_hh80(
 
     hc_edge : xarray.DataArray
         Array of the numerical solution for each thermal Rossby number value in
-        `therm_ross_num`. Entries for which no sign change was found anywhere
+        `burg_delh`. Entries for which no sign change was found anywhere
         in `bound_guess_range` are ``nan`` rather than an error, so a sweep
         over many thermal Rossby numbers is not derailed by one that fails to
         bracket. Check for ``nan`` if the bracket arguments are non-default.
@@ -438,7 +443,7 @@ def hc_edge_hh80(
     if bound_guess_range is None:
         bound_guess_range = _DEFAULT_BOUND_GUESS_RANGE
     return brentq_solver_sweep_param(
-        _hc_edge_hh80_lhs, therm_ross_num, init_guess, bound_guess_range
+        _hc_edge_hh80_lhs, burg_delh, init_guess, bound_guess_range
     )
 
 
