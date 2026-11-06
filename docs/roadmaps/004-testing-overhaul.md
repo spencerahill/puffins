@@ -15,9 +15,9 @@ function and enforced coverage thresholds in CI.
 
 ## Current State (as of 2026-10-13)
 
-- **28 test files** (26 module test files; `test_typing_overloads.py`, a
+- **29 test files** (27 module test files; `test_typing_overloads.py`, a
   compile-time type-contract file that yields no runtime tests; and
-  `test_init.py`, for package-level attributes), covering 26 of 31 modules
+  `test_init.py`, for package-level attributes), covering 27 of 31 modules
 - **1140 tests passing** (1 skipped, 10 xfailed)
 - **92% total line coverage**
 - The whole suite is warning-clean under CI's `-W error::RuntimeWarning`
@@ -38,7 +38,9 @@ Meets the ≥80% success criterion (25 modules): `bootstrap` 100, `budget_adj`
 `tropopause` 83, `vert_coords` 99.
 
 Below the bar, the remaining work (4 modules): `kuo_el` 19,
-`lindzen_hou_1988` 36, `plumb_hou_1992` 78, `fixed_temp_tropo` 39.
+`lindzen_hou_1988` 76, `plumb_hou_1992` 78, `fixed_temp_tropo` 39.
+`lindzen_hou_1988` gained `test_lindzen_hou_1988.py` (28 tests) with the
+fixes of issues #109, #110 and #114, lifting it from 36%.
 `budget_adj` went from 16 to 100 on 2026-10-25, when CI moved to pixi
 environments that install `windspharm` and `pyspharm` from conda-forge, so
 its tests stopped skipping there.
