@@ -82,8 +82,8 @@ requires-pixi = ">=0.81.0"
 [tool.pixi.dependencies]
 eofs = "*"
 matplotlib-base = ">=3.11"
-# Capped below 2.5, as in uv.lock (2.4.3), for mypy: with numpy 2.5.4, mypy
-# 1.19.1 and 1.20.2 stop on a `type` statement in numpy's stubs under
+# Capped below 2.5 for mypy, until issue #101 lifts the cap: with numpy 2.5.4,
+# mypy 1.19.1 and 1.20.2 stop on a `type` statement in numpy's stubs under
 # python_version 3.11, and mypy 2.4.0 reports 29 errors (2026-10-25).
 numpy = "<2.5"
 pymannkendall = "*"
@@ -100,7 +100,7 @@ windspharm = "*"
 
 [tool.pixi.feature.dev.dependencies]
 cftime = "*"
-# Pinned to 1.19, as in uv.lock (see numpy above).
+# Pinned to 1.19 for the reason given at the numpy cap above (issue #101).
 mypy = "1.19.*"
 pre-commit = "*"
 pytest = "*"
