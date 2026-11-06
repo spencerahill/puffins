@@ -252,24 +252,47 @@ class TestPotTempAvgUnifRoSmallAngEqAscent:
 # ---------------------------------------------------------------------------
 # Linear-in-latitude Rossby-number winds.
 # ---------------------------------------------------------------------------
+# RADIUS above equals the default RAD_EARTH, so it cannot show that a function
+# uses its ``radius`` argument; these tests use Mars's radius instead.
+RADIUS_LIN_RO = 3.3895e6
+# (lat_ascent, a latitude inside the cell, lat_descent, ross_ascent,
+# ross_descent) for a Northern Hemisphere cell and a cross-equatorial Southern
+# Hemisphere cell.
+LIN_RO_CELLS = [(8.0, 15.0, 25.0, 1.0, 0.3), (5.0, -12.5, -30.0, 0.8, 0.2)]
+# Step, in degrees, of the centered differences that recover Ro from the wind.
+LIN_RO_STEP = 1e-3
+
+
 class TestULinRo:
     @staticmethod
-    def _raw(lats, lat_a, lat_d, ro_a, ro_d, rot, rad):
-        u_ro_a = ro_a * (
+    def _raw(
+        lats: np.ndarray,
+        lat_a: float,
+        lat_d: float,
+        ro_a: float,
+        ro_d: float,
+        rot: float,
+        rad: float,
+    ) -> np.ndarray:
+        phi, phi_a, phi_d = np.deg2rad(lats), np.deg2rad(lat_a), np.deg2rad(lat_d)
+        slope = (ro_a - ro_d) / (np.sin(phi_d) - np.sin(phi_a))
+        ro_eq = ro_a + slope * np.sin(phi_a)
+        return np.asarray(
             rot
             * rad
-            * (np.cos(np.deg2rad(lat_a)) ** 2 - np.cos(np.deg2rad(lats)) ** 2)
-            / np.cos(np.deg2rad(lats))
+            / np.cos(phi)
+            * (
+                ro_eq * (np.cos(phi_a) ** 2 - np.cos(phi) ** 2)
+                - 2 * slope * (np.sin(phi) ** 3 - np.sin(phi_a) ** 3) / 3
+            )
         )
-        sinlat = np.sin(np.deg2rad(lats))
-        return u_ro_a - 2 * rot * rad * (ro_a - ro_d) / (
-            3 * np.sin(np.deg2rad(lat_d)) * np.cos(np.deg2rad(lats))
-        ) * (sinlat**3 - np.sin(np.deg2rad(lat_a)) ** 3)
 
     def test_known_values(self) -> None:
         lats = np.array([-25.0, 5.0, 30.0])
-        expected = self._raw(lats, 8.0, 25.0, 1.0, 0.3, ROT_RATE, RADIUS)
-        actual = u_lin_ro(lats, 8.0, 25.0, 1.0, 0.3, rot_rate=ROT_RATE, radius=RADIUS)
+        expected = self._raw(lats, 8.0, 25.0, 1.0, 0.3, ROT_RATE, RADIUS_LIN_RO)
+        actual = u_lin_ro(
+            lats, 8.0, 25.0, 1.0, 0.3, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
+        )
         np.testing.assert_allclose(actual, expected, rtol=1e-12)
 
     def test_reduces_to_unif_ro_when_ross_equal(self) -> None:
@@ -279,24 +302,106 @@ class TestULinRo:
         actual = u_lin_ro(lats, 8.0, 25.0, 0.6, 0.6)
         np.testing.assert_allclose(actual, expected, rtol=1e-12)
 
+    @pytest.mark.parametrize("lat_a,lat_mid,lat_d,ro_a,ro_d", LIN_RO_CELLS)
+    def test_rossby_number_profile(
+        self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
+    ) -> None:
+        """The wind's Ro = -zeta/f is ``ross_ascent`` at ``lat_ascent`` and
+        ``ross_descent`` at ``lat_descent``, and linear in sin(lat) between.
+
+        Ro is recovered from the wind by centered differences, whose measured
+        error is at most 1.9e-9 relative over both cells; rtol=1e-7 allows
+        more than 50 times that.
+        """
+
+        def u_cos(x: np.ndarray) -> np.ndarray:
+            u = np.asarray(
+                u_lin_ro(
+                    x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
+                )
+            )
+            return np.asarray(u * np.cos(np.deg2rad(x)))
+
+        lats = np.array([lat_a, lat_mid, lat_d])
+        phi = np.deg2rad(lats)
+        step = np.deg2rad(LIN_RO_STEP)
+        ducos_dphi = (u_cos(lats + LIN_RO_STEP) - u_cos(lats - LIN_RO_STEP)) / (
+            2 * step
+        )
+        ross = ducos_dphi / (RADIUS_LIN_RO * np.cos(phi)) / (2 * ROT_RATE * np.sin(phi))
+        sin, sin_a, sin_d = np.sin(phi), np.sin(np.deg2rad(lat_a)), np.sin(phi[-1])
+        expected = ro_a - (ro_a - ro_d) * (sin - sin_a) / (sin_d - sin_a)
+        np.testing.assert_allclose(ross, expected, rtol=1e-7)
+
+    @pytest.mark.parametrize("lat_a,lat_mid,lat_d,ro_a,ro_d", LIN_RO_CELLS)
+    def test_zero_at_ascent_latitude(
+        self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
+    ) -> None:
+        u = u_lin_ro(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS_LIN_RO)
+        assert float(u) == pytest.approx(0.0, abs=1e-12)
+
 
 class TestULinRoSmallAng:
     @staticmethod
-    def _raw(lats, lat_a, lat_d, ro_a, ro_d, rot, rad):
-        u_ro_a = ro_a * rot * rad * (np.deg2rad(lats) ** 2 - np.deg2rad(lat_a) ** 2)
-        delta_ro = ro_a - ro_d
-        latrad = np.deg2rad(lats)
-        return u_ro_a - 2 * delta_ro * rot * rad / (3 * np.deg2rad(lat_d)) * (
-            latrad**3 - np.deg2rad(lat_a) ** 3
+    def _raw(
+        lats: np.ndarray,
+        lat_a: float,
+        lat_d: float,
+        ro_a: float,
+        ro_d: float,
+        rot: float,
+        rad: float,
+    ) -> np.ndarray:
+        phi, phi_a, phi_d = np.deg2rad(lats), np.deg2rad(lat_a), np.deg2rad(lat_d)
+        slope = (ro_a - ro_d) / (phi_d - phi_a)
+        ro_eq = ro_a + slope * phi_a
+        return np.asarray(
+            rot
+            * rad
+            * (ro_eq * (phi**2 - phi_a**2) - 2 * slope * (phi**3 - phi_a**3) / 3)
         )
 
     def test_known_values(self) -> None:
         lats = np.array([-15.0, 10.0, 20.0])
-        expected = self._raw(lats, 5.0, 20.0, 1.0, 0.4, ROT_RATE, RADIUS)
+        expected = self._raw(lats, 5.0, 20.0, 1.0, 0.4, ROT_RATE, RADIUS_LIN_RO)
         actual = u_lin_ro_small_ang(
-            lats, 5.0, 20.0, 1.0, 0.4, rot_rate=ROT_RATE, radius=RADIUS
+            lats, 5.0, 20.0, 1.0, 0.4, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
         )
         np.testing.assert_allclose(actual, expected, rtol=1e-12)
+
+    @pytest.mark.parametrize("lat_a,lat_mid,lat_d,ro_a,ro_d", LIN_RO_CELLS)
+    def test_rossby_number_profile(
+        self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
+    ) -> None:
+        """The wind's small-angle Ro is ``ross_ascent`` at ``lat_ascent`` and
+        ``ross_descent`` at ``lat_descent``, and linear in latitude between.
+
+        Small-angle Ro is (du/dlat) / (2 Omega a lat), recovered by centered
+        differences, whose measured error is at most 1.9e-9 relative over
+        both cells; rtol=1e-7 allows more than 50 times that.
+        """
+
+        def u(x: np.ndarray) -> np.ndarray:
+            return np.asarray(
+                u_lin_ro_small_ang(
+                    x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
+                )
+            )
+
+        lats = np.array([lat_a, lat_mid, lat_d])
+        phi = np.deg2rad(lats)
+        step = np.deg2rad(LIN_RO_STEP)
+        du_dphi = (u(lats + LIN_RO_STEP) - u(lats - LIN_RO_STEP)) / (2 * step)
+        ross = du_dphi / RADIUS_LIN_RO / (2 * ROT_RATE * phi)
+        expected = ro_a - (ro_a - ro_d) * (lats - lat_a) / (lat_d - lat_a)
+        np.testing.assert_allclose(ross, expected, rtol=1e-7)
+
+    @pytest.mark.parametrize("lat_a,lat_mid,lat_d,ro_a,ro_d", LIN_RO_CELLS)
+    def test_zero_at_ascent_latitude(
+        self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
+    ) -> None:
+        u = u_lin_ro_small_ang(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS_LIN_RO)
+        assert float(u) == pytest.approx(0.0, abs=1e-12)
 
 
 class TestPotTempLinRoLata0SmallAng:

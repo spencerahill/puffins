@@ -180,23 +180,37 @@ def u_lin_ro(
 ) -> ArrayLike:
     r"""Zonal wind for Rossby number linear in sin(latitude).
 
-    Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
-    inputted separately, they only appear together in the combination
-    (\Ro_a-\Ro_d)/lat_d, resulting in only three rather than four free
-    parameters (for fixed planetary rotation rate and radius).
+    The local Rossby number of the returned wind, minus its relative vorticity
+    over the Coriolis parameter, varies linearly in sin(lat) from
+    ``ross_ascent`` at ``lat_ascent`` to ``ross_descent`` at ``lat_descent``::
+
+        Ro(lat) = ross_ascent - slope * (sin(lat) - sin(lat_ascent))
+        slope = (ross_ascent - ross_descent) / (sin(lat_descent) - sin(lat_ascent))
+
+    The wind vanishes at ``lat_ascent``. Latitudes are in degrees and signed,
+    so ``lat_descent`` is negative for a Southern Hemisphere cell, and
+    ``lat_descent`` must differ from ``lat_ascent``.
+
+    Note that, though lat_descent and ross_descent are inputted separately,
+    they only appear together in the slope, resulting in only three rather
+    than four free parameters (for fixed planetary rotation rate and radius).
 
     """
-    u_ro_a = u_unif_ro(lat, lat_ascent, ross_ascent, rot_rate=rot_rate, radius=radius)
     sinlat = sindeg(lat)
+    sin_ascent = sindeg(lat_ascent)
+    slope = (ross_ascent - ross_descent) / (sindeg(lat_descent) - sin_ascent)
+    # The profile's intercept at sin(lat) = 0, i.e. the Rossby number that the
+    # line through the two edges reaches at the equator.
+    ross_equator = ross_ascent + slope * sin_ascent
     return cast(
         ArrayLike,
-        u_ro_a
-        - 2
-        * rot_rate
+        rot_rate
         * radius
-        * (ross_ascent - ross_descent)
-        / (3 * sindeg(lat_descent) * cosdeg(lat))
-        * (sinlat**3 - sindeg(lat_ascent) ** 3),
+        / cosdeg(lat)
+        * (
+            ross_equator * (sinlat**2 - sin_ascent**2)
+            - 2 * slope * (sinlat**3 - sin_ascent**3) / 3
+        ),
     )
 
 
@@ -211,26 +225,37 @@ def u_lin_ro_small_ang(
 ) -> ArrayLike:
     r"""Small-angle zonal wind for Rossby number linear in latitude.
 
-    Note that, though lat_descent (\lat_d) and ross_descent (\Ro_d) are
-    inputted separately, they only appear together in the combination
-    (\Ro_a-\Ro_d)/lat_d, resulting in only three rather than four free
-    parameters (for fixed planetary rotation rate and radius).
+    The small-angle Rossby number of the returned wind,
+    ``(du/dlat) / (2 * rot_rate * radius * lat)`` with lat in radians, varies
+    linearly in lat from ``ross_ascent`` at ``lat_ascent`` to ``ross_descent``
+    at ``lat_descent``::
+
+        Ro(lat) = ross_ascent - slope * (lat - lat_ascent)
+        slope = (ross_ascent - ross_descent) / (lat_descent - lat_ascent)
+
+    The wind vanishes at ``lat_ascent``. Latitudes are in degrees and signed,
+    so ``lat_descent`` is negative for a Southern Hemisphere cell, and
+    ``lat_descent`` must differ from ``lat_ascent``.
+
+    Note that, though lat_descent and ross_descent are inputted separately,
+    they only appear together in the slope, resulting in only three rather
+    than four free parameters (for fixed planetary rotation rate and radius).
 
     """
-    u_ro_a = u_unif_ro_small_ang(
-        lat, lat_ascent, ross_ascent, rot_rate=rot_rate, radius=radius
-    )
-    delta_ro = ross_ascent - ross_descent
     latrad = np.deg2rad(lat)
+    lat_ascent_rad = np.deg2rad(lat_ascent)
+    slope = (ross_ascent - ross_descent) / (np.deg2rad(lat_descent) - lat_ascent_rad)
+    # The profile's intercept at lat = 0, i.e. the Rossby number that the line
+    # through the two edges reaches at the equator.
+    ross_equator = ross_ascent + slope * lat_ascent_rad
     return cast(
         ArrayLike,
-        u_ro_a
-        - 2
-        * delta_ro
-        * rot_rate
+        rot_rate
         * radius
-        / (3 * np.deg2rad(lat_descent))
-        * (latrad**3 - np.deg2rad(lat_ascent) ** 3),
+        * (
+            ross_equator * (latrad**2 - lat_ascent_rad**2)
+            - 2 * slope * (latrad**3 - lat_ascent_rad**3) / 3
+        ),
     )
 
 
