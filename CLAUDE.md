@@ -76,7 +76,7 @@ Use constants from `constants.py` as default parameters. Functions typically acc
 ### Coordinate Conventions
 - Latitude: degrees, -90 to 90
 - Pressure levels: typically Pascal. `vert_coords.to_pascal` converts hPa input to Pa, detecting hPa from magnitude; `dynamics.ross_num_gen` takes an `hpa_to_pa` flag
-- Streamfunctions: signed such that counter-clockwise circulation in meridional plane is positive
+- Streamfunctions: signed as `had_cell.merid_streamfunc` returns them, positive for clockwise circulation in the latitude-height plane drawn with latitude increasing to the right and height upward. So the Northern Hemisphere Hadley cell, with northward flow aloft, is positive. `had_cells_strength` and the Hadley cell edge functions identify the cells by this sign, so a test fixture or a negated field of the opposite sign gets wrong cells, usually without a warning
 
 ### Working-Tree Roles and Consumption by Other Projects
 Two local copies of this repo exist, with strictly separated roles:

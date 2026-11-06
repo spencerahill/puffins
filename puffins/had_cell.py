@@ -206,6 +206,14 @@ def had_cells_strength(
     without the warning, because a Hadley cell and a Ferrel cell then make up
     a pair of the expected senses.
 
+    With `do_interp_lat`, each center's latitude is interpolated between
+    gridpoints. Where that fails, the center is placed at its gridpoint
+    instead, with a separate `UserWarning` that gives the interpolation's
+    error. Interpolation fails, for example, when the extremum lies at the
+    edge of the latitudes searched, such as at `min_lat` or `max_lat`, or
+    where the streamfunction is flat in latitude, as along a level where it
+    is zero, or when the streamfunction contains NaN.
+
     """
     lat = strmfunc[lat_str]
 
@@ -223,33 +231,57 @@ def had_cells_strength(
         lev_str=lev_str,
     )
 
-    cell_pos_max_strength = had_cell_strength(strmfunc, **kwargs_hc_strength)
-    cell_neg_max_strength = -1 * had_cell_strength(-1 * strmfunc, **kwargs_hc_strength)
+    def signed_cell_strength(field: xr.DataArray, sign: int) -> xr.DataArray:
+        """The maximum of `field` if `sign` is 1, or its minimum if -1.
 
-    # As plain numbers: with do_interp_lat, each latitude is a coordinate
-    # along a length-one dimension, and comparing the latitude axis with it
-    # would align the two on latitude values they do not share.
+        Raises ValueError when `field` has no values to search.
+        """
+        try:
+            return sign * had_cell_strength(sign * field, **kwargs_hc_strength)
+        except ValueError as err:
+            if not do_interp_lat:
+                raise
+            interp_error = err
+        cell = sign * had_cell_strength(
+            sign * field, **{**kwargs_hc_strength, "do_interp_lat": False}
+        )
+        warnings.warn(
+            f"Interpolating the latitude of a cell center failed ({interp_error}), "
+            f"so the center is placed at the gridpoint {cell[lat_str].item():.4g}. "
+            "Interpolation fails, for example, when the extremum lies at the "
+            "edge of the latitudes searched or where the streamfunction is flat "
+            "in latitude, or when the streamfunction contains NaN.",
+            stacklevel=3,
+        )
+        return cell
+
+    cell_pos_max_strength = signed_cell_strength(strmfunc, 1)
+    cell_neg_max_strength = signed_cell_strength(strmfunc, -1)
+
+    # As plain numbers: each latitude coordinate also has its cell's level
+    # attached as a scalar coordinate, which conflicts with the field's level
+    # dimension when `where` drops the masked latitudes below.
     lat_pos_max = cell_pos_max_strength.coords[lat_str].item()
     lat_neg_max = cell_neg_max_strength.coords[lat_str].item()
 
-    # The two candidate (southern cell, northern cell) pairs.
+    # The two candidate (southern cell, northern cell) pairs. The masked
+    # latitudes are dropped: kept as NaN, they make the cubic interpolation
+    # under do_interp_lat return NaN at every latitude.
     pairs: list[tuple[xr.DataArray, xr.DataArray]] = []
     try:
-        cell_south_of_pos_strength = -1 * had_cell_strength(
-            -1 * strmfunc.where(lat < lat_pos_max, drop=True),
-            **kwargs_hc_strength,
+        cell_south_of_pos_strength = signed_cell_strength(
+            strmfunc.where(lat < lat_pos_max, drop=True), -1
         )
     except ValueError:
-        pass
+        pass  # No values south of the global maximum.
     else:
         pairs.append((cell_south_of_pos_strength, cell_pos_max_strength))
     try:
-        cell_north_of_neg_strength = had_cell_strength(
-            strmfunc.where(lat > lat_neg_max, drop=True),
-            **kwargs_hc_strength,
+        cell_north_of_neg_strength = signed_cell_strength(
+            strmfunc.where(lat > lat_neg_max, drop=True), 1
         )
     except ValueError:
-        pass
+        pass  # No values north of the global minimum.
     else:
         pairs.append((cell_neg_max_strength, cell_north_of_neg_strength))
     if not pairs:

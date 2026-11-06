@@ -531,8 +531,13 @@ class TestHadCellsStrength:
         # interpolated center is the cell's center. In the last field the
         # southern cell is centered between gridpoints, and is the partner
         # found south of the global maximum, so its interpolated center
-        # requires the search for that partner to interpolate.
-        result = had_cells_strength(sf, do_interp_lat=True)
+        # requires the search for that partner to interpolate. Every search
+        # interpolates successfully, so none falls back on its gridpoint.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "error", message="Interpolating the latitude", category=UserWarning
+            )
+            result = had_cells_strength(sf, do_interp_lat=True)
         for cell, (lat_center, strength) in zip(
             ("had_cell_sh", "had_cell_nh"), expected, strict=True
         ):
@@ -540,6 +545,120 @@ class TestHadCellsStrength:
                 lat_center, abs=1e-6
             )
             assert result.sel(cell=cell).item() == pytest.approx(strength, rel=1e-3)
+
+    @pytest.mark.parametrize(
+        ("cells", "min_lat", "max_lat", "expected_lats"),
+        [
+            (_NH_WINTER_CELLS, -25.5, None, [-25.0, 5.0]),
+            (_NH_WINTER_CELLS, -24.5, None, [-24.0, 5.0]),
+            (_SH_WINTER_CELLS, None, 25.5, [-5.0, 25.0]),
+        ],
+        ids=["nh_winter_center_at_min_lat", "nh_winter_cut_by_min_lat", "sh_winter"],
+    )
+    def test_do_interp_lat_partner_at_domain_edge(
+        self,
+        cells: list[tuple[float, float, float]],
+        min_lat: float | None,
+        max_lat: float | None,
+        expected_lats: list[float],
+    ) -> None:
+        # The summer cell's gridpoint extremum is the last latitude inside
+        # the bound, where the latitude derivative has no zero crossing to
+        # interpolate. The summer cell's center is placed at that gridpoint,
+        # with a warning, and the cells are those found without interpolation.
+        sf = _bump_cells_streamfunc(cells)
+        expected = had_cells_strength(sf, min_lat=min_lat, max_lat=max_lat)
+        with pytest.warns(UserWarning, match="Interpolating the latitude") as record:
+            result = had_cells_strength(
+                sf, min_lat=min_lat, max_lat=max_lat, do_interp_lat=True
+            )
+        assert not any("sense of circulation" in str(w.message) for w in record)
+        assert result[LAT_STR].values.tolist() == pytest.approx(expected_lats, abs=1e-6)
+        assert expected[LAT_STR].values.tolist() == expected_lats
+        assert result.values.tolist() == pytest.approx(
+            expected.values.tolist(), rel=1e-3
+        )
+
+    @pytest.mark.parametrize("max_lat", [None, 50.0], ids=["min_lat", "both_bounds"])
+    def test_do_interp_lat_bounds_exclude_summer_cell(
+        self, max_lat: float | None
+    ) -> None:
+        # min_lat excludes the northern-winter field's summer cell at 25S, so
+        # no negative value lies south of the winter cell. With interpolation,
+        # as without it, the southern entry is not negative and the warning
+        # for a missing cell is issued. The southern entry is zero along the
+        # top level, where interpolation fails, so it is placed at its
+        # gridpoint, with the other warning.
+        sf = _bump_cells_streamfunc(_NH_WINTER_CELLS)
+        with pytest.warns(UserWarning) as record:
+            result = had_cells_strength(
+                sf, min_lat=-12.0, max_lat=max_lat, do_interp_lat=True
+            )
+        messages = [str(w.message) for w in record]
+        assert any("sense of circulation" in m for m in messages)
+        assert any("Interpolating the latitude" in m for m in messages)
+        nh = result.sel(cell="had_cell_nh")
+        assert nh[LAT_STR].item() == pytest.approx(5.0, abs=1e-6)
+        assert nh.item() == pytest.approx(2e11, rel=1e-3)
+        assert result.sel(cell="had_cell_sh").item() >= 0.0
+
+    @pytest.mark.parametrize(
+        ("peak", "center", "present", "missing"),
+        [
+            (1e11, 10.0, "had_cell_nh", "had_cell_sh"),
+            (-1e11, -10.0, "had_cell_sh", "had_cell_nh"),
+        ],
+        ids=["lone_northern_cell", "lone_southern_cell"],
+    )
+    def test_do_interp_lat_one_cell_warns(
+        self, peak: float, center: float, present: str, missing: str
+    ) -> None:
+        # A lone cell's field is zero along the top level, where the global
+        # extremum of the missing cell's sign lies, so the latitude
+        # derivative there has no zero crossing to interpolate. That
+        # extremum is placed at its gridpoint, and the missing cell is
+        # flagged as it is without interpolation.
+        sf = _bump_cells_streamfunc([(peak, center, 30.0)])
+        with pytest.warns(UserWarning) as record:
+            result = had_cells_strength(sf, do_interp_lat=True)
+        messages = [str(w.message) for w in record]
+        assert any("sense of circulation" in m for m in messages)
+        assert any("Interpolating the latitude" in m for m in messages)
+        cell = result.sel(cell=present)
+        assert cell[LAT_STR].item() == pytest.approx(center, abs=1e-6)
+        assert cell.item() == pytest.approx(peak, rel=1e-3)
+        assert result.sel(cell=missing).item() * peak <= 0.0
+
+    @pytest.mark.parametrize(
+        ("plev_spike", "kwargs"),
+        [
+            (150.0, {"min_plev": 300.0}),
+            (950.0, {"max_plev": 900.0}),
+            (150.0, {"do_avg_vert": True}),
+        ],
+        ids=["min_plev", "max_plev", "do_avg_vert"],
+    )
+    def test_vertical_options_reach_gridpoint_fallback(
+        self, plev_spike: float, kwargs: dict[str, Any]
+    ) -> None:
+        # A spike of -5e11 at 25S, the summer cell's center and the last
+        # latitude inside min_lat, at a level the option excludes or averages
+        # over. Under interpolation that cell's center falls back on its
+        # gridpoint, and the fallback search must receive the option too.
+        # With do_avg_vert every search falls back, since had_cell_strength
+        # cannot interpolate a field averaged over its levels.
+        sf = _bump_cells_streamfunc(_NH_WINTER_CELLS).copy(deep=True)
+        sf.loc[{LAT_STR: -25.0, LEV_STR: plev_spike}] = -5e11
+        spike = had_cells_strength(sf, min_lat=-25.5).sel(cell="had_cell_sh")
+        assert spike.item() == -5e11
+        expected = had_cells_strength(sf, min_lat=-25.5, **kwargs)
+        with pytest.warns(UserWarning, match="Interpolating the latitude"):
+            result = had_cells_strength(sf, min_lat=-25.5, do_interp_lat=True, **kwargs)
+        sh, sh_expected = (arr.sel(cell="had_cell_sh") for arr in (result, expected))
+        assert sh_expected.item() != spike.item()
+        assert sh.item() == sh_expected.item()
+        assert sh[LAT_STR].item() == sh_expected[LAT_STR].item() == -25.0
+        assert sh[LEV_STR].item() == sh_expected[LEV_STR].item()
 
     def test_no_pair_raises(self) -> None:
         # A field decreasing northward at every level has its maximum at the
