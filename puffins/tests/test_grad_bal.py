@@ -14,6 +14,7 @@ import xarray as xr
 
 from puffins.calculus import lat_deriv
 from puffins.constants import P0
+from puffins.dynamics import abs_vort_from_u
 from puffins.grad_bal import (
     abs_ang_mom_unif_ro,
     abs_vort_zero_cross_cqe,
@@ -37,13 +38,14 @@ from puffins.grad_bal import (
     u_unif_ro,
     u_unif_ro_small_ang,
 )
+from puffins.interp import zero_cross_interp
 from puffins.names import LAT_STR, LEV_STR
 
 # Non-default (non-Earth) parameters, so every parameter is exercised away
 # from its default value.
 THETA_REF = 330.0
-GRAV = 9.81
-RADIUS = 6.371e6
+GRAV = 9.6
+RADIUS = 6.0e6
 ROT_RATE = 7.292e-5
 HEIGHT = 12.0e3
 
@@ -252,9 +254,6 @@ class TestPotTempAvgUnifRoSmallAngEqAscent:
 # ---------------------------------------------------------------------------
 # Linear-in-latitude Rossby-number winds.
 # ---------------------------------------------------------------------------
-# RADIUS above equals the default RAD_EARTH, so it cannot show that a function
-# uses its ``radius`` argument; these tests use Mars's radius instead.
-RADIUS_LIN_RO = 3.3895e6
 # (lat_ascent, a latitude inside the cell, lat_descent, ross_ascent,
 # ross_descent) for a Northern Hemisphere cell and a cross-equatorial Southern
 # Hemisphere cell.
@@ -289,10 +288,8 @@ class TestULinRo:
 
     def test_known_values(self) -> None:
         lats = np.array([-25.0, 5.0, 30.0])
-        expected = self._raw(lats, 8.0, 25.0, 1.0, 0.3, ROT_RATE, RADIUS_LIN_RO)
-        actual = u_lin_ro(
-            lats, 8.0, 25.0, 1.0, 0.3, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
-        )
+        expected = self._raw(lats, 8.0, 25.0, 1.0, 0.3, ROT_RATE, RADIUS)
+        actual = u_lin_ro(lats, 8.0, 25.0, 1.0, 0.3, rot_rate=ROT_RATE, radius=RADIUS)
         np.testing.assert_allclose(actual, expected, rtol=1e-12)
 
     def test_reduces_to_unif_ro_when_ross_equal(self) -> None:
@@ -316,9 +313,7 @@ class TestULinRo:
 
         def u_cos(x: np.ndarray) -> np.ndarray:
             u = np.asarray(
-                u_lin_ro(
-                    x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
-                )
+                u_lin_ro(x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS)
             )
             return np.asarray(u * np.cos(np.deg2rad(x)))
 
@@ -328,7 +323,7 @@ class TestULinRo:
         ducos_dphi = (u_cos(lats + LIN_RO_STEP) - u_cos(lats - LIN_RO_STEP)) / (
             2 * step
         )
-        ross = ducos_dphi / (RADIUS_LIN_RO * np.cos(phi)) / (2 * ROT_RATE * np.sin(phi))
+        ross = ducos_dphi / (RADIUS * np.cos(phi)) / (2 * ROT_RATE * np.sin(phi))
         sin, sin_a, sin_d = np.sin(phi), np.sin(np.deg2rad(lat_a)), np.sin(phi[-1])
         expected = ro_a - (ro_a - ro_d) * (sin - sin_a) / (sin_d - sin_a)
         np.testing.assert_allclose(ross, expected, rtol=1e-7)
@@ -337,7 +332,7 @@ class TestULinRo:
     def test_zero_at_ascent_latitude(
         self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
     ) -> None:
-        u = u_lin_ro(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS_LIN_RO)
+        u = u_lin_ro(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS)
         assert float(u) == pytest.approx(0.0, abs=1e-12)
 
 
@@ -363,9 +358,9 @@ class TestULinRoSmallAng:
 
     def test_known_values(self) -> None:
         lats = np.array([-15.0, 10.0, 20.0])
-        expected = self._raw(lats, 5.0, 20.0, 1.0, 0.4, ROT_RATE, RADIUS_LIN_RO)
+        expected = self._raw(lats, 5.0, 20.0, 1.0, 0.4, ROT_RATE, RADIUS)
         actual = u_lin_ro_small_ang(
-            lats, 5.0, 20.0, 1.0, 0.4, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
+            lats, 5.0, 20.0, 1.0, 0.4, rot_rate=ROT_RATE, radius=RADIUS
         )
         np.testing.assert_allclose(actual, expected, rtol=1e-12)
 
@@ -384,7 +379,7 @@ class TestULinRoSmallAng:
         def u(x: np.ndarray) -> np.ndarray:
             return np.asarray(
                 u_lin_ro_small_ang(
-                    x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS_LIN_RO
+                    x, lat_a, lat_d, ro_a, ro_d, rot_rate=ROT_RATE, radius=RADIUS
                 )
             )
 
@@ -392,7 +387,7 @@ class TestULinRoSmallAng:
         phi = np.deg2rad(lats)
         step = np.deg2rad(LIN_RO_STEP)
         du_dphi = (u(lats + LIN_RO_STEP) - u(lats - LIN_RO_STEP)) / (2 * step)
-        ross = du_dphi / RADIUS_LIN_RO / (2 * ROT_RATE * phi)
+        ross = du_dphi / RADIUS / (2 * ROT_RATE * phi)
         expected = ro_a - (ro_a - ro_d) * (lats - lat_a) / (lat_d - lat_a)
         np.testing.assert_allclose(ross, expected, rtol=1e-7)
 
@@ -400,7 +395,7 @@ class TestULinRoSmallAng:
     def test_zero_at_ascent_latitude(
         self, lat_a: float, lat_mid: float, lat_d: float, ro_a: float, ro_d: float
     ) -> None:
-        u = u_lin_ro_small_ang(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS_LIN_RO)
+        u = u_lin_ro_small_ang(lat_a, lat_a, lat_d, ro_a, ro_d, radius=RADIUS)
         assert float(u) == pytest.approx(0.0, abs=1e-12)
 
 
@@ -684,6 +679,24 @@ class TestAbsVortZeroCrossCqe:
             abs_vort_zero_cross_cqe(
                 theta_b, temp_tropo=200.0, rot_rate=ROT_RATE, radius=RADIUS
             )
+
+    def test_crossing_matches_composition(self) -> None:
+        """A profile peaking off the equator, at 5 degrees, makes the absolute
+        vorticity change sign, and the crossing equals the one found by
+        composing the three steps directly. Every latitude is positive, so the
+        northern-hemisphere restriction removes nothing. This pins the
+        forwarding of ``radius``: the crossing is near 6.70 degrees at RADIUS
+        and 6.45 at Earth's radius."""
+        lats = np.linspace(1.0, 40.0, 40)
+        theta_b = _lat_da(lats, 340.0 - 0.005 * (lats - 5.0) ** 2)
+        u = grad_wind_cqe(theta_b, temp_tropo=200.0, rot_rate=ROT_RATE, radius=RADIUS)
+        eta = abs_vort_from_u(u, rot_rate=ROT_RATE, radius=RADIUS)
+        expected = zero_cross_interp(eta, LAT_STR)
+        actual = abs_vort_zero_cross_cqe(
+            theta_b, temp_tropo=200.0, rot_rate=ROT_RATE, radius=RADIUS
+        )
+        assert np.isfinite(actual.values).all()
+        np.testing.assert_allclose(actual.values, expected.values, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
