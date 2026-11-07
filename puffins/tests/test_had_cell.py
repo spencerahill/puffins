@@ -1,5 +1,6 @@
 """Tests for had_cell module."""
 
+import inspect
 import warnings
 from typing import Any, cast
 
@@ -1245,3 +1246,13 @@ class TestFixedRoBciEdgeSolver:
         h00lat = c_descent * np.rad2deg((burg * delta_v / (2.0 * ross_num)) ** 0.25)
         resid = _bci_polynomial_residual(edge, ascentlat, float(h00lat))
         assert abs(resid) < 1e-6, (edge, resid)
+
+
+@pytest.mark.parametrize(
+    "func", [lat_ascent_eta0_approx, fixed_ro_bci_edge_supercrit_ascent]
+)
+def test_takes_burg_delh_sin_latmax(func: Any) -> None:
+    """Callers pass Bu * delta_h * sin(lat_max) by this keyword (#115)."""
+    params = inspect.signature(func).parameters
+    assert "burg_delh_sin_latmax" in params
+    assert not {"therm_ro", "therm_ross"} & set(params)

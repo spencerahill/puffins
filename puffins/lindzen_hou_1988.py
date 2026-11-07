@@ -104,8 +104,10 @@ def ang_mom_rce_lh88(
 
 
 def ang_mom_rce_lh88_zero(lat_max, burg_delh):
-    """LH88 forcing angular momentum zero cross approx.
+    """LH88 forcing angular momentum zero cross, exact.
 
+    The latitude where the square-root argument of ``ang_mom_rce_lh88``
+    vanishes, sin(lat) = sin(lat_max) 2 burg_delh / (1 + 2 burg_delh).
     ``burg_delh`` here and in the ``_small_r``, ``_unity_r`` and ``_large_r``
     approximations is the planetary Burger number times delta_h,
     g H delta_h / (Omega a)^2, as in ``u_rce_lh88``.
@@ -114,17 +116,17 @@ def ang_mom_rce_lh88_zero(lat_max, burg_delh):
 
 
 def ang_mom_rce_lh88_zero_small_r(lat_max, burg_delh):
-    """LH88 forcing angular momentum zero cross approx; small thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; small burg_delh."""
     return sin2deg(2 * burg_delh * sindeg(lat_max))
 
 
 def ang_mom_rce_lh88_zero_unity_r(lat_max, burg_delh):
-    """LH88 forcing angular momentum zero cross approx; unity thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; burg_delh = 1."""
     return sin2deg(2.0 / 3.0 * sindeg(lat_max))
 
 
 def ang_mom_rce_lh88_zero_large_r(lat_max, burg_delh=None):
-    """LH88 forcing angular momentum zero cross approx; large thermal Ro."""
+    """LH88 forcing angular momentum zero cross approx; large burg_delh."""
     return lat_max
 
 
@@ -141,9 +143,10 @@ def crit_vort_metric_rce_lh88(
 
     Equal to a^-2 d(M_rce^2)/d(lat), with lat in radians and M_rce the
     angular momentum of ``ang_mom_rce_lh88`` with ``lat_max`` set to
-    ``ascent_lat`` and ``burg_delh`` computed from the arguments as
-    ``dynamics.therm_ross_num(delta_h, height)`` at its default lat_max of
-    90, the planetary Burger number times delta_h.
+    ``ascent_lat`` and ``burg_delh`` the planetary Burger number times
+    delta_h, computed as ``dynamics.therm_ross_num(delta_h, height,
+    grav=grav, rot_rate=rot_rate, radius=radius)`` at its default lat_max of
+    90.
     """
     burg_delh = therm_ross_num(
         delta_h, height, grav=grav, rot_rate=rot_rate, radius=radius
@@ -194,8 +197,8 @@ def abs_vort_rce_lh88(
         Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
         which omits the sin(lat_max) factor of the thermal Rossby number
         Ro_th of Hill, Bordoni and Mitchell (2021, Eq. 7). Default: computed
-        from the other arguments as ``dynamics.therm_ross_num(delta_h,
-        height)`` at its default lat_max of 90.
+        as ``dynamics.therm_ross_num(delta_h, height, grav=grav,
+        rot_rate=rot_rate, radius=radius)`` at its default lat_max of 90.
 
     Returns
     -------
@@ -241,24 +244,28 @@ def abs_vort_rce_zero_lh88(lat_max, burg_delh, init_guess=5):
 
     Parameters
     ----------
-    lat_max : float or array-like
+    lat_max : float or 1-D array-like
         Latitude of maximum forcing (degrees). A negative value gives the
-        root mirrored about the equator.
+        root mirrored about the equator. At ``lat_max = 0`` the result is NaN
+        for any ``init_guess``, although the zero crossing is then the
+        equator.
     burg_delh : float
         Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
         which omits the sin(lat_max) factor of Ro_th.
     init_guess : float, optional
-        Latitude (degrees) at which the bracketing search starts, before it
-        marches through 0.1, 20.1, 40.1, 60.1, 80.1 and 90 degrees. A root
-        equatorward of 0.1 degrees, which arises for Ro_th below about 1e-8,
-        is found only from an init_guess below it; otherwise the result is
-        NaN. Default: 5.
+        Latitude (degrees) at which the bracketing search starts for the first
+        element of ``lat_max``, before it marches through 0.1, 20.1, 40.1,
+        60.1, 80.1 and 90 degrees. The search for each later element starts
+        where the previous element's search stopped. A root equatorward of
+        0.1 degrees, which arises for Ro_th below about 1e-8, is found only
+        from a starting latitude below it; otherwise the result is NaN.
+        Default: 5.
 
     Returns
     -------
     xarray.DataArray
         Latitude of the zero crossing (degrees): 0-d for a scalar
-        ``lat_max``, otherwise one value per element of ``lat_max``.
+        ``lat_max``, otherwise one value per element of a 1-D ``lat_max``.
 
     """
     # The left side of Eq. 10 is positive at the pole for any positive

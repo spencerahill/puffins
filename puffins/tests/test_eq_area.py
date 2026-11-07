@@ -15,6 +15,7 @@ different tau/height/theta_ref values than sibling modules, so relying on
 defaults invites silent inconsistencies.
 """
 
+import inspect
 import types
 from collections.abc import Callable
 from typing import Any
@@ -24,6 +25,7 @@ import pytest
 import scipy.optimize
 import xarray as xr
 
+from puffins import eq_area
 from puffins.eq_area import (
     _eq_area_cqe_fixed_tt,
     _equal_area_model_bouss,
@@ -170,7 +172,7 @@ class TestCellEdgeMeanRo:
             rtol=1e-13,
         )
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """An array of thermal Rossby numbers gives an array of edges."""
         ro = 0.5
         therms = np.array([0.02, 0.1, 0.3])
@@ -467,7 +469,7 @@ class TestHeatFluxMeanRo:
         assert isinstance(result, float)
         assert np.ndim(result) == 0
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """A DataArray of thermal Rossby numbers broadcasts against latitude."""
         ro = 0.5
         therm_vals = np.array([0.05, 0.1, 0.2])
@@ -803,7 +805,7 @@ class TestUSfcMeanRo:
                 rtol=1e-13,
             )
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """A DataArray of thermal Rossby numbers broadcasts against latitude."""
         ro = 0.5
         therm_vals = np.array([0.05, 0.1, 0.2])
@@ -1345,3 +1347,26 @@ class TestSolverConvergenceChecks:
                 radius=RADIUS,
                 c_p=C_P,
             )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "eq_pot_temp_mean_ro",
+        "pot_temp_mean_ro",
+        "cell_edge_mean_ro",
+        "heat_flux_mean_ro",
+        "mom_flux_mean_ro",
+        "u_sfc_mean_ro",
+        "cell_edge_lin_ro_lata0_full",
+        "cell_edge_lin_ro_lata0_approx",
+        "eq_pot_temp_lin_ro_lata0_small_ang",
+        "pot_temp_lin_ro_eq_area",
+        "equal_area_lh88",
+    ],
+)
+def test_takes_burg_delh(name: str) -> None:
+    """Callers pass Bu * delta_h by this keyword, so the name is pinned (#115)."""
+    params = inspect.signature(getattr(eq_area, name)).parameters
+    assert "burg_delh" in params
+    assert not {"therm_ross_num", "therm_ross", "thermal_ro"} & set(params)

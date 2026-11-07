@@ -39,7 +39,7 @@ Meets the ≥80% success criterion (25 modules): `bootstrap` 100, `budget_adj`
 
 Below the bar, the remaining work (4 modules): `kuo_el` 19,
 `lindzen_hou_1988` 76, `plumb_hou_1992` 78, `fixed_temp_tropo` 39.
-`lindzen_hou_1988` gained `test_lindzen_hou_1988.py` (28 tests) with the
+`lindzen_hou_1988` gained `test_lindzen_hou_1988.py` (37 tests) with the
 fixes of issues #109, #110 and #114, lifting it from 36%.
 `budget_adj` went from 16 to 100 on 2026-10-25, when CI moved to pixi
 environments that install `windspharm` and `pyspharm` from conda-forge, so

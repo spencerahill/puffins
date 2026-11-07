@@ -416,7 +416,8 @@ def hc_edge_hh80(
 
     burg_delh : scalar or array-like
         Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
-        the thermal Rossby number of Held and Hou (1980). The value or values for which to solve.
+        the thermal Rossby number of Held and Hou (1980). The value or values
+        for which to solve.
     init_guess : float, optional
         Latitude (degrees) marking one end of the initial bracket. Default:
         0.1, just off the equator, where Eq. 17 is positive for any physical

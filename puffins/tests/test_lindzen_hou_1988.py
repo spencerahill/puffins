@@ -7,12 +7,15 @@ The planetary parameters are Mars-like, so that no Earth default can stand in
 for an argument that is dropped.
 """
 
+import inspect
 from typing import cast
 
 import numpy as np
 import pytest
 import xarray as xr
 
+from puffins import lindzen_hou_1988
+from puffins.constants import GRAV_EARTH, HEIGHT_TROPO, RAD_EARTH, ROT_RATE_EARTH
 from puffins.dynamics import abs_vort_from_u
 from puffins.lindzen_hou_1988 import (
     abs_vort_rce_lh88,
@@ -63,12 +66,14 @@ def _m_eq8(lat: np.ndarray, lat_max: float, ro_th: float) -> np.ndarray:
     )
 
 
-def _eta_eq9(lat: np.ndarray, lat_max: float, ro_th: float) -> np.ndarray:
+def _eta_eq9(
+    lat: np.ndarray, lat_max: float, ro_th: float, rot_rate: float = ROT_RATE
+) -> np.ndarray:
     sin, cos = np.sin(np.deg2rad(lat)), np.cos(np.deg2rad(lat))
     arg = _sqrt_arg(lat, lat_max, ro_th)
     return cast(
         np.ndarray,
-        2 * ROT_RATE * sin * np.sqrt(arg) * (1 - 0.5 * cos**2 / sin**3 * ro_th / arg),
+        2 * rot_rate * sin * np.sqrt(arg) * (1 - 0.5 * cos**2 / sin**3 * ro_th / arg),
     )
 
 
@@ -82,20 +87,61 @@ def _eq10_root(lat_max: float, burg_delh: float) -> float:
     return float(np.rad2deg(np.arcsin(real.real[0])))
 
 
+# Each closed form is checked under forcing peaked in either hemisphere: sign -1
+# mirrors the latitudes and lat_max, so Ro_th changes sign with sin(lat_max).
+HEMISPHERES = pytest.mark.parametrize("sign", [1.0, -1.0])
+
+
+def test_renamed_arguments() -> None:
+    """Callers pass Bu * delta_h by the keyword burg_delh, so the name is pinned (#115)."""
+    names = [
+        "u_rce_lh88",
+        "ang_mom_rce_lh88",
+        "ang_mom_rce_lh88_zero",
+        "ang_mom_rce_lh88_zero_small_r",
+        "ang_mom_rce_lh88_zero_unity_r",
+        "ang_mom_rce_lh88_zero_large_r",
+        "abs_vort_rce_lh88",
+        "abs_vort_rce_zero_lh88",
+    ]
+    for name in names:
+        params = inspect.signature(getattr(lindzen_hou_1988, name)).parameters
+        assert "burg_delh" in params, name
+        assert not {"thermal_ro", "therm_ro"} & set(params), name
+
+
 class TestURceLh88:
-    def test_matches_eq6(self) -> None:
+    @HEMISPHERES
+    def test_matches_eq6(self, sign: float) -> None:
         result = u_rce_lh88(
-            LATS, LAT_MAX, burg_delh=BURG_DELH, rot_rate=ROT_RATE, radius=RADIUS
+            sign * LATS,
+            sign * LAT_MAX,
+            burg_delh=BURG_DELH,
+            rot_rate=ROT_RATE,
+            radius=RADIUS,
         )
-        np.testing.assert_allclose(result, _u_eq6(LATS, LAT_MAX, RO_TH), atol=1e-10)
+        # The atol covers lat = lat_max, where u is zero.
+        np.testing.assert_allclose(
+            result,
+            _u_eq6(sign * LATS, sign * LAT_MAX, sign * RO_TH),
+            rtol=1e-12,
+            atol=1e-10,
+        )
 
 
 class TestAngMomRceLh88:
-    def test_matches_eq8(self) -> None:
+    @HEMISPHERES
+    def test_matches_eq8(self, sign: float) -> None:
         result = ang_mom_rce_lh88(
-            LATS, LAT_MAX, burg_delh=BURG_DELH, rot_rate=ROT_RATE, radius=RADIUS
+            sign * LATS,
+            sign * LAT_MAX,
+            burg_delh=BURG_DELH,
+            rot_rate=ROT_RATE,
+            radius=RADIUS,
         )
-        np.testing.assert_allclose(result, _m_eq8(LATS, LAT_MAX, RO_TH), rtol=1e-12)
+        np.testing.assert_allclose(
+            result, _m_eq8(sign * LATS, sign * LAT_MAX, sign * RO_TH), rtol=1e-12
+        )
 
     def test_is_angular_momentum_of_u_rce(self) -> None:
         """M = a cos(lat) (Omega a cos(lat) + u), Eq. 2."""
@@ -132,17 +178,19 @@ class TestAngMomRceLh88Zero:
 
 
 class TestCritVortMetricRceLh88:
-    def test_matches_derivative_of_ang_mom_squared(self) -> None:
+    @HEMISPHERES
+    def test_matches_derivative_of_ang_mom_squared(self, sign: float) -> None:
         """a^-2 d(M^2)/d(lat), by centered differences of Eq. 8.
 
         The difference error measured 4.1e-10 relative with this step.
         """
+        lats, lat_max, ro_th = sign * LATS, sign * LAT_MAX, sign * RO_TH
         result = crit_vort_metric_rce_lh88(
-            LATS, LAT_MAX, DELTA_H, HEIGHT, grav=GRAV, rot_rate=ROT_RATE, radius=RADIUS
+            lats, lat_max, DELTA_H, HEIGHT, grav=GRAV, rot_rate=ROT_RATE, radius=RADIUS
         )
         step = 1e-4
-        m2_minus = _m_eq8(LATS - step, LAT_MAX, RO_TH) ** 2
-        m2_plus = _m_eq8(LATS + step, LAT_MAX, RO_TH) ** 2
+        m2_minus = _m_eq8(lats - step, lat_max, ro_th) ** 2
+        m2_plus = _m_eq8(lats + step, lat_max, ro_th) ** 2
         expected = (m2_plus - m2_minus) / (2 * np.deg2rad(step)) / RADIUS**2
         np.testing.assert_allclose(result, expected, rtol=1e-8)
 
@@ -157,24 +205,47 @@ class TestCritVortMetricRceLh88:
 
 
 class TestAbsVortRceLh88:
-    def test_matches_eq9(self) -> None:
+    @HEMISPHERES
+    def test_matches_eq9(self, sign: float) -> None:
         result = abs_vort_rce_lh88(
-            LATS, LAT_MAX, rot_rate=ROT_RATE, burg_delh=BURG_DELH
+            sign * LATS, sign * LAT_MAX, rot_rate=ROT_RATE, burg_delh=BURG_DELH
         )
-        np.testing.assert_allclose(result, _eta_eq9(LATS, LAT_MAX, RO_TH), rtol=1e-12)
+        np.testing.assert_allclose(
+            result, _eta_eq9(sign * LATS, sign * LAT_MAX, sign * RO_TH), rtol=1e-12
+        )
 
-    def test_default_path_matches_eq9(self) -> None:
+    @HEMISPHERES
+    def test_computed_burg_delh_matches_eq9(self, sign: float) -> None:
         """burg_delh computed from delta_h, height, grav, rot_rate and radius."""
         result = abs_vort_rce_lh88(
-            LATS,
-            LAT_MAX,
+            sign * LATS,
+            sign * LAT_MAX,
             delta_h=DELTA_H,
             height=HEIGHT,
             grav=GRAV,
             rot_rate=ROT_RATE,
             radius=RADIUS,
         )
-        np.testing.assert_allclose(result, _eta_eq9(LATS, LAT_MAX, RO_TH), rtol=1e-12)
+        np.testing.assert_allclose(
+            result, _eta_eq9(sign * LATS, sign * LAT_MAX, sign * RO_TH), rtol=1e-12
+        )
+
+    def test_all_defaults_match_eq9_for_earth(self) -> None:
+        """Defaults: delta_h = 1/6, Earth's height, gravity, rotation and radius."""
+        burg_delh = GRAV_EARTH * HEIGHT_TROPO / 6 / (ROT_RATE_EARTH * RAD_EARTH) ** 2
+        ro_th = burg_delh * np.sin(np.deg2rad(LAT_MAX))
+        np.testing.assert_allclose(
+            abs_vort_rce_lh88(LATS, LAT_MAX),
+            _eta_eq9(LATS, LAT_MAX, ro_th, rot_rate=ROT_RATE_EARTH),
+            rtol=1e-12,
+        )
+
+    def test_zero_burg_delh_gives_planetary_vorticity(self) -> None:
+        """An explicit burg_delh of 0 is used as given, not replaced by the default."""
+        result = abs_vort_rce_lh88(LATS, LAT_MAX, rot_rate=ROT_RATE, burg_delh=0.0)
+        np.testing.assert_allclose(
+            result, 2 * ROT_RATE * np.sin(np.deg2rad(LATS)), rtol=1e-12
+        )
 
     def test_responds_to_delta_h(self) -> None:
         kwargs = dict(height=HEIGHT, grav=GRAV, rot_rate=ROT_RATE, radius=RADIUS)
@@ -212,6 +283,8 @@ class TestAbsVortRceZeroLh88:
             (90.0, 5.0),
             # Root at 83.41 degrees, poleward of the guesses before #114.
             (90.0, 50.0),
+            # Root at 89.93 degrees, poleward of any guess short of 90.
+            (90.0, 5e5),
         ],
     )
     def test_matches_eq10(self, lat_max: float, burg_delh: float) -> None:
@@ -279,8 +352,13 @@ class TestAbsVortRceZeroLh88:
 class TestAbsVortRceLh88ZeroApprox:
     @pytest.mark.parametrize("factor", [1.0, 1.5])
     def test_matches_exact_root_within_grid_spacing(self, factor: float) -> None:
-        """The two values of delta_h have exact roots far more than 0.05 apart."""
-        # From 8 degrees, the square-root argument stays positive at 1.5 DELTA_H.
+        """The two values of delta_h have exact roots more than 0.5 degrees apart.
+
+        The grid starts at 8 degrees north, poleward of where the square-root
+        argument goes negative at 1.5 DELTA_H. On a grid reaching that band,
+        or the Southern Hemisphere, this deprecated function returns NaN.
+        The interpolation error measured 3.4e-5 degrees at most.
+        """
         lats = np.arange(8.0, 89.5, 0.05)
         lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats}, name="lat")
         result = abs_vort_rce_lh88_zero_approx(
@@ -293,5 +371,5 @@ class TestAbsVortRceLh88ZeroApprox:
             grav=GRAV,
         )
         expected = _eq10_root(LAT_MAX, factor * BURG_DELH)
-        assert abs(result.item() - expected) < 0.05
+        assert abs(result.item() - expected) < 1e-3
         assert abs(expected - _eq10_root(LAT_MAX, BURG_DELH * (2.5 - factor))) > 0.5
