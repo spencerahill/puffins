@@ -142,6 +142,44 @@ class TestBrentqSolverSweepParam:
         assert np.isnan(result.values[1])
         np.testing.assert_allclose(result.values[2], 3.0, atol=1e-10)
 
+    def test_nan_param_gives_nan_at_its_position(self) -> None:
+        """A NaN parameter gives NaN there and roots elsewhere (#108)."""
+        result = brentq_solver_sweep_param(
+            lambda x, p: x - p,
+            param_range=[1.0, np.nan, 3.0],
+            init_guess=0.0,
+            bound_guess_range=np.arange(0.5, 10, 1.0),
+        )
+        np.testing.assert_allclose(result.values[[0, 2]], [1.0, 3.0], atol=1e-10)
+        assert np.isnan(result.values[1])
+
+    def test_nan_function_values_bracket_nothing(self) -> None:
+        """Guesses where the function is NaN are passed over (#108).
+
+        The function is NaN at the initial guess and the first two guesses,
+        so the first bracket with finite values on both ends is [4.5, 5.5].
+        """
+        result = brentq_solver_sweep_param(
+            lambda x, p: x - p if x > 2 else np.nan,
+            param_range=5.0,
+            init_guess=0.0,
+            bound_guess_range=np.arange(0.5, 10, 1.0),
+        )
+        np.testing.assert_allclose(result.values, [5.0], atol=1e-10)
+
+    def test_nan_after_finite_values_is_not_a_sign_change(self) -> None:
+        """Finite values of one sign, then NaN, give NaN rather than a root.
+
+        The function is negative wherever it is finite, so it has no root.
+        """
+        result = brentq_solver_sweep_param(
+            lambda x, p: x - p if x < 6 else np.nan,
+            param_range=7.0,
+            init_guess=0.0,
+            bound_guess_range=np.arange(0.5, 10, 1.0),
+        )
+        assert np.isnan(result.values).all()
+
     def test_returns_dataarray(self) -> None:
         """Return type is always xr.DataArray."""
         result = brentq_solver_sweep_param(
