@@ -593,6 +593,28 @@ class TestPfullFromPhalfAvg:
         result = pfull_from_phalf_avg(phalf, pfull_ref)
         assert isinstance(result, xr.DataArray)
 
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_mean_of_bounding_half_levels(self, increasing: bool) -> None:
+        """Each full level is the mean of its two half levels, in either order.
+
+        With pressure decreasing along ``phalf``, the first half level of each
+        pair is the bottom of the layer. The function used to add half the
+        layer's thickness to it, placing every full level below its layer.
+        """
+        column = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
+        phalf_vals = np.stack([column, 0.9 * column])
+        if not increasing:
+            phalf_vals = phalf_vals[:, ::-1]
+        phalf = xr.DataArray(
+            phalf_vals, dims=["lat", PHALF_STR], coords={"lat": [0.0, 30.0]}
+        )
+        pfull_ref = xr.DataArray(np.arange(5.0), dims=[PFULL_STR])
+        result = pfull_from_phalf_avg(phalf, pfull_ref)
+        assert result.dims == ("lat", PFULL_STR)
+        np.testing.assert_allclose(
+            result.values, 0.5 * (phalf_vals[:, :-1] + phalf_vals[:, 1:]), rtol=1e-15
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestPfullValsSimBurr

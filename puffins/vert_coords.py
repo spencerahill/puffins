@@ -389,6 +389,8 @@ def pfull_from_phalf_avg(
 ) -> xr.DataArray:
     """Full-level pressures as simple averages of bounding half levels.
 
+    Works with pressure increasing or decreasing along ``phalf_str``.
+
     Parameters
     ----------
     phalf : xarray.DataArray
@@ -406,10 +408,13 @@ def pfull_from_phalf_avg(
         Pressure at full levels (Pa).
     """
     dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
-    return cast(
-        xr.DataArray,
-        (0.5 * dp + phalf.isel({phalf_str: slice(None, -1)}).values).rename(pfull_str),
+    # Half the (positive) thickness above the lower-pressure interface of each
+    # layer, which is the first of each pair only where pressure increases.
+    phalf_top = np.minimum(
+        phalf.isel({phalf_str: slice(None, -1)}).values,
+        phalf.isel({phalf_str: slice(1, None)}).values,
     )
+    return cast(xr.DataArray, (0.5 * dp + phalf_top).rename(pfull_str))
 
 
 def pfull_vals_simm_burr(
