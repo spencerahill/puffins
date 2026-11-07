@@ -450,20 +450,24 @@ class TestHadCellStrength:
         with pytest.raises(ValueError, match="zero crossings"):
             had_cell_strength(sf, do_interp_lat=True)
 
+    @pytest.mark.parametrize("descending", [False, True], ids=["s_to_n", "n_to_s"])
     @pytest.mark.parametrize(
         ("center", "lat_gridpoint"),
         [(9.5, 9.0), (10.5, 11.0)],
         ids=["north_of_gridpoint", "south_of_gridpoint"],
     )
     def test_do_interp_lat_center_off_midpoint(
-        self, center: float, lat_gridpoint: float
+        self, center: float, lat_gridpoint: float, descending: bool
     ) -> None:
         # A cell centered a quarter of the grid spacing from a gridpoint,
         # north of its gridpoint maximum or south of it, so either half of the
         # search window is needed. The center is not midway between
         # gridpoints, so it is recovered only to the accuracy of the method,
-        # measured at 3.3e-3 degrees on this grid.
+        # measured at 3.3e-3 degrees on this grid. Latitude stored north to
+        # south, as in ERA5, gives the same center.
         sf = _gauss_cell(center)
+        if descending:
+            sf = sf.isel({LAT_STR: slice(None, None, -1)})
         assert had_cell_strength(sf)[LAT_STR].item() == lat_gridpoint
         result = had_cell_strength(sf, do_interp_lat=True)
         assert result[LAT_STR].item() == pytest.approx(center, abs=5e-3)
@@ -504,16 +508,55 @@ class TestHadCellStrength:
     def test_do_interp_lat_nan_anywhere_raises(self) -> None:
         # One NaN, at 79S and 700 hPa, far from the maximum at 10N and
         # 500 hPa, makes the cubic interpolation NaN at every level, so the
-        # call raises. Averaging over the levels skips the NaN, and the
-        # strength is then that of the field without it.
+        # call raises, and with a time dimension it raises for both times
+        # though only one holds the NaN. Averaging over the levels skips the
+        # NaN, and excluding its level with max_plev or min_plev removes it;
+        # each strength is then that of the field without it.
         sf = _gauss_cell(10.0).copy(deep=True)
         sf.loc[{LAT_STR: -79.0, LEV_STR: 700.0}] = np.nan
         with pytest.raises(ValueError, match="All-NaN"):
             had_cell_strength(sf, do_interp_lat=True)
-        result = had_cell_strength(sf, do_avg_vert=True, do_interp_lat=True)
-        expected = 1e11 * np.mean(np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0))
-        assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
-        assert result.item() == pytest.approx(expected, rel=1e-4)
+        with pytest.raises(ValueError, match="All-NaN"):
+            had_cell_strength(
+                xr.concat([sf, _gauss_cell(10.0)], dim=TIME_STR), do_interp_lat=True
+            )
+        vert = np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0)
+        cases: list[tuple[dict[str, Any], float, float]] = [
+            (
+                {"do_avg_vert": True},
+                float(np.mean(_GAUSS_PLEVS)),
+                float(1e11 * np.mean(vert)),
+            ),
+            ({"max_plev": 600.0}, 500.0, float(1e11 * vert[3])),
+            ({"min_plev": 800.0}, 850.0, float(1e11 * vert[5])),
+        ]
+        for kwargs, lev, strength in cases:
+            result = had_cell_strength(sf, do_interp_lat=True, **kwargs)
+            assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
+            assert result[LEV_STR].item() == pytest.approx(lev)
+            assert result.item() == pytest.approx(strength, rel=1e-4)
+
+    def test_do_interp_lat_follows_the_maximums_level(self) -> None:
+        # The gridpoint maximum, 1e11, is at 9N on the 500 hPa cell, so the
+        # center is found along 500 hPa, where the latitude derivative is zero
+        # at 9N itself. A cell at 300 hPa, 0.99e11 at 11.4N, makes the upper
+        # envelope of the levels rise from 9N to 11N, so a center found on
+        # that envelope would lie north of 9N.
+        lat = _GAUSS_LATS
+        sf = xr.DataArray(
+            np.stack(
+                [
+                    0.99e11 * np.exp(-(((lat - 11.4) / 4.0) ** 2)),
+                    1e11 * np.exp(-(((lat - 9.0) / 4.0) ** 2)),
+                ]
+            ),
+            dims=(LEV_STR, LAT_STR),
+            coords={LEV_STR: [300.0, 500.0], LAT_STR: lat},
+        )
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(9.0, abs=1e-9)
+        assert result[LEV_STR].item() == 500.0
+        assert result.item() == pytest.approx(1e11, rel=1e-12)
 
 
 class TestHadCellsStrength:
@@ -1454,24 +1497,131 @@ class TestEachElement:
         # Only the first time's edge carries a latitude coordinate, so none
         # may be kept for the whole result, which would label the pole edge
         # with the first time's latitude.
-        if LAT_STR in result.coords:
-            assert result[LAT_STR].values.tolist() == result.values.tolist()
+        assert LAT_STR not in result.coords
 
-    def test_cell_edges_sigma_union_of_cells(self) -> None:
-        # With a shallow cell kept, the second time has a third cell that
-        # the first lacks. The result contains the union of the cells, NaN for
-        # the first time's missing one, and each time's cells as found alone.
-        base = _sigma_streamfunc()
-        blob = _add_shallow_blob(_sigma_streamfunc(), 0.3e10)
-        sf = xr.concat([base, blob], dim=TIME_STR)
-        result = cell_edges_sigma(sf, cell_min_sigma_depth=0.05)
-        for i_time, field in enumerate((base, blob)):
-            alone = cell_edges_sigma(field, cell_min_sigma_depth=0.05)
-            got = result.isel({TIME_STR: i_time}).sel(cell=alone["cell"])
-            np.testing.assert_array_equal(got.values, alone.values)
-            missing = result.isel({TIME_STR: i_time}).drop_sel(cell=alone["cell"])
-            assert bool(missing.isnull().all())
-        assert result.sizes["cell"] == 3
+    def test_cell_edges_sigma_cells_by_position(self) -> None:
+        # The second time has a southern polar cell that the first lacks, so
+        # every other cell sits one position further north there, and a label
+        # such as "3" names different cells at the two times. So the cells are
+        # numbered by position at each time, as found alone, with their labels
+        # in cell_label and NaN where a time has fewer cells.
+        lats = np.arange(-85.0, 86.0, 1.0) + _SIGMA_NODE_OFFSET
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        vert = cast(xr.DataArray, np.sin(np.pi * (sigma - 0.1) / 0.9))
+        cells = [
+            (-1e10, -11.0, 10.0),
+            (1.1e10, 11.0, 10.0),
+            (0.3e10, -40.0, 12.0),
+            (-0.35e10, 40.0, 12.0),
+        ]
+        polar = [(-0.2e10, -70.0, 10.0)]
+        fields = [
+            sum(peak * _bump(lat, center, width) for peak, center, width in cs) * vert
+            for cs in (cells, cells + polar)
+        ]
+        result = cell_edges_sigma(xr.concat(fields, dim=TIME_STR))
+        assert result.sizes["cell"] == 5
+        for i_time, field in enumerate(fields):
+            alone = cell_edges_sigma(field)
+            n_cells = alone.sizes["cell"]
+            got = result.isel({TIME_STR: i_time})
+            np.testing.assert_array_equal(
+                got.isel(cell=slice(0, n_cells)).values, alone.values
+            )
+            np.testing.assert_array_equal(
+                got["cell_strength"].values[:n_cells], alone["cell_strength"].values
+            )
+            assert got["cell_label"].values[:n_cells].tolist() == (
+                alone["cell"].values.tolist()
+            )
+            assert bool(got.isel(cell=slice(n_cells, None)).isnull().all())
+
+    def test_coordinates_gain_the_extra_dimension(self) -> None:
+        # Two times whose maxima share a latitude and level: the center's
+        # latitude and level still come back along time.
+        sf = xr.concat([_gauss_cell(10.0), _gauss_cell(10.0, 2e11)], dim=TIME_STR)
+        result = had_cell_strength(sf)
+        assert result[LAT_STR].dims == (TIME_STR,)
+        assert result[LEV_STR].dims == (TIME_STR,)
+        assert result[LAT_STR].values.tolist() == [9.0, 9.0]
+
+    def test_coordinate_along_time_and_latitude(self) -> None:
+        # A coordinate spanning time and latitude is taken at each time's
+        # maximum, like the latitude itself: here it is 100 * time + lat.
+        sf = xr.concat([_gauss_cell(9.0), _gauss_cell(-31.0)], dim=TIME_STR)
+        sf = sf.assign_coords(
+            {TIME_STR: [0, 1], "aux": 100.0 * sf[TIME_STR] + sf[LAT_STR]}
+        )
+        result = had_cell_strength(sf)
+        assert result["aux"].dims == (TIME_STR,)
+        assert result["aux"].values.tolist() == [9.0, 69.0]
+
+    def test_decorated_functions_keep_name_doc_and_signature(self) -> None:
+        for func in (
+            had_cell_strength,
+            had_cells_strength,
+            had_cells_shared_edge,
+            had_cell_edge,
+            had_cells_south_edge,
+            had_cells_north_edge,
+            had_cells_edges,
+            cell_edges_sigma,
+        ):
+            params = list(inspect.signature(func).parameters)
+            assert params[0] in ("streamfunc", "strmfunc"), func
+            assert "lat_str" in params, func
+            assert func.__doc__ and "Every" in func.__doc__, func
+        assert had_cell_strength.__name__ == "had_cell_strength"
+
+    def test_had_cell_strength_options_are_keyword_only(self) -> None:
+        # Dropping dim shifted the positions of the later arguments, so a
+        # positional call written for the old order is refused rather than
+        # silently given a new meaning.
+        old_order: tuple[Any, ...] = (None, 850.0)
+        with pytest.raises(TypeError, match="had_cell_strength"):
+            had_cell_strength(_gauss_cell(10.0), *old_order)
+
+    def test_latitude_must_be_a_dimension(self) -> None:
+        # A latitude not named by lat_str would otherwise be looped over.
+        sf = _gauss_cell(10.0).rename({LAT_STR: "latitude"})
+        with pytest.raises(ValueError, match="no latitude dimension 'lat'"):
+            had_cell_strength(sf)
+        with pytest.raises(ValueError, match="no latitude dimension 'lat'"):
+            cell_edges_sigma(_sigma_streamfunc().rename({LAT_STR: "latitude"}))
+
+    def test_dim_argument_removed(self) -> None:
+        removed: dict[str, Any] = {"dim": TIME_STR}
+        with pytest.raises(TypeError, match=r"had_cell_strength\(\).*'dim'"):
+            had_cell_strength(_gauss_cell(10.0), **removed)
+
+    def test_extra_dimension_of_length_zero_raises(self) -> None:
+        sf = _gauss_cell(10.0).expand_dims({TIME_STR: [0]}).isel({TIME_STR: []})
+        with pytest.raises(ValueError, match="'time' has length 0"):
+            had_cell_strength(sf)
+
+    @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
+    def test_warnings_point_at_the_caller(self, extra_dim: bool) -> None:
+        # A lone cell gives both of had_cells_strength's warnings under
+        # do_interp_lat. Each is attributed to this file, the caller, not to
+        # had_cell.py, however many of its frames the decorator adds.
+        sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0)])
+        if extra_dim:
+            sf = sf.expand_dims({TIME_STR: [0, 1]})
+        with pytest.warns(UserWarning) as record:
+            had_cells_strength(sf, do_interp_lat=True)
+        messages = [str(w.message) for w in record]
+        assert any("sense of circulation" in m for m in messages)
+        assert any("Interpolating the latitude" in m for m in messages)
+        assert {w.filename for w in record} == {__file__}
+
+    def test_cell_edges_sigma_same_cells_keep_labels(self) -> None:
+        # Where every time finds the same cells, the labels stay the index.
+        sf = xr.concat([_sigma_streamfunc(amp) for amp in (1e10, 2e10)], dim=TIME_STR)
+        result = cell_edges_sigma(sf, frac_thresh=0.2)
+        assert result["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        assert "cell_label" not in result.coords
 
 
 class TestBciEdgeFormulas:

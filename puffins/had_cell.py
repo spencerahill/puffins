@@ -45,11 +45,14 @@ def _each_element(
 
     The decorated function's first argument is the streamfunction, and
     `core_dim_params` name its arguments that give the dimensions it works
-    across, such as latitude and level. Every other dimension of the
+    across: the latitude first, then the level. Every other dimension of the
     streamfunction, such as time, model or ensemble member, is looped over:
     the function is applied to each slice, and the results are concatenated
     along that dimension, which keeps the streamfunction's coordinates along
     it. With no such dimension, the function is called unchanged.
+
+    The latitude must be a dimension of the streamfunction, since a
+    misnamed one would otherwise be looped over.
 
     """
 
@@ -59,14 +62,29 @@ def _each_element(
 
         @functools.wraps(func)
         def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-            bound = signature.bind(*args, **kwargs)
+            try:
+                bound = signature.bind(*args, **kwargs)
+            except TypeError as err:
+                raise TypeError(f"{func.__name__}() {err}") from None
             bound.apply_defaults()
             field = bound.arguments[field_param]
+            lat_param = core_dim_params[0]
+            if bound.arguments[lat_param] not in field.dims:
+                raise ValueError(
+                    f"{func.__name__}: the streamfunction has no latitude "
+                    f"dimension {bound.arguments[lat_param]!r}; its dimensions "
+                    f"are {field.dims}. Give its name with {lat_param}."
+                )
             core_dims = {bound.arguments[name] for name in core_dim_params}
             extra_dims = [d for d in field.dims if d not in core_dims]
             if not extra_dims:
                 return func(*args, **kwargs)
             dim = extra_dims[0]
+            if field.sizes[dim] == 0:
+                raise ValueError(
+                    f"{func.__name__}: the dimension {dim!r} has length 0, so "
+                    "there is nothing to compute."
+                )
             results = []
             for i in range(field.sizes[dim]):
                 bound.arguments[field_param] = field.isel({dim: i})
@@ -88,8 +106,12 @@ def _concat_elements(
 
     A result that is a list is combined item by item. A result that is not a
     DataArray, such as an edge latitude returned as a float at a pole, is made
-    one. Only the coordinates every result has are kept, and `field`'s
-    coordinates along `dim` are attached.
+    one, and only the coordinates every result has are kept. Each kept
+    coordinate gains `dim`, and `field`'s coordinates along `dim` are
+    attached. A dimension of the results whose labels differ between
+    elements, such as the cells `cell_edges_sigma` finds, is numbered by
+    position, padded with NaN, and its labels are kept in the coordinate
+    named after it with the suffix "_label".
 
     """
     if isinstance(results[0], list):
@@ -102,12 +124,39 @@ def _concat_elements(
     arrays = [
         arr.drop_vars([c for c in arr.coords if c not in shared]) for arr in arrays
     ]
-    combined = xr.concat(
-        arrays, dim=dim, coords="different", compat="equals", join="outer"
-    )
+    for res_dim in arrays[0].dims:
+        if res_dim in arrays[0].indexes and any(
+            not arr.indexes[res_dim].equals(arrays[0].indexes[res_dim])
+            for arr in arrays[1:]
+        ):
+            arrays = [
+                arr.assign_coords(
+                    {f"{res_dim}_label": (res_dim, arr[res_dim].values)}
+                ).assign_coords({res_dim: np.arange(arr.sizes[res_dim])})
+                for arr in arrays
+            ]
+    combined = xr.concat(arrays, dim=dim, coords="all", compat="equals", join="outer")
     return combined.assign_coords(
         {name: coord for name, coord in field.coords.items() if coord.dims == (dim,)}
     )
+
+
+def _stacklevel_outside_module() -> int:
+    """`warnings.warn` stacklevel of the first caller outside this module.
+
+    Counted from the function that calls this one and then warns. The
+    per-element decorator puts a varying number of this module's frames
+    between a diagnostic and its caller, so no fixed stacklevel reaches
+    the caller.
+
+    """
+    frame = inspect.currentframe()
+    frame = frame.f_back if frame is not None else None
+    level = 1
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 def merid_streamfunc(
@@ -178,6 +227,7 @@ def merid_streamfunc(
 @_each_element("lat_str", "lev_str")
 def had_cell_strength(
     streamfunc: xr.DataArray,
+    *,
     min_plev: float | None = None,
     max_plev: float | None = None,
     do_avg_vert: bool = False,
@@ -201,10 +251,12 @@ def had_cell_strength(
     zero crossing within 1.1 times the mean latitude spacing of the gridpoint
     maximum, as when that maximum lies at the edge of the latitudes searched.
     The other is when the streamfunction contains NaN anywhere, since the
-    cubic interpolation then returns NaN everywhere. Excluding the levels
-    that hold NaN with `min_plev` or `max_plev`, or averaging over the levels
-    with `do_avg_vert`, which skips NaN, avoids the second. Either case at
-    any one value of another dimension raises for the whole call.
+    cubic interpolation then returns NaN everywhere. Where the NaN is
+    confined to some levels, as below ground, excluding those levels with
+    `min_plev` or `max_plev`, or averaging over the levels with
+    `do_avg_vert`, which skips NaN, avoids the second; a latitude that is NaN
+    at every level still raises. Either case at any one value of another
+    dimension raises for the whole call.
 
     """
     if min_plev is None and max_plev is None:
@@ -354,7 +406,7 @@ def had_cells_strength(
             "Interpolation fails, for example, when the extremum lies at the "
             "edge of the latitudes searched or where the streamfunction is flat "
             "in latitude, or when the streamfunction contains NaN.",
-            stacklevel=3,
+            stacklevel=_stacklevel_outside_module(),
         )
         return cell
 
@@ -404,7 +456,7 @@ def had_cells_strength(
             f"{cell_nh.item():.3g}, where positive is expected. Either one "
             "Hadley cell is missing, or the streamfunction is signed opposite "
             "to merid_streamfunc's, with the northern cell negative.",
-            stacklevel=2,
+            stacklevel=_stacklevel_outside_module(),
         )
 
     hc_strengths = xr.concat(
@@ -740,9 +792,10 @@ def cell_edges_sigma(
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
-    the result. The cells found can differ between those values; the result
-    then contains the union of their labels, sorted by label, with NaN where a
-    value lacks a cell.
+    the result. Where the cells found differ between those values, they are
+    numbered by position from south to north, padded with NaN where a value
+    has fewer cells, and their labels, such as "sh_hadley" and "nh_hadley",
+    are kept in the coordinate "cell_label".
 
     """
     # Discard values in the boundary layer and stratosphere (if specified).
