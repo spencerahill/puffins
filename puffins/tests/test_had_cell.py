@@ -2,6 +2,7 @@
 
 import inspect
 import warnings
+from collections.abc import Callable
 from decimal import Decimal, localcontext
 from typing import Any, cast
 
@@ -165,6 +166,33 @@ def _issue_112_streamfunc(i_north: int = 25) -> xr.DataArray:
     return (vert * merid).rename("streamfunc")
 
 
+# The grid of issue #117's reproducers: the odd-degree latitudes, so an even
+# latitude lies midway between two gridpoints.
+_GAUSS_LATS = np.arange(-89.0, 90.0, 2.0)
+_GAUSS_PLEVS = np.array([100.0, 200.0, 300.0, 500.0, 700.0, 850.0, 1000.0])
+# The peak of the vertical structure sin(pi * (plev - 100) / 900) on that grid,
+# at plev=500.
+_GAUSS_VERT_PEAK = np.sin(4.0 * np.pi / 9.0)
+
+
+def _gauss_cell(center: float, amp: float = 1e11, tilt: float = 0.0) -> xr.DataArray:
+    """One Gaussian cell of e-folding half-width 15 degrees, from issue #117.
+
+    The cell's center at each level is `center` plus `tilt` times
+    (plev - 500). So at plev=500, where the vertical structure peaks, the
+    latitude profile is symmetric about `center`, and at every other level
+    it is offset from it.
+    """
+    lat, plev = np.meshgrid(_GAUSS_LATS, _GAUSS_PLEVS)
+    merid = np.exp(-(((lat - center - tilt * (plev - 500.0)) / 15.0) ** 2))
+    return xr.DataArray(
+        amp * np.sin(np.pi * (plev - 100.0) / 900.0) * merid,
+        dims=(LEV_STR, LAT_STR),
+        coords={LEV_STR: _GAUSS_PLEVS, LAT_STR: _GAUSS_LATS},
+        name="streamfunc",
+    )
+
+
 class TestMeridStreamfunc:
     """merid_streamfunc reconstructed from raw numpy."""
 
@@ -309,7 +337,8 @@ class TestHadCellStrength:
         assert vert_avg[LAT_STR].item() == 10.0
         assert vert_avg[LEV_STR].item() == pytest.approx(300.0)
 
-    def test_along_dim(self) -> None:
+    def test_each_time(self) -> None:
+        # The maximum is taken separately at each time, not over all times.
         lats = np.array([0.0, 10.0])
         plevs = np.array([200.0, 400.0])
         times = np.array([0, 1])
@@ -318,11 +347,216 @@ class TestHadCellStrength:
             dims=[TIME_STR, LAT_STR, LEV_STR],
             coords={TIME_STR: times, LAT_STR: lats, LEV_STR: plevs},
         )
-        result = had_cell_strength(sf, dim=TIME_STR)
+        result = had_cell_strength(sf)
+        assert result.dims == (TIME_STR,)
         assert result.sel({TIME_STR: 0}).item() == pytest.approx(8.0)
         assert result.sel({TIME_STR: 1}).item() == pytest.approx(3.0)
         assert result[LAT_STR].sel({TIME_STR: 0}).item() == 0.0
         assert result[LAT_STR].sel({TIME_STR: 1}).item() == 10.0
+
+    def test_do_interp_lat_with_do_avg_vert(self) -> None:
+        # https://github.com/spencerahill/puffins/issues/117: the two options
+        # together raised. The level-averaged cell is symmetric about 10N,
+        # midway between the gridpoints 9N and 11N, so its interpolated
+        # center is 10N, and its strength is the level mean of the vertical
+        # structure times the amplitude.
+        sf = _gauss_cell(10.0)
+        expected = 1e11 * np.mean(np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0))
+        gridpoint = had_cell_strength(sf, do_avg_vert=True)
+        assert gridpoint[LAT_STR].item() == 9.0
+        result = had_cell_strength(sf, do_avg_vert=True, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
+        assert result.item() == pytest.approx(expected, rel=1e-4)
+        assert result[LEV_STR].item() == pytest.approx(np.mean(_GAUSS_PLEVS))
+
+    @pytest.mark.parametrize(
+        ("lev_wide", "lev_narrow"), [(400.0, 600.0), (600.0, 400.0)]
+    )
+    def test_do_interp_lat_strength_is_max_over_levels(
+        self, lev_wide: float, lev_narrow: float
+    ) -> None:
+        # A wide cell of peak 1e11 on one level and a narrow cell of peak
+        # 1.02e11 on the other, both centered at 10N, midway between
+        # gridpoints. The gridpoint maximum lies on the wide cell, since the
+        # narrow one is lower at 9N and 11N. At the interpolated center, 10N,
+        # the narrow cell is higher, so the strength, the maximum over the
+        # levels there, is the narrow cell's, close to its peak.
+        sf = xr.DataArray(
+            np.stack(
+                [
+                    1e11 * np.exp(-(((_GAUSS_LATS - 10.0) / 15.0) ** 2)),
+                    1.02e11 * np.exp(-(((_GAUSS_LATS - 10.0) / 5.0) ** 2)),
+                ]
+            ),
+            dims=(LEV_STR, LAT_STR),
+            coords={LEV_STR: [lev_wide, lev_narrow], LAT_STR: _GAUSS_LATS},
+        ).sortby(LEV_STR)
+        assert had_cell_strength(sf)[LEV_STR].item() == lev_wide
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
+        assert result[LEV_STR].item() == lev_narrow
+        assert result.item() == pytest.approx(1.02e11, rel=2e-3)
+
+    def test_do_interp_lat_extra_dim_of_length_one(self) -> None:
+        # https://github.com/spencerahill/puffins/issues/117: with
+        # do_interp_lat, a dimension besides latitude and level raised, even
+        # one of length 1. The cell is symmetric about 10N at plev=500, where
+        # its maximum is.
+        sf = _gauss_cell(10.0, tilt=0.004).expand_dims({TIME_STR: [0]})
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result.dims == (TIME_STR,)
+        assert result[LAT_STR].values.ravel().tolist() == pytest.approx(
+            [10.0], abs=1e-9
+        )
+        assert result.values.ravel().tolist() == pytest.approx(
+            [1e11 * _GAUSS_VERT_PEAK], rel=1e-4
+        )
+        assert result[LEV_STR].values.ravel().tolist() == [500.0]
+
+    @pytest.mark.parametrize(
+        "order",
+        [(TIME_STR, LEV_STR, LAT_STR), (LAT_STR, TIME_STR, LEV_STR)],
+        ids=["lat_last", "lat_first"],
+    )
+    def test_do_interp_lat_each_time(self, order: tuple[str, str, str]) -> None:
+        # Two times whose cells differ in center, tilt and amplitude. Each
+        # time's center is interpolated along the line of latitudes through
+        # its own gridpoint maximum, at plev=500, where the cell is
+        # symmetric about its center; along any other level's line the
+        # tilt would move the center. The dimension order must not matter.
+        sf = (
+            xr.concat(
+                [_gauss_cell(10.0, 1e11, 0.004), _gauss_cell(-6.0, 1.5e11, -0.004)],
+                dim=TIME_STR,
+            )
+            .assign_coords({TIME_STR: [0, 1]})
+            .transpose(*order)
+        )
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result.dims == (TIME_STR,)
+        assert result[TIME_STR].values.tolist() == [0, 1]
+        assert result[LAT_STR].values.tolist() == pytest.approx([10.0, -6.0], abs=1e-9)
+        assert result.values.tolist() == pytest.approx(
+            [1e11 * _GAUSS_VERT_PEAK, 1.5e11 * _GAUSS_VERT_PEAK], rel=1e-4
+        )
+
+    def test_do_interp_lat_raises_if_one_time_fails(self) -> None:
+        # At the second time the cell is centered beyond the northernmost
+        # latitude, 89N, so the maximum is there, and the latitude derivative
+        # has no zero crossing to interpolate. That raises for the whole call.
+        sf = xr.concat([_gauss_cell(10.0), _gauss_cell(95.0)], dim=TIME_STR)
+        sf = sf.assign_coords({TIME_STR: [0, 1]})
+        assert had_cell_strength(sf)[LAT_STR].values.tolist() == [9.0, 89.0]
+        with pytest.raises(ValueError, match="zero crossings"):
+            had_cell_strength(sf, do_interp_lat=True)
+
+    @pytest.mark.parametrize("descending", [False, True], ids=["s_to_n", "n_to_s"])
+    @pytest.mark.parametrize(
+        ("center", "lat_gridpoint"),
+        [(9.5, 9.0), (10.5, 11.0)],
+        ids=["north_of_gridpoint", "south_of_gridpoint"],
+    )
+    def test_do_interp_lat_center_off_midpoint(
+        self, center: float, lat_gridpoint: float, descending: bool
+    ) -> None:
+        # A cell centered a quarter of the grid spacing from a gridpoint,
+        # north of its gridpoint maximum or south of it, so either half of the
+        # search window is needed. The center is not midway between
+        # gridpoints, so it is recovered only to the accuracy of the method,
+        # measured at 3.3e-3 degrees on this grid. Latitude stored north to
+        # south, as in ERA5, gives the same center.
+        sf = _gauss_cell(center)
+        if descending:
+            sf = sf.isel({LAT_STR: slice(None, None, -1)})
+        assert had_cell_strength(sf)[LAT_STR].item() == lat_gridpoint
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(center, abs=5e-3)
+        assert result.item() == pytest.approx(1e11 * _GAUSS_VERT_PEAK, rel=1e-4)
+
+    def test_do_interp_lat_ignores_crossings_beyond_one_spacing(self) -> None:
+        # The gridpoint maximum is at the northernmost latitude, 89N, where
+        # the latitude derivative does not change sign. A narrow second cell
+        # at 83N gives the derivative zero crossings between 83N and 85N and
+        # between 85N and 87N. The search window around 89N holds only the
+        # gridpoints 87N and 89N, so no crossing is found, and the call
+        # raises.
+        merid = np.exp(-(((_GAUSS_LATS - 95.0) / 15.0) ** 2)) + 0.3 * np.exp(
+            -(((_GAUSS_LATS - 83.0) / 3.0) ** 2)
+        )
+        sf = xr.DataArray(
+            1e11 * np.outer(np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0), merid),
+            dims=(LEV_STR, LAT_STR),
+            coords={LEV_STR: _GAUSS_PLEVS, LAT_STR: _GAUSS_LATS},
+        )
+        assert had_cell_strength(sf)[LAT_STR].item() == 89.0
+        with pytest.raises(ValueError, match="zero crossings"):
+            had_cell_strength(sf, do_interp_lat=True)
+
+    @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
+    def test_do_interp_lat_custom_lat_name(self, extra_dim: bool) -> None:
+        sf = _gauss_cell(10.0).rename({LAT_STR: "latitude"})
+        if extra_dim:
+            sf = sf.expand_dims({TIME_STR: [0]})
+        result = had_cell_strength(sf, do_interp_lat=True, lat_str="latitude")
+        assert result["latitude"].values.ravel().tolist() == pytest.approx(
+            [10.0], abs=1e-9
+        )
+        assert result.values.ravel().tolist() == pytest.approx(
+            [1e11 * _GAUSS_VERT_PEAK], rel=1e-4
+        )
+
+    def test_do_interp_lat_nan_anywhere_raises(self) -> None:
+        # One NaN, at 79S and 700 hPa, far from the maximum at 10N and
+        # 500 hPa, makes the cubic interpolation NaN at every level, so the
+        # call raises, and with a time dimension it raises for both times
+        # though only one holds the NaN. Averaging over the levels skips the
+        # NaN, and excluding its level with max_plev or min_plev removes it;
+        # each strength is then that of the field without it.
+        sf = _gauss_cell(10.0).copy(deep=True)
+        sf.loc[{LAT_STR: -79.0, LEV_STR: 700.0}] = np.nan
+        with pytest.raises(ValueError, match="All-NaN"):
+            had_cell_strength(sf, do_interp_lat=True)
+        with pytest.raises(ValueError, match="All-NaN"):
+            had_cell_strength(
+                xr.concat([sf, _gauss_cell(10.0)], dim=TIME_STR), do_interp_lat=True
+            )
+        vert = np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0)
+        cases: list[tuple[dict[str, Any], float, float]] = [
+            (
+                {"do_avg_vert": True},
+                float(np.mean(_GAUSS_PLEVS)),
+                float(1e11 * np.mean(vert)),
+            ),
+            ({"max_plev": 600.0}, 500.0, float(1e11 * vert[3])),
+            ({"min_plev": 800.0}, 850.0, float(1e11 * vert[5])),
+        ]
+        for kwargs, lev, strength in cases:
+            result = had_cell_strength(sf, do_interp_lat=True, **kwargs)
+            assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
+            assert result[LEV_STR].item() == pytest.approx(lev)
+            assert result.item() == pytest.approx(strength, rel=1e-4)
+
+    def test_do_interp_lat_follows_the_maximums_level(self) -> None:
+        # The gridpoint maximum, 1e11, is at 9N on the 500 hPa cell, so the
+        # center is found along 500 hPa, where the latitude derivative is zero
+        # at 9N itself. A cell at 300 hPa, 0.99e11 at 11.4N, makes the upper
+        # envelope of the levels rise from 9N to 11N, so a center found on
+        # that envelope would lie north of 9N.
+        lat = _GAUSS_LATS
+        sf = xr.DataArray(
+            np.stack(
+                [
+                    0.99e11 * np.exp(-(((lat - 11.4) / 4.0) ** 2)),
+                    1e11 * np.exp(-(((lat - 9.0) / 4.0) ** 2)),
+                ]
+            ),
+            dims=(LEV_STR, LAT_STR),
+            coords={LEV_STR: [300.0, 500.0], LAT_STR: lat},
+        )
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(9.0, abs=1e-9)
+        assert result[LEV_STR].item() == 500.0
+        assert result.item() == pytest.approx(1e11, rel=1e-12)
 
 
 class TestHadCellsStrength:
@@ -633,31 +867,67 @@ class TestHadCellsStrength:
         assert cell.item() == pytest.approx(peak, rel=1e-3)
         assert result.sel(cell=missing).item() * peak <= 0.0
 
+    @pytest.mark.parametrize("do_avg_vert", [True, False], ids=["avg_vert", "levels"])
+    @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
+    def test_do_interp_lat_vertical_average_and_extra_dim(
+        self, do_avg_vert: bool, extra_dim: bool
+    ) -> None:
+        # https://github.com/spencerahill/puffins/issues/117: under
+        # do_interp_lat, do_avg_vert and a dimension besides latitude and
+        # level each made every search fall back on its gridpoint. Each cell
+        # is centered midway between gridpoints and is symmetric about its
+        # center, so its interpolated center is its center. Its strength is
+        # its peak times the mean of the vertical structure over the levels
+        # up to max_plev, or times that structure's peak, 1 at plev=550.
+        # max_plev=900 puts the level mean at 500, apart from the peak's 550.
+        sf = _bump_cells_streamfunc([(-1e11, -12.5, 12.0), (0.8e11, 14.5, 14.0)])
+        if extra_dim:
+            sf = sf.expand_dims({TIME_STR: [0]})
+        plevs = np.arange(100.0, 901.0, 50.0)
+        vert = np.mean(np.sin(np.pi * (plevs - 100.0) / 900.0)) if do_avg_vert else 1.0
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(
+                sf, max_plev=900.0, do_avg_vert=do_avg_vert, do_interp_lat=True
+            )
+        if extra_dim:
+            assert result.dims == (TIME_STR, "cell")
+            result = result.isel({TIME_STR: 0})
+        assert result[LAT_STR].values.tolist() == pytest.approx([-12.5, 14.5], abs=1e-9)
+        assert result.values.tolist() == pytest.approx(
+            [-1e11 * vert, 0.8e11 * vert], rel=1e-4
+        )
+        expected_lev = 500.0 if do_avg_vert else 550.0
+        assert result[LEV_STR].values.tolist() == pytest.approx([expected_lev] * 2)
+
     @pytest.mark.parametrize(
-        ("plev_spike", "kwargs"),
+        ("plev_spike", "kwargs", "n_fallbacks"),
         [
-            (150.0, {"min_plev": 300.0}),
-            (950.0, {"max_plev": 900.0}),
-            (150.0, {"do_avg_vert": True}),
+            (150.0, {"min_plev": 300.0}, 1),
+            (950.0, {"max_plev": 900.0}, 1),
+            (150.0, {"do_avg_vert": True}, 2),
         ],
         ids=["min_plev", "max_plev", "do_avg_vert"],
     )
     def test_vertical_options_reach_gridpoint_fallback(
-        self, plev_spike: float, kwargs: dict[str, Any]
+        self, plev_spike: float, kwargs: dict[str, Any], n_fallbacks: int
     ) -> None:
         # A spike of -5e11 at 25S, the summer cell's center and the last
         # latitude inside min_lat, at a level the option excludes or averages
         # over. Under interpolation that cell's center falls back on its
         # gridpoint, and the fallback search must receive the option too.
-        # With do_avg_vert every search falls back, since had_cell_strength
-        # cannot interpolate a field averaged over its levels.
+        # Only the searches that find that cell fall back: the search south
+        # of the global maximum, and with do_avg_vert, which makes that cell
+        # the global minimum, the search for the global minimum too.
         sf = _bump_cells_streamfunc(_NH_WINTER_CELLS).copy(deep=True)
         sf.loc[{LAT_STR: -25.0, LEV_STR: plev_spike}] = -5e11
         spike = had_cells_strength(sf, min_lat=-25.5).sel(cell="had_cell_sh")
         assert spike.item() == -5e11
         expected = had_cells_strength(sf, min_lat=-25.5, **kwargs)
-        with pytest.warns(UserWarning, match="Interpolating the latitude"):
+        with pytest.warns(UserWarning, match="Interpolating the latitude") as record:
             result = had_cells_strength(sf, min_lat=-25.5, do_interp_lat=True, **kwargs)
+        assert len(record) == n_fallbacks
+        assert all("gridpoint -25." in str(w.message) for w in record)
         sh, sh_expected = (arr.sel(cell="had_cell_sh") for arr in (result, expected))
         assert sh_expected.item() != spike.item()
         assert sh.item() == sh_expected.item()
@@ -1096,6 +1366,262 @@ class TestCellEdgesSigma:
         np.testing.assert_allclose(
             result["cell_strength"].values, default["cell_strength"].values
         )
+
+
+def _time_model_streamfunc() -> xr.DataArray:
+    """Two-cell fields of 3 times by 2 models, each with its own edge latitude.
+
+    The field also has a non-index coordinate, season, along time.
+    """
+    edge_lats = [[30.0, 26.0], [22.0, 34.0], [28.0, 18.0]]
+    sf = xr.concat(
+        [
+            xr.concat([_make_streamfunc(edge) for edge in row], dim="model")
+            for row in edge_lats
+        ],
+        dim=TIME_STR,
+    )
+    return sf.assign_coords(
+        {
+            TIME_STR: [10, 20, 30],
+            "model": ["a", "b"],
+            "season": (TIME_STR, ["x", "y", "z"]),
+        }
+    )
+
+
+_EACH_ELEMENT_CALLS: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {
+    "had_cell_strength": (had_cell_strength, {}),
+    "had_cell_strength_interp": (had_cell_strength, {"do_interp_lat": True}),
+    "had_cells_strength": (had_cells_strength, {}),
+    "had_cells_strength_interp_avg": (
+        had_cells_strength,
+        {"do_interp_lat": True, "do_avg_vert": True},
+    ),
+    "had_cells_shared_edge": (had_cells_shared_edge, {}),
+    "had_cell_edge": (had_cell_edge, EDGE_KWARGS),
+    "had_cells_south_edge": (had_cells_south_edge, EDGE_KWARGS),
+    "had_cells_north_edge": (had_cells_north_edge, EDGE_KWARGS),
+    "had_cells_edges": (had_cells_edges, EDGE_KWARGS),
+}
+
+
+class TestEachElement:
+    """Every dimension besides latitude and level is handled per element."""
+
+    @pytest.mark.parametrize("name", list(_EACH_ELEMENT_CALLS))
+    def test_matches_each_slice(self, name: str) -> None:
+        # The result at each time and model equals the function applied to
+        # that slice alone, and keeps the field's time, model and season
+        # coordinates.
+        func, kwargs = _EACH_ELEMENT_CALLS[name]
+        sf = _time_model_streamfunc()
+        whole = func(sf, **kwargs)
+        results = whole if isinstance(whole, list) else [whole]
+        for res in results:
+            assert res.dims[:2] == (TIME_STR, "model")
+            assert res[TIME_STR].values.tolist() == [10, 20, 30]
+            assert res["model"].values.tolist() == ["a", "b"]
+            assert res["season"].values.tolist() == ["x", "y", "z"]
+        for i_time in range(3):
+            for i_model in range(2):
+                sel = {TIME_STR: i_time, "model": i_model}
+                alone = func(sf.isel(sel), **kwargs)
+                alone_list = alone if isinstance(alone, list) else [alone]
+                for res, one in zip(results, alone_list, strict=True):
+                    np.testing.assert_array_equal(res.isel(sel).values, np.asarray(one))
+                    if isinstance(one, xr.DataArray) and LAT_STR in one.coords:
+                        np.testing.assert_array_equal(
+                            res.isel(sel)[LAT_STR].values, one[LAT_STR].values
+                        )
+
+    def test_strengths_known_values(self) -> None:
+        # Each slice is a pair of opposite cells, so its southern cell is the
+        # slice's minimum and its northern cell its maximum, found here with
+        # raw numpy over the flattened level and latitude.
+        sf = _time_model_streamfunc().transpose(TIME_STR, "model", LEV_STR, LAT_STR)
+        flat = sf.values.reshape(3, 2, -1)
+        i_lev, i_lat = np.unravel_index(flat.argmax(axis=-1), sf.shape[2:])
+        strength = had_cell_strength(sf)
+        np.testing.assert_array_equal(strength.values, flat.max(axis=-1))
+        np.testing.assert_array_equal(
+            strength[LAT_STR].values, sf[LAT_STR].values[i_lat]
+        )
+        np.testing.assert_array_equal(
+            strength[LEV_STR].values, sf[LEV_STR].values[i_lev]
+        )
+        cells = had_cells_strength(sf)
+        assert cells.dims == (TIME_STR, "model", "cell")
+        np.testing.assert_array_equal(
+            cells.sel(cell="had_cell_sh").values, flat.min(axis=-1)
+        )
+        np.testing.assert_array_equal(
+            cells.sel(cell="had_cell_nh").values, flat.max(axis=-1)
+        )
+
+    def test_dimension_without_coordinate(self) -> None:
+        sf = _time_model_streamfunc().isel(model=0).drop_vars([TIME_STR, "season"])
+        result = had_cell_strength(sf)
+        assert result.dims == (TIME_STR,)
+        assert TIME_STR not in result.coords
+        expected = [had_cell_strength(sf.isel({TIME_STR: i})).item() for i in range(3)]
+        assert result.values.tolist() == expected
+
+    def test_core_dimensions_first_and_extra_of_length_one(self) -> None:
+        # The extra dimensions come first in the result, in the field's
+        # order, wherever latitude and level sit in the field.
+        sf = (
+            _time_model_streamfunc()
+            .isel({TIME_STR: [0]})
+            .transpose(LAT_STR, "model", TIME_STR, LEV_STR)
+        )
+        result = had_cells_strength(sf)
+        assert result.dims == ("model", TIME_STR, "cell")
+        assert result.shape == (2, 1, 2)
+
+    def test_edge_at_pole_in_one_element(self) -> None:
+        # At the second time the northern cell stays at its peak all the way
+        # to the pole, so the northern edge is placed there and returned as a
+        # float, while the first time's edge is a DataArray.
+        sf_poleward = _make_streamfunc(30.0)
+        lat = sf_poleward[LAT_STR]
+        peak = sf_poleward.max(LAT_STR)
+        sf_poleward = sf_poleward.where(lat < 15.0, peak)
+        alone = had_cells_north_edge(sf_poleward)
+        assert alone == 90.0 and not isinstance(alone, xr.DataArray)
+        first = had_cells_north_edge(_make_streamfunc(30.0))
+        sf = xr.concat([_make_streamfunc(30.0), sf_poleward], dim=TIME_STR)
+        result = had_cells_north_edge(sf)
+        assert isinstance(result, xr.DataArray)
+        assert result.values.tolist() == [float(first), 90.0]
+        # Only the first time's edge carries a latitude coordinate, so none
+        # may be kept for the whole result, which would label the pole edge
+        # with the first time's latitude.
+        assert LAT_STR not in result.coords
+
+    def test_cell_edges_sigma_cells_by_position(self) -> None:
+        # The second time has a southern polar cell that the first lacks, so
+        # every other cell sits one position further north there, and a label
+        # such as "3" names different cells at the two times. So the cells are
+        # numbered by position at each time, as found alone, with their labels
+        # in cell_label and NaN where a time has fewer cells.
+        lats = np.arange(-85.0, 86.0, 1.0) + _SIGMA_NODE_OFFSET
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        vert = cast(xr.DataArray, np.sin(np.pi * (sigma - 0.1) / 0.9))
+        cells = [
+            (-1e10, -11.0, 10.0),
+            (1.1e10, 11.0, 10.0),
+            (0.3e10, -40.0, 12.0),
+            (-0.35e10, 40.0, 12.0),
+        ]
+        polar = [(-0.2e10, -70.0, 10.0)]
+        fields = [
+            sum(peak * _bump(lat, center, width) for peak, center, width in cs) * vert
+            for cs in (cells, cells + polar)
+        ]
+        result = cell_edges_sigma(xr.concat(fields, dim=TIME_STR))
+        assert result.sizes["cell"] == 5
+        for i_time, field in enumerate(fields):
+            alone = cell_edges_sigma(field)
+            n_cells = alone.sizes["cell"]
+            got = result.isel({TIME_STR: i_time})
+            np.testing.assert_array_equal(
+                got.isel(cell=slice(0, n_cells)).values, alone.values
+            )
+            np.testing.assert_array_equal(
+                got["cell_strength"].values[:n_cells], alone["cell_strength"].values
+            )
+            assert got["cell_label"].values[:n_cells].tolist() == (
+                alone["cell"].values.tolist()
+            )
+            assert bool(got.isel(cell=slice(n_cells, None)).isnull().all())
+
+    def test_coordinates_gain_the_extra_dimension(self) -> None:
+        # Two times whose maxima share a latitude and level: the center's
+        # latitude and level still come back along time.
+        sf = xr.concat([_gauss_cell(10.0), _gauss_cell(10.0, 2e11)], dim=TIME_STR)
+        result = had_cell_strength(sf)
+        assert result[LAT_STR].dims == (TIME_STR,)
+        assert result[LEV_STR].dims == (TIME_STR,)
+        assert result[LAT_STR].values.tolist() == [9.0, 9.0]
+
+    def test_coordinate_along_time_and_latitude(self) -> None:
+        # A coordinate spanning time and latitude is taken at each time's
+        # maximum, like the latitude itself: here it is 100 * time + lat.
+        sf = xr.concat([_gauss_cell(9.0), _gauss_cell(-31.0)], dim=TIME_STR)
+        sf = sf.assign_coords(
+            {TIME_STR: [0, 1], "aux": 100.0 * sf[TIME_STR] + sf[LAT_STR]}
+        )
+        result = had_cell_strength(sf)
+        assert result["aux"].dims == (TIME_STR,)
+        assert result["aux"].values.tolist() == [9.0, 69.0]
+
+    def test_decorated_functions_keep_name_doc_and_signature(self) -> None:
+        for func in (
+            had_cell_strength,
+            had_cells_strength,
+            had_cells_shared_edge,
+            had_cell_edge,
+            had_cells_south_edge,
+            had_cells_north_edge,
+            had_cells_edges,
+            cell_edges_sigma,
+        ):
+            params = list(inspect.signature(func).parameters)
+            assert params[0] in ("streamfunc", "strmfunc"), func
+            assert "lat_str" in params, func
+            assert func.__doc__ and "Every" in func.__doc__, func
+        assert had_cell_strength.__name__ == "had_cell_strength"
+
+    def test_had_cell_strength_options_are_keyword_only(self) -> None:
+        # Dropping dim shifted the positions of the later arguments, so a
+        # positional call written for the old order is refused rather than
+        # silently given a new meaning.
+        old_order: tuple[Any, ...] = (None, 850.0)
+        with pytest.raises(TypeError, match="had_cell_strength"):
+            had_cell_strength(_gauss_cell(10.0), *old_order)
+
+    def test_latitude_must_be_a_dimension(self) -> None:
+        # A latitude not named by lat_str would otherwise be looped over.
+        sf = _gauss_cell(10.0).rename({LAT_STR: "latitude"})
+        with pytest.raises(ValueError, match="no latitude dimension 'lat'"):
+            had_cell_strength(sf)
+        with pytest.raises(ValueError, match="no latitude dimension 'lat'"):
+            cell_edges_sigma(_sigma_streamfunc().rename({LAT_STR: "latitude"}))
+
+    def test_dim_argument_removed(self) -> None:
+        removed: dict[str, Any] = {"dim": TIME_STR}
+        with pytest.raises(TypeError, match=r"had_cell_strength\(\).*'dim'"):
+            had_cell_strength(_gauss_cell(10.0), **removed)
+
+    def test_extra_dimension_of_length_zero_raises(self) -> None:
+        sf = _gauss_cell(10.0).expand_dims({TIME_STR: [0]}).isel({TIME_STR: []})
+        with pytest.raises(ValueError, match="'time' has length 0"):
+            had_cell_strength(sf)
+
+    @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
+    def test_warnings_point_at_the_caller(self, extra_dim: bool) -> None:
+        # A lone cell gives both of had_cells_strength's warnings under
+        # do_interp_lat. Each is attributed to this file, the caller, not to
+        # had_cell.py, however many of its frames the decorator adds.
+        sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0)])
+        if extra_dim:
+            sf = sf.expand_dims({TIME_STR: [0, 1]})
+        with pytest.warns(UserWarning) as record:
+            had_cells_strength(sf, do_interp_lat=True)
+        messages = [str(w.message) for w in record]
+        assert any("sense of circulation" in m for m in messages)
+        assert any("Interpolating the latitude" in m for m in messages)
+        assert {w.filename for w in record} == {__file__}
+
+    def test_cell_edges_sigma_same_cells_keep_labels(self) -> None:
+        # Where every time finds the same cells, the labels stay the index.
+        sf = xr.concat([_sigma_streamfunc(amp) for amp in (1e10, 2e10)], dim=TIME_STR)
+        result = cell_edges_sigma(sf, frac_thresh=0.2)
+        assert result["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        assert "cell_label" not in result.coords
 
 
 class TestBciEdgeFormulas:

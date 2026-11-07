@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import warnings
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable, Hashable
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 import numpy as np
 import scipy.ndimage
@@ -25,13 +27,136 @@ from .nb_utils import (
     cosdeg,
     lat_area_weight,
     max_and_argmax,
-    max_and_argmax_along_dim,
     sindeg,
 )
 from .vert_coords import subtract_col_avg
 
 if TYPE_CHECKING:
     from xarray.core.types import CompatOptions
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _each_element(
+    *core_dim_params: str,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Apply a streamfunction diagnostic separately at each element.
+
+    The decorated function's first argument is the streamfunction, and
+    `core_dim_params` name its arguments that give the dimensions it works
+    across: the latitude first, then the level. Every other dimension of the
+    streamfunction, such as time, model or ensemble member, is looped over:
+    the function is applied to each slice, and the results are concatenated
+    along that dimension, which keeps the streamfunction's coordinates along
+    it. With no such dimension, the function is called unchanged.
+
+    The latitude must be a dimension of the streamfunction, since a
+    misnamed one would otherwise be looped over.
+
+    """
+
+    def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
+        signature = inspect.signature(func)
+        field_param = next(iter(signature.parameters))
+
+        @functools.wraps(func)
+        def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            try:
+                bound = signature.bind(*args, **kwargs)
+            except TypeError as err:
+                raise TypeError(f"{func.__name__}() {err}") from None
+            bound.apply_defaults()
+            field = bound.arguments[field_param]
+            lat_param = core_dim_params[0]
+            if bound.arguments[lat_param] not in field.dims:
+                raise ValueError(
+                    f"{func.__name__}: the streamfunction has no latitude "
+                    f"dimension {bound.arguments[lat_param]!r}; its dimensions "
+                    f"are {field.dims}. Give its name with {lat_param}."
+                )
+            core_dims = {bound.arguments[name] for name in core_dim_params}
+            extra_dims = [d for d in field.dims if d not in core_dims]
+            if not extra_dims:
+                return func(*args, **kwargs)
+            dim = extra_dims[0]
+            if field.sizes[dim] == 0:
+                raise ValueError(
+                    f"{func.__name__}: the dimension {dim!r} has length 0, so "
+                    "there is nothing to compute."
+                )
+            results = []
+            for i in range(field.sizes[dim]):
+                bound.arguments[field_param] = field.isel({dim: i})
+                # Recursing handles any further extra dimensions.
+                results.append(
+                    cast(Callable[..., _R], wrapper)(*bound.args, **bound.kwargs)
+                )
+            return cast(_R, _concat_elements(results, field, dim))
+
+        return wrapper
+
+    return decorator
+
+
+def _concat_elements(
+    results: list[Any], field: xr.DataArray, dim: Hashable
+) -> xr.DataArray | list[Any]:
+    """Concatenate one result per element of `field` along `dim`.
+
+    A result that is a list is combined item by item. A result that is not a
+    DataArray, such as an edge latitude returned as a float at a pole, is made
+    one, and only the coordinates every result has are kept. Each kept
+    coordinate gains `dim`, and `field`'s coordinates along `dim` are
+    attached. A dimension of the results whose labels differ between
+    elements, such as the cells `cell_edges_sigma` finds, is numbered by
+    position, padded with NaN, and its labels are kept in the coordinate
+    named after it with the suffix "_label".
+
+    """
+    if isinstance(results[0], list):
+        return [
+            _concat_elements([result[k] for result in results], field, dim)
+            for k in range(len(results[0]))
+        ]
+    arrays = [r if isinstance(r, xr.DataArray) else xr.DataArray(r) for r in results]
+    shared = set.intersection(*(set(arr.coords) for arr in arrays)) - {dim}
+    arrays = [
+        arr.drop_vars([c for c in arr.coords if c not in shared]) for arr in arrays
+    ]
+    for res_dim in arrays[0].dims:
+        if res_dim in arrays[0].indexes and any(
+            not arr.indexes[res_dim].equals(arrays[0].indexes[res_dim])
+            for arr in arrays[1:]
+        ):
+            arrays = [
+                arr.assign_coords(
+                    {f"{res_dim}_label": (res_dim, arr[res_dim].values)}
+                ).assign_coords({res_dim: np.arange(arr.sizes[res_dim])})
+                for arr in arrays
+            ]
+    combined = xr.concat(arrays, dim=dim, coords="all", compat="equals", join="outer")
+    return combined.assign_coords(
+        {name: coord for name, coord in field.coords.items() if coord.dims == (dim,)}
+    )
+
+
+def _stacklevel_outside_module() -> int:
+    """`warnings.warn` stacklevel of the first caller outside this module.
+
+    Counted from the function that calls this one and then warns. The
+    per-element decorator puts a varying number of this module's frames
+    between a diagnostic and its caller, so no fixed stacklevel reaches
+    the caller.
+
+    """
+    frame = inspect.currentframe()
+    frame = frame.f_back if frame is not None else None
+    level = 1
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 def merid_streamfunc(
@@ -99,9 +224,10 @@ def merid_streamfunc(
     )
 
 
+@_each_element("lat_str", "lev_str")
 def had_cell_strength(
     streamfunc: xr.DataArray,
-    dim: str | None = None,
+    *,
     min_plev: float | None = None,
     max_plev: float | None = None,
     do_avg_vert: bool = False,
@@ -111,9 +237,26 @@ def had_cell_strength(
 ) -> xr.DataArray:
     """Hadley cell strength, as maximum of streamfunction.
 
-    If a dimension is given, compute the strength separately at each value of
-    that dimension.  Otherwise find the global extremum of the whole given
-    array.
+    The maximum is taken over latitude and level. Every other dimension,
+    such as time, model or ensemble member, is handled separately at each of
+    its values and kept in the result.
+
+    With `do_interp_lat`, the maximum's latitude is interpolated between
+    gridpoints, to where the latitude derivative of the streamfunction crosses
+    zero along the level of the gridpoint maximum. The strength is then the
+    maximum, over the levels, of the streamfunction interpolated cubically to
+    that latitude.
+
+    A ValueError is raised in two cases. One is when the derivative has no
+    zero crossing within 1.1 times the mean latitude spacing of the gridpoint
+    maximum, as when that maximum lies at the edge of the latitudes searched.
+    The other is when the streamfunction contains NaN anywhere, since the
+    cubic interpolation then returns NaN everywhere. Where the NaN is
+    confined to some levels, as below ground, excluding those levels with
+    `min_plev` or `max_plev`, or averaging over the levels with
+    `do_avg_vert`, which skips NaN, avoids the second; a latitude that is NaN
+    at every level still raises. Either case at any one value of another
+    dimension raises for the whole call.
 
     """
     if min_plev is None and max_plev is None:
@@ -139,31 +282,40 @@ def had_cell_strength(
     # on one side or the other there will be a sign change, and interpolate there.
     # Or is there a way to do that even more directly with xarray's interpolation?
     if do_interp_lat:
-        cell_strength = max_and_argmax(sf_valid)
-        lev_center = cell_strength[lev_str].values
-        lat_center_raw = cell_strength[lat_str].values
-        dlat_mean = sf_valid[lat_str].diff(lat_str).mean()
-        dsf_dlat = (
-            sf_valid.differentiate(lat_str)
-            .sel({lev_str: lev_center}, method="nearest")
-            .sel(
-                {
-                    lat_str: slice(
-                        lat_center_raw - 1.1 * dlat_mean,
-                        lat_center_raw + 1.1 * dlat_mean,
-                    )
-                }
+        return _max_interp_lat(sf_valid, lat_str)
+    return cast(xr.DataArray, max_and_argmax(sf_valid))
+
+
+def _max_interp_lat(sf: xr.DataArray, lat_str: str = LAT_STR) -> xr.DataArray:
+    """Maximum of `sf`, with its latitude interpolated between gridpoints.
+
+    The latitude is where the latitude derivative of `sf` crosses zero within
+    1.1 times the mean latitude spacing of the gridpoint maximum, along the
+    line of latitudes through that maximum, with every other dimension held
+    at the maximum's position. The strength is the maximum, over every other
+    dimension, of `sf` interpolated cubically to that latitude.
+
+    """
+    i_max = np.unravel_index(np.nanargmax(sf.data), sf.shape)
+    lat_line = sf.isel(
+        {d: i for d, i in zip(sf.dims, i_max, strict=True) if d != lat_str}
+    )
+    lat_center_raw = sf[lat_str].values[i_max[sf.get_axis_num(lat_str)]]
+    dlat_mean = sf[lat_str].diff(lat_str).mean()
+    dsf_dlat = lat_line.differentiate(lat_str).sel(
+        {
+            lat_str: slice(
+                lat_center_raw - 1.1 * dlat_mean,
+                lat_center_raw + 1.1 * dlat_mean,
             )
-        )
-        lat_center = zero_cross_interp(dsf_dlat, lat_str).values
-        sf_at_center = sf_valid.interp({lat_str: lat_center}, method="cubic")
-        return cast(xr.DataArray, max_and_argmax(sf_at_center))
-
-    if dim is None:
-        return cast(xr.DataArray, max_and_argmax(sf_valid))
-    return cast(xr.DataArray, max_and_argmax_along_dim(sf_valid, dim))
+        }
+    )
+    lat_center = zero_cross_interp(dsf_dlat, lat_str).values
+    sf_at_center = sf.interp({lat_str: lat_center}, method="cubic")
+    return cast(xr.DataArray, max_and_argmax(sf_at_center))
 
 
+@_each_element("lat_str", "lev_str")
 def had_cells_strength(
     strmfunc: xr.DataArray,
     min_plev: float | None = None,
@@ -177,6 +329,10 @@ def had_cells_strength(
     lev_str: str = LEV_STR,
 ) -> xr.DataArray:
     """Location and signed magnitude of both Hadley cell centers.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result.
 
     Each cell is identified by its sense of circulation, which requires the
     sign that `merid_streamfunc` returns: positive for the northern Hadley
@@ -250,7 +406,7 @@ def had_cells_strength(
             "Interpolation fails, for example, when the extremum lies at the "
             "edge of the latitudes searched or where the streamfunction is flat "
             "in latitude, or when the streamfunction contains NaN.",
-            stacklevel=3,
+            stacklevel=_stacklevel_outside_module(),
         )
         return cell
 
@@ -300,7 +456,7 @@ def had_cells_strength(
             f"{cell_nh.item():.3g}, where positive is expected. Either one "
             "Hadley cell is missing, or the streamfunction is signed opposite "
             "to merid_streamfunc's, with the northern cell negative.",
-            stacklevel=2,
+            stacklevel=_stacklevel_outside_module(),
         )
 
     hc_strengths = xr.concat(
@@ -335,6 +491,7 @@ def _streamfunc_at_avg_lev_max(
     return cast(xr.DataArray, strmfunc.sel({lev_str: lev_avg}))
 
 
+@_each_element("lat_str", "lev_str")
 def had_cells_shared_edge(
     strmfunc: xr.DataArray,
     fixed_plev: float | None = None,
@@ -346,7 +503,13 @@ def had_cells_shared_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> xr.DataArray:
-    """Latitude of shared inner edge of Hadley cells."""
+    """Latitude of shared inner edge of Hadley cells.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result.
+
+    """
     lat = strmfunc[lat_str]
     hc_strengths = had_cells_strength(
         strmfunc,
@@ -374,6 +537,7 @@ def had_cells_shared_edge(
     )
 
 
+@_each_element("lat_str", "lev_str")
 def had_cell_edge(
     strmfunc: xr.DataArray,
     cell: str = "north",
@@ -390,7 +554,14 @@ def had_cell_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> xr.DataArray | float:
-    """Latitude of poleward edge of either the NH or SH Hadley cell."""
+    """Latitude of poleward edge of either the NH or SH Hadley cell.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result. Where the edge is placed at a pole, a float is returned for a
+    field of latitude and level alone.
+
+    """
     hc_strengths = had_cells_strength(
         strmfunc,
         min_plev=min_plev,
@@ -486,6 +657,7 @@ def had_cell_edge(
     )
 
 
+@_each_element("lat_str", "lev_str")
 def had_cells_south_edge(
     strmfunc: xr.DataArray,
     frac_thresh: float = 0.1,
@@ -499,7 +671,13 @@ def had_cells_south_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> xr.DataArray | float:
-    """Latitude of southern edge of southern Hadley cell."""
+    """Latitude of southern edge of southern Hadley cell.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result.
+
+    """
     return had_cell_edge(
         strmfunc,
         cell="south",
@@ -517,6 +695,7 @@ def had_cells_south_edge(
     )
 
 
+@_each_element("lat_str", "lev_str")
 def had_cells_north_edge(
     strmfunc: xr.DataArray,
     frac_thresh: float = 0.1,
@@ -530,7 +709,13 @@ def had_cells_north_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> xr.DataArray | float:
-    """Latitude of northern edge of northern Hadley cell."""
+    """Latitude of northern edge of northern Hadley cell.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result.
+
+    """
     return had_cell_edge(
         strmfunc,
         cell="north",
@@ -548,6 +733,7 @@ def had_cells_north_edge(
     )
 
 
+@_each_element("lat_str", "lev_str")
 def had_cells_edges(
     strmfunc: xr.DataArray,
     frac_thresh: float = 0.1,
@@ -560,7 +746,13 @@ def had_cells_edges(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
 ) -> list[xr.DataArray | float]:
-    """Southern, shared inner, and northern edge of the Hadley cells."""
+    """Southern, shared inner, and northern edge of the Hadley cells.
+
+    Every dimension besides latitude and level, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    each of the three results.
+
+    """
     # Kwargs common to all three edge functions. `frac_thresh` and
     # `cos_factor` are intentionally excluded: they apply to the outer-edge
     # threshold detection in `had_cell_edge`, and the shared inner edge is a
@@ -585,6 +777,7 @@ def had_cells_edges(
     return [f_kw[0](strmfunc, **f_kw[1], **shared_kwargs) for f_kw in func_and_kwargs]
 
 
+@_each_element("lat_str", "sigma_str")
 def cell_edges_sigma(
     streamfunc: xr.DataArray,
     frac_thresh: float = 0.1,
@@ -595,7 +788,16 @@ def cell_edges_sigma(
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
-    """Compute edges of all contiguous streamfunction overturning cells."""
+    """Compute edges of all contiguous streamfunction overturning cells.
+
+    Every dimension besides latitude and sigma, such as time, model or
+    ensemble member, is handled separately at each of its values and kept in
+    the result. Where the cells found differ between those values, they are
+    numbered by position from south to north, padded with NaN where a value
+    has fewer cells, and their labels, such as "sh_hadley" and "nh_hadley",
+    are kept in the coordinate "cell_label".
+
+    """
     # Discard values in the boundary layer and stratosphere (if specified).
     sigma = streamfunc[sigma_str]
     if center_min_sigma > 0 or center_max_sigma < 1:
@@ -652,7 +854,7 @@ def _find_cell_and_edges(
     if cell_sigma_depth < cell_min_sigma_depth:
         raise ValueError("Cell is insufficiently deep.")
     # Restrict to the level of this cell's center.
-    sf_max = had_cell_strength(sf_one_cell)
+    sf_max = had_cell_strength(sf_one_cell, lev_str=sigma_str, lat_str=lat_str)
     assert sf_max > 0
     sf_at_max = _cell_at_max(streamfunc * cell_sign, sf_max, sigma_str)
     # Retain this cell and those with opposite sign.
