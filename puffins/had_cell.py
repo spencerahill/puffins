@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -28,7 +28,6 @@ from .nb_utils import (
     max_and_argmax_along_dim,
     sindeg,
 )
-from .num_solver import brentq_solver_sweep_param
 from .vert_coords import subtract_col_avg
 
 if TYPE_CHECKING:
@@ -885,30 +884,23 @@ def fixed_ro_bci_edge_small_angle_lata0(
     delta_v: float = DELTA_V,
     c_descent: float = 1,
 ) -> ArrayLike:
-    """HC edge for fixed-Ro, BCI model with equatorial ascent."""
+    """HC edge for fixed-Ro, BCI model with equatorial ascent.
+
+    Eq. 6 of Hill et al. (2025), c_descent (Bu delta_v / (2 Ro))^(1/4), in
+    degrees. Only its value at ``c_descent = 1`` is the ``lat_fixed_ro_ann``
+    that ``fixed_ro_bci_edge`` and ``fixed_ro_bci_edge_small_angle`` take,
+    since they apply their own ``c_descent``.
+    """
     return cast(
         ArrayLike,
         c_descent * np.rad2deg(((burg_num * delta_v) / (2.0 * ross_num)) ** 0.25),
     )
 
 
-def _fixed_ro_bci_edge(lat: float, ascentlat: float, h00lat: float) -> float:
-    """For numerical solution of fixed-Ro, 2-layer BCI model of HC edge."""
-    sinlat = sindeg(lat)
-    coslat = cosdeg(lat)
-    term1 = sinlat**4
-    term2 = -(sindeg(ascentlat) ** 2) * sinlat**2
-    term3 = -(np.deg2rad(h00lat) ** 4) * coslat**2
-    return cast(float, np.rad2deg(term1 + term2 + term3))
-
-
-_DEFAULT_ZERO_BOUNDS_GUESS_RANGE = np.arange(0.1, 90, 5)
-
-
 def fixed_ro_bci_edge(
     ascentlat: ArrayLike,
     lat_fixed_ro_ann: ArrayLike | None = None,
-    burg_num: float | None = None,
+    burg_num: ArrayLike | None = None,
     ross_num: float = 1.0,
     c_descent: float = 1.0,
     delta_v: float = DELTA_V,
@@ -916,50 +908,85 @@ def fixed_ro_bci_edge(
     grav: float = GRAV_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
-    zero_bounds_guess_range: Sequence[float] | np.ndarray | None = None,
 ) -> ArrayLike:
-    """Numerically solve fixed-Ro, 2-layer BCI model of HC edge."""
-    if zero_bounds_guess_range is None:
-        zero_bounds_guess_range = _DEFAULT_ZERO_BOUNDS_GUESS_RANGE
+    """Fixed-Ro, 2-layer BCI model of HC descending edge, at full angle.
+
+    Solves u_Ro = u_BCI, Eqs. 2 and 3 of Hill et al. (2025), without the
+    small-angle approximation, and multiplies the solution by the fitting
+    constant c_descent, as they define it on p. 5506 (phi_d = c_d phi_BCI).
+    In s = sin^2(lat) the condition is the quadratic
+
+        s^2 + (X - sin^2(ascentlat)) s - X = 0,  X = Bu delta_v / (2 Ro),
+
+    which is -X at s = 0 and cos^2(ascentlat) at s = 1, so exactly one root
+    lies in (0, 1]. The function computes that root in closed form as
+
+        1 - s = 2 cos^2(ascentlat) / (1 + cos^2(ascentlat) + X
+                + ((sin^2(ascentlat) - X)^2 + 4 X)^(1/2)),
+
+    whose denominator is at least 1 and a sum of non-negative terms, so the
+    result keeps full precision for any X.
+
+    Parameters
+    ----------
+    ascentlat : float or array-like
+        Latitude of the ascending edge (degrees). Only its magnitude enters.
+    lat_fixed_ro_ann : float or array-like, optional
+        X^(1/4) in degrees: the small-angle edge for equatorial ascent at
+        ``c_descent = 1``, which ``fixed_ro_bci_edge_small_angle_lata0``
+        returns with its default ``c_descent``. The full-angle edge for
+        equatorial ascent is smaller. If given, ``burg_num``, ``ross_num``,
+        ``delta_v`` and the planetary arguments are unused.
+    burg_num : float or array-like, optional
+        Planetary Burger number. Default: computed from ``height``, ``grav``,
+        ``rot_rate`` and ``radius``.
+    ross_num : float, optional
+        Cell-mean Rossby number. Default: 1.
+    c_descent : float, optional
+        Fitting constant multiplying the solution. Default: 1.
+    delta_v : float, optional
+        Bulk static stability. Default: DELTA_V.
+    height, grav, rot_rate, radius : float, optional
+        Tropopause height (m), gravity (m/s^2), rotation rate (1/s) and
+        radius (m) of the planet. Default: Earth.
+
+    Returns
+    -------
+    float or array-like
+        Descending edge latitude (degrees), non-negative. NaN where an input
+        is NaN.
+    """
+    lat_fixed_ro_ann4: ArrayLike
     if lat_fixed_ro_ann is None:
         if burg_num is None:
             burg_num = plan_burg_num(
                 height, grav=grav, rot_rate=rot_rate, radius=radius
             )
-        lat_fixed_ro_ann = fixed_ro_bci_edge_small_angle_lata0(
-            burg_num=burg_num,
-            ross_num=ross_num,
-            delta_v=delta_v,
-            c_descent=c_descent,
+        lat_fixed_ro_ann4 = burg_num * delta_v / (2.0 * ross_num)
+    else:
+        lat_fixed_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
+    # The root as 1 - s, the squared cosine of the edge. Every term of the
+    # denominator is non-negative and the first is 1, so for no X does it
+    # cancel or divide by zero.
+    sin2_ascent = sindeg(ascentlat) ** 2
+    cos2_ascent = cosdeg(ascentlat) ** 2
+    cos2_edge = (
+        2
+        * cos2_ascent
+        / (
+            1
+            + cos2_ascent
+            + lat_fixed_ro_ann4
+            + np.sqrt((sin2_ascent - lat_fixed_ro_ann4) ** 2 + 4 * lat_fixed_ro_ann4)
         )
-
-    def _solver(lat_a: float, lat_h: float) -> float:
-        # Start guess at the average of the two given latitudes.
-        init_guess = 0.5 * (lat_a + lat_h)
-        # The solver returns a length-1 DataArray for scalar inputs; return
-        # the bare scalar so that ``np.vectorize`` can assemble the results.
-        return float(
-            brentq_solver_sweep_param(
-                _fixed_ro_bci_edge,
-                lat_a,
-                init_guess,
-                zero_bounds_guess_range,
-                funcargs=(lat_h,),
-            ).item()
-        )
-
-    return cast(
-        ArrayLike,
-        xr.apply_ufunc(
-            _solver, ascentlat, lat_fixed_ro_ann, vectorize=True, dask="parallelized"
-        ),
     )
+    return cast(ArrayLike, c_descent * np.rad2deg(np.arccos(np.sqrt(cos2_edge))))
 
 
 def fixed_ro_bci_edge_small_angle(
     ascentlat: ArrayLike,
     lat_fixed_ro_ann: ArrayLike | None = None,
-    burg_num: float | None = None,
+    burg_num: ArrayLike | None = None,
     ross_num: float = 1,
     delta_v: float = DELTA_V,
     c_descent: float = 1.0,
@@ -970,8 +997,13 @@ def fixed_ro_bci_edge_small_angle(
 ) -> ArrayLike:
     """Small-angle solution for fixed-Ro, BCI model for HC descending edge.
 
+    Eq. 4 of Hill et al. (2025).
+
     Both ascentlat and lat_fixed_ro_ann should be in degrees, not radians.
-    And the return value is in degrees, not radians.
+    And the return value is in degrees, not radians. ``lat_fixed_ro_ann`` is
+    the small-angle edge for equatorial ascent at ``c_descent = 1``, as in
+    ``fixed_ro_bci_edge``; ``c_descent`` multiplies the solution in either
+    case.
 
     """
     lat_fixed_ro_ann4: ArrayLike
@@ -994,18 +1026,28 @@ def fixed_ro_bci_edge_small_angle(
     )
 
 
-# TODO: for all below, correct the missing 2 factor multiplying Ro,
-# which I've corrected for above already.
 def lin_ro_bci_edge_small_angle_lata0(
     burg_num: ArrayLike,
     ross_ascent: float,
     ross_descent: float,
     delta_v: float = DELTA_V,
 ) -> ArrayLike:
-    """Baroclinic instab. est. for cell edge, linear Ro profile."""
+    """Baroclinic instab. est. for cell edge, linear Ro profile.
+
+    Small-angle, with ascent at the equator, and the Rossby number varying
+    linearly in latitude from ``ross_ascent`` there to ``ross_descent`` at the
+    edge. The wind of ``grad_bal.u_lin_ro_small_ang`` is then
+    Omega a lat_d^2 (Ro_a + 2 Ro_d) / 3 at the edge lat_d. Setting it equal to
+    the small-angle u_BCI = g H delta_v / (2 Omega a lat_d^2), Eq. 3 of Hill et
+    al. (2025), gives lat_d^4 = 3 Bu delta_v / (2 (Ro_a + 2 Ro_d)). With
+    Ro_a = Ro_d this is ``fixed_ro_bci_edge_small_angle_lata0`` at its default
+    ``c_descent``.
+    """
     return cast(
         ArrayLike,
-        np.rad2deg((3 * burg_num * delta_v / (ross_ascent + 2 * ross_descent)) ** 0.25),
+        np.rad2deg(
+            (3 * burg_num * delta_v / (2 * (ross_ascent + 2 * ross_descent))) ** 0.25
+        ),
     )
 
 
@@ -1059,28 +1101,43 @@ def fixed_ro_bci_edge_supercrit_ascent(
     From Hill, Bordoni, and Mitchell, 2022, JAS, "A Theory for the Hadley Cell
     Descending and Ascending Edges throughout the Annual Cycle."
 
-    The ascending latitude is assumed equal to c_ascent times
-    (burg_delh_sin_latmax / 2) to the one-third power.  Then the descending
-    edge assumes a uniform Rossby number and the 2-layer BCI condition.
+    The ascending latitude is ``lat_ascent_eta0_approx``, c_ascent times
+    (burg_delh_sin_latmax / 2) to the one-third power (2022 Eq. 13). The
+    descending edge is then ``fixed_ro_bci_edge_small_angle``, Eq. 4 of Hill
+    et al. (2025), with the planetary Burger number
+    Bu = |burg_delh_sin_latmax| / (delta_h |sin(max_lat)|). This is 2022
+    Eq. 15 with its coefficient 2^(4/3) / c_ascent^4 replaced by
+    2^(1/3) / c_ascent^4: that paper's critical wind for baroclinic
+    instability omitted a factor of 2 (Hill et al. 2025, footnote 1).
 
     ``burg_delh_sin_latmax`` is the planetary Burger number times delta_h
     times sin(max_lat): the seasonally varying thermal Rossby number Ro_th
     of Hill et al. (2022, Eq. 14).  `max_lat` also appears separately in the
-    expression, which is why it also must be provided separately.
+    expression, which is why it also must be provided separately. A negative
+    ``burg_delh_sin_latmax``, for forcing peaked in the Southern Hemisphere,
+    gives the edge mirrored about the equator, negative; the sign of
+    ``max_lat`` does not matter.
+
+    The returned edge has the sign of ``burg_delh_sin_latmax``, so it lies in
+    the hemisphere of the forcing maximum, as the summer cell's descending
+    edge does. The edge condition is symmetric about the equator, and Hill et
+    al. (2022, p. 2518) apply it equally to the cross-equatorial winter cell,
+    given a Rossby number representative of that cell; that cell's
+    descending edge is then the negative of the returned value. At
+    ``max_lat = 0`` the Burger number cannot be recovered from
+    ``burg_delh_sin_latmax``, and the function divides by zero.
 
     """
     lat_ascent = lat_ascent_eta0_approx(burg_delh_sin_latmax, c_ascent=c_ascent)
-    term1 = (2 ** (4.0 / 3.0)) / (c_ascent**4)
-    term2 = delta_v / (delta_h * sindeg(max_lat))
-    term3 = 1.0 / (ross_num * (burg_delh_sin_latmax ** (1.0 / 3.0)))
-    return cast(
-        ArrayLike,
-        c_descent
-        * np.rad2deg(
-            np.deg2rad(lat_ascent)
-            * np.sqrt(0.5 + np.sqrt(0.25 + term1 * term2 * term3))
-        ),
+    burg_num = np.abs(burg_delh_sin_latmax) / (delta_h * np.abs(sindeg(max_lat)))
+    edge = fixed_ro_bci_edge_small_angle(
+        lat_ascent,
+        burg_num=burg_num,
+        ross_num=ross_num,
+        delta_v=delta_v,
+        c_descent=c_descent,
     )
+    return cast(ArrayLike, np.sign(burg_delh_sin_latmax) * edge)
 
 
 if __name__ == "__main__":

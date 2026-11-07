@@ -50,7 +50,9 @@ def brentq_solver_sweep_param(
 
     solutions : xarray.DataArray
         Array of the numerical solution for each parameter value in
-        ``param_range``
+        ``param_range``. NaN where no two guesses with function values of
+        opposite sign, neither of them NaN, were found, which includes a NaN
+        parameter value. An infinite function value counts by its sign.
 
     """
     if funcargs is None:
@@ -68,8 +70,15 @@ def brentq_solver_sweep_param(
         old_bound = func(old_guess, *args)
         for guess in bound_guess_range:
             bound = func(guess, *args)
-            # Find two values between which the function changes sign.
-            if np.sign(bound) - np.sign(old_bound) != 0:
+            # Find two values between which the function changes sign. A NaN
+            # value brackets nothing, so a NaN parameter, or a NaN function
+            # value at every guess, gives NaN. An infinite value has a sign,
+            # so it does bracket, and a root beside a pole is found.
+            if (
+                not np.isnan(bound)
+                and not np.isnan(old_bound)
+                and np.sign(bound) != np.sign(old_bound)
+            ):
                 solution = scipy.optimize.brentq(func, old_guess, guess, args=args)
                 # Solution found, so move on to next value.
                 break
