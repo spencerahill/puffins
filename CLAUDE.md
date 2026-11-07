@@ -44,7 +44,7 @@ The package is structured into several functional groups:
 - `radiation.py`: Blackbody radiation (Planck function, Wien's displacement law)
 
 ### Climate Dynamics
-- `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent), plus theoretical cell-edge predictions (baroclinic-instability and supercriticality models)
+- `had_cell.py`: Hadley cell and meridional overturning circulation diagnostics (streamfunction, cell strength/extent), plus theoretical cell-edge predictions (baroclinic-instability and supercriticality models). The strength, center and edge diagnostics work on one latitude-level slice at a time: the private decorator `_each_element` applies each separately along every other dimension (time, model, ensemble member) and keeps those dimensions in the result
 - `grad_bal.py`: Gradient balance and thermal wind balance (Boussinesq, CQE, and pressure-coordinate forms), plus the angular-momentum-conserving, uniform-Rossby-number, and linear-Rossby-number wind and potential temperature expressions
 - `eq_area.py`: Equal-area Hadley cell model (Held-Hou 1980, Lindzen-Hou 1988, and extensions): closed forms for the small-angle uniform- and linear-Rossby-number cases; numerical solvers for Lindzen-Hou 1988 (standard Boussinesq and fixed-tropopause-temperature forms) and for a user-supplied RCE potential-temperature profile under Boussinesq, convective quasi-equilibrium (CQE), or CQE with fixed tropopause temperature; belongs conceptually with the Theoretical Models below
 - `eofs.py`: Empirical Orthogonal Function analysis
