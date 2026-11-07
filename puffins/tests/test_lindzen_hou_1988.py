@@ -307,6 +307,16 @@ class TestAbsVortRceZeroLh88:
         assert np.ndim(result) == 0
         assert result.item() == pytest.approx(_eq10_root(48.86, 0.853), abs=1e-9)
 
+    def test_zero_lat_max_gives_equator(self) -> None:
+        """Eq. 9 at lat_max = 0 is 2 Omega sin(lat) (1 + 2 burg_delh)^(1/2)."""
+        result = abs_vort_rce_zero_lh88(0.0, 0.853)
+        assert np.ndim(result) == 0
+        assert result.item() == 0.0
+
+    def test_zero_lat_max_element_of_array(self) -> None:
+        result = abs_vort_rce_zero_lh88(np.array([0.0, 48.86]), 0.853)
+        np.testing.assert_allclose(result, [0.0, _eq10_root(48.86, 0.853)], atol=1e-9)
+
     def test_negative_lat_max_mirrors(self) -> None:
         north = abs_vort_rce_zero_lh88(48.86, 0.853).item()
         south = abs_vort_rce_zero_lh88(-48.86, 0.853).item()

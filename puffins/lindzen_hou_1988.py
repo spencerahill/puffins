@@ -246,9 +246,9 @@ def abs_vort_rce_zero_lh88(lat_max, burg_delh, init_guess=5):
     ----------
     lat_max : float or 1-D array-like
         Latitude of maximum forcing (degrees). A negative value gives the
-        root mirrored about the equator. At ``lat_max = 0`` the result is NaN
-        for any ``init_guess``, although the zero crossing is then the
-        equator.
+        root mirrored about the equator. At ``lat_max = 0`` the result is 0:
+        Eq. 9 is then 2 Omega sin(lat) (1 + 2 burg_delh)^(1/2), which
+        vanishes only at the equator.
     burg_delh : float
         Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
         which omits the sin(lat_max) factor of Ro_th.
@@ -282,6 +282,10 @@ def abs_vort_rce_zero_lh88(lat_max, burg_delh, init_guess=5):
         zero_bounds_guess_range,
         funcargs=(burg_delh,),
     )
+    # At lat_max = 0 the solved function, Eq. 10 times sin(lat_max), is zero
+    # at every latitude, so the search finds no bracket; the crossing is then
+    # the equator.
+    roots = roots.where(np.asarray(lat_max) != 0, 0.0)
     return roots.squeeze() if scalar else roots
 
 
