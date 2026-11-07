@@ -1,5 +1,6 @@
 """Tests for had_cell module."""
 
+import inspect
 import warnings
 from typing import Any, cast
 
@@ -1162,11 +1163,11 @@ class TestBciEdgeFormulas:
         assert result == pytest.approx(expected)
 
     def test_supercrit_ascent_known_value(self) -> None:
-        therm_ross, max_lat = 0.4, 60.0
+        burg_delh_sin_latmax, max_lat = 0.4, 60.0
         c_ascent, c_descent = 1.1, 0.9
         delta_v, delta_h, ross_num = 0.3, 0.1, 0.8
         result = fixed_ro_bci_edge_supercrit_ascent(
-            therm_ross,
+            burg_delh_sin_latmax,
             max_lat=max_lat,
             c_ascent=c_ascent,
             c_descent=c_descent,
@@ -1174,10 +1175,10 @@ class TestBciEdgeFormulas:
             delta_h=delta_h,
             ross_num=ross_num,
         )
-        lat_ascent = np.rad2deg(c_ascent * (0.5 * therm_ross) ** (1.0 / 3.0))
+        lat_ascent = np.rad2deg(c_ascent * (0.5 * burg_delh_sin_latmax) ** (1.0 / 3.0))
         term1 = 2.0 ** (4.0 / 3.0) / c_ascent**4
         term2 = delta_v / (delta_h * np.sin(np.deg2rad(max_lat)))
-        term3 = 1.0 / (ross_num * therm_ross ** (1.0 / 3.0))
+        term3 = 1.0 / (ross_num * burg_delh_sin_latmax ** (1.0 / 3.0))
         expected = c_descent * np.rad2deg(
             np.deg2rad(lat_ascent)
             * np.sqrt(0.5 + np.sqrt(0.25 + term1 * term2 * term3))
@@ -1245,3 +1246,13 @@ class TestFixedRoBciEdgeSolver:
         h00lat = c_descent * np.rad2deg((burg * delta_v / (2.0 * ross_num)) ** 0.25)
         resid = _bci_polynomial_residual(edge, ascentlat, float(h00lat))
         assert abs(resid) < 1e-6, (edge, resid)
+
+
+@pytest.mark.parametrize(
+    "func", [lat_ascent_eta0_approx, fixed_ro_bci_edge_supercrit_ascent]
+)
+def test_takes_burg_delh_sin_latmax(func: Any) -> None:
+    """Callers pass Bu * delta_h * sin(lat_max) by this keyword (#115)."""
+    params = inspect.signature(func).parameters
+    assert "burg_delh_sin_latmax" in params
+    assert not {"therm_ro", "therm_ross"} & set(params)

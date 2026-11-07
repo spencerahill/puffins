@@ -54,10 +54,35 @@ def dtheta_rce_lh88_dlat(lats, lat_max, delta_h, theta_ref=THETA_REF):
     return (-2 * delta_h * cosdeg(lats) * (sindeg(lats) - sindeg(lat_max))) / theta_ref
 
 
-def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
-    """Gradient balance wind for the Lindzen and Hou 1988 forcing."""
+def u_rce_lh88(lats, lat_max, burg_delh, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH):
+    """Gradient balance wind for the Lindzen and Hou 1988 forcing.
+
+    Eq. 6 of Hill, Bordoni and Mitchell (2021), whose thermal Rossby number
+    Ro_th is ``burg_delh * sin(lat_max)``.
+
+    Parameters
+    ----------
+    lats : float or array-like
+        Latitude (degrees).
+    lat_max : float
+        Latitude of maximum forcing (degrees).
+    burg_delh : float
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
+        the thermal Rossby number of Held and Hou (1980). It omits the
+        sin(lat_max) factor of the Ro_th of Hill, Bordoni and Mitchell
+        (2021, Eq. 7).
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+
+    Returns
+    -------
+    float or array-like
+        Zonal wind (m/s).
+    """
     return (
-        (((1 + 2 * thermal_ro * (1 - sindeg(lat_max) / sindeg(lats))) ** 0.5) - 1)
+        (((1 + 2 * burg_delh * (1 - sindeg(lat_max) / sindeg(lats))) ** 0.5) - 1)
         * rot_rate
         * radius
         * cosdeg(lats)
@@ -65,30 +90,43 @@ def u_rce_lh88(lats, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EA
 
 
 def ang_mom_rce_lh88(
-    lat, lat_max, thermal_ro, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
+    lat, lat_max, burg_delh, rot_rate=ROT_RATE_EARTH, radius=RAD_EARTH
 ):
-    """Angular momentum under the Lindzen and Hou 1988 forcing."""
-    sqrt_arg = 1.0 + 2 * thermal_ro * (1 - sindeg(lat_max) / sindeg(lat))
+    """Angular momentum under the Lindzen and Hou 1988 forcing.
+
+    Eq. 8 of Hill, Bordoni and Mitchell (2021). The arguments are those of
+    ``u_rce_lh88``, with ``burg_delh`` the planetary Burger number times
+    delta_h, g H delta_h / (Omega a)^2, which omits the sin(lat_max) factor
+    of their thermal Rossby number Ro_th.
+    """
+    sqrt_arg = 1.0 + 2 * burg_delh * (1 - sindeg(lat_max) / sindeg(lat))
     return rot_rate * radius**2 * cosdeg(lat) ** 2 * np.sqrt(sqrt_arg)
 
 
-def ang_mom_rce_lh88_zero(lat_max, thermal_ro):
-    """LH88 forcing angular momentum zero cross approx."""
-    return sin2deg(sindeg(lat_max) * (2 * thermal_ro) / (2 * thermal_ro + 1))
+def ang_mom_rce_lh88_zero(lat_max, burg_delh):
+    """LH88 forcing angular momentum zero cross, exact.
+
+    The latitude where the square-root argument of ``ang_mom_rce_lh88``
+    vanishes, sin(lat) = sin(lat_max) 2 burg_delh / (1 + 2 burg_delh).
+    ``burg_delh`` here and in the ``_small_r``, ``_unity_r`` and ``_large_r``
+    approximations is the planetary Burger number times delta_h,
+    g H delta_h / (Omega a)^2, as in ``u_rce_lh88``.
+    """
+    return sin2deg(sindeg(lat_max) * (2 * burg_delh) / (2 * burg_delh + 1))
 
 
-def ang_mom_rce_lh88_zero_small_r(lat_max, thermal_ro):
-    """LH88 forcing angular momentum zero cross approx; small thermal Ro."""
-    return sin2deg(2 * thermal_ro * sindeg(lat_max))
+def ang_mom_rce_lh88_zero_small_r(lat_max, burg_delh):
+    """LH88 forcing angular momentum zero cross approx; small burg_delh."""
+    return sin2deg(2 * burg_delh * sindeg(lat_max))
 
 
-def ang_mom_rce_lh88_zero_unity_r(lat_max, thermal_ro):
-    """LH88 forcing angular momentum zero cross approx; unity thermal Ro."""
+def ang_mom_rce_lh88_zero_unity_r(lat_max, burg_delh):
+    """LH88 forcing angular momentum zero cross approx; burg_delh = 1."""
     return sin2deg(2.0 / 3.0 * sindeg(lat_max))
 
 
-def ang_mom_rce_lh88_zero_large_r(lat_max, thermal_ro=None):
-    """LH88 forcing angular momentum zero cross approx; large thermal Ro."""
+def ang_mom_rce_lh88_zero_large_r(lat_max, burg_delh=None):
+    """LH88 forcing angular momentum zero cross approx; large burg_delh."""
     return lat_max
 
 
@@ -101,8 +139,18 @@ def crit_vort_metric_rce_lh88(
     rot_rate=ROT_RATE_EARTH,
     radius=RAD_EARTH,
 ):
-    """Analytical solution for PH92 criticality applied to LH88 forcing."""
-    thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
+    """Analytical solution for PH92 criticality applied to LH88 forcing.
+
+    Equal to a^-2 d(M_rce^2)/d(lat), with lat in radians and M_rce the
+    angular momentum of ``ang_mom_rce_lh88`` with ``lat_max`` set to
+    ``ascent_lat`` and ``burg_delh`` the planetary Burger number times
+    delta_h, computed as ``dynamics.therm_ross_num(delta_h, height,
+    grav=grav, rot_rate=rot_rate, radius=radius)`` at its default lat_max of
+    90.
+    """
+    burg_delh = therm_ross_num(
+        delta_h, height, grav=grav, rot_rate=rot_rate, radius=radius
+    )
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     return (
@@ -111,7 +159,7 @@ def crit_vort_metric_rce_lh88(
         * radius**2
         * coslat**3
         * sinlat
-        * (2 + thermal_ro * (4 - sindeg(ascent_lat) / sinlat * (3 + sinlat**-2)))
+        * (2 + burg_delh * (4 - sindeg(ascent_lat) / sinlat * (3 + sinlat**-2)))
     )
 
 
@@ -123,32 +171,65 @@ def abs_vort_rce_lh88(
     grav=GRAV_EARTH,
     rot_rate=ROT_RATE_EARTH,
     radius=RAD_EARTH,
-    thermal_ro=None,
+    burg_delh=None,
 ):
-    """Analytical expression for absolute vorticity of LH88 forcing."""
-    if thermal_ro is None:
-        thermal_ro = therm_ross_num(delta_h, height, grav, rot_rate, radius)
+    """Analytical expression for absolute vorticity of LH88 forcing.
+
+    Eq. 9 of Hill, Bordoni and Mitchell (2021): the absolute vorticity of
+    the wind of ``u_rce_lh88``.
+
+    Parameters
+    ----------
+    lat : float or array-like
+        Latitude (degrees).
+    lat_max : float
+        Latitude of maximum forcing (degrees).
+    delta_h, height, grav : float, optional
+        Fractional horizontal temperature difference, height (m) and
+        gravitational acceleration (m/s^2), used with ``rot_rate`` and
+        ``radius`` to compute ``burg_delh`` when it is not given.
+    rot_rate : float, optional
+        Planetary rotation rate (rad/s). Default: Earth.
+    radius : float, optional
+        Planetary radius (m), used only to compute ``burg_delh``. Default:
+        Earth.
+    burg_delh : float, optional
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
+        which omits the sin(lat_max) factor of the thermal Rossby number
+        Ro_th of Hill, Bordoni and Mitchell (2021, Eq. 7). Default: computed
+        as ``dynamics.therm_ross_num(delta_h, height, grav=grav,
+        rot_rate=rot_rate, radius=radius)`` at its default lat_max of 90.
+
+    Returns
+    -------
+    float or array-like
+        Absolute vorticity (1/s).
+    """
+    if burg_delh is None:
+        burg_delh = therm_ross_num(
+            delta_h, height, grav=grav, rot_rate=rot_rate, radius=radius
+        )
     coslat = cosdeg(lat)
     sinlat = sindeg(lat)
     sin_latmax = sindeg(lat_max)
-    power_arg = 1 + 2 * thermal_ro * (1 - sin_latmax / sinlat)
-    term1 = 2 * rot_rate * power_arg**0.5
+    power_arg = 1 + 2 * burg_delh * (1 - sin_latmax / sinlat)
+    term1 = rot_rate * power_arg**0.5
     term2 = 2 * sinlat - (
-        thermal_ro * (coslat**2) * sin_latmax / ((sinlat**2) * power_arg)
+        burg_delh * (coslat**2) * sin_latmax / ((sinlat**2) * power_arg)
     )
     return term1 * term2
 
 
-def _eta_rce_zero_lh88(lat, lat_max, therm_ro):
+def _eta_rce_zero_lh88(lat, lat_max, burg_delh):
     mu = sindeg(lat)
     mu_m = sindeg(lat_max)
-    r_star = therm_ro * mu_m
+    r_star = burg_delh * mu_m
     return np.rad2deg(
         (mu_m + 2 * r_star) * mu**3 - 1.5 * r_star * mu_m * mu**2 - 0.5 * r_star * mu_m
     )
 
 
-def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
+def abs_vort_rce_zero_lh88(lat_max, burg_delh, init_guess=5):
     """Numerically solved zero cross of LH88 forcing absolute vorticity.
 
     The zero crossing being solved for is that of last of three multiplicative
@@ -158,17 +239,54 @@ def abs_vort_rce_zero_lh88(lat_max, therm_ro, init_guess=5):
     hemisphere.
 
     There are no approximations in the expression being solved, small-angle
-    or otherwise.
+    or otherwise: it is Eq. 10 of Hill, Bordoni and Mitchell (2021), with
+    their thermal Rossby number Ro_th equal to ``burg_delh * sin(lat_max)``.
+
+    Parameters
+    ----------
+    lat_max : float or 1-D array-like
+        Latitude of maximum forcing (degrees). A negative value gives the
+        root mirrored about the equator. At ``lat_max = 0`` the result is 0:
+        Eq. 9 is then 2 Omega sin(lat) (1 + 2 burg_delh)^(1/2), which
+        vanishes only at the equator.
+    burg_delh : float
+        Planetary Burger number times delta_h, g H delta_h / (Omega a)^2,
+        which omits the sin(lat_max) factor of Ro_th.
+    init_guess : float, optional
+        Latitude (degrees) at which the bracketing search starts for the first
+        element of ``lat_max``, before it marches through 0.1, 20.1, 40.1,
+        60.1, 80.1 and 90 degrees. The search for each later element starts
+        where the previous element's search stopped. A root equatorward of
+        0.1 degrees, which arises for Ro_th below about 1e-8, is found only
+        from a starting latitude below it; otherwise the result is NaN.
+        Default: 5.
+
+    Returns
+    -------
+    xarray.DataArray
+        Latitude of the zero crossing (degrees): 0-d for a scalar
+        ``lat_max``, otherwise one value per element of a 1-D ``lat_max``.
 
     """
-    zero_bounds_guess_range = np.arange(0.1, 90, 20)
-    return np.sign(lat_max) * brentq_solver_sweep_param(
+    # The left side of Eq. 10 is positive at the pole for any positive
+    # burg_delh and lat_max, so a final guess at 90 brackets a root poleward
+    # of the last guess of the arange, 80.1.
+    zero_bounds_guess_range = np.append(np.arange(0.1, 90, 20), 90.0)
+    scalar = np.ndim(lat_max) == 0
+    if scalar:
+        lat_max = float(lat_max)
+    roots = np.sign(lat_max) * brentq_solver_sweep_param(
         _eta_rce_zero_lh88,
         np.abs(lat_max),
         np.abs(init_guess),
         zero_bounds_guess_range,
-        funcargs=(therm_ro,),
+        funcargs=(burg_delh,),
     )
+    # At lat_max = 0 the solved function, Eq. 10 times sin(lat_max), is zero
+    # at every latitude, so the search finds no bracket; the crossing is then
+    # the equator.
+    roots = roots.where(np.asarray(lat_max) != 0, 0.0)
+    return roots.squeeze() if scalar else roots
 
 
 def abs_vort_rce_lh88_zero_approx(

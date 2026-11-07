@@ -10,10 +10,13 @@ small-angle functions are additionally checked against their full counterparts
 in the limit where the two must agree.
 """
 
+import inspect
+
 import numpy as np
 import pytest
 import xarray as xr
 
+from puffins import held_hou_1980
 from puffins.constants import (
     DELTA_H,
     DELTA_V,
@@ -315,3 +318,20 @@ class TestHcEdgeHH80:
 
         not_found = hc_edge_hh80(ro, init_guess=45.0, bound_guess_range=poleward_only)
         assert np.isnan(not_found.item())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "u_rce_hh80",
+        "u_crit_switch_lat_hh80",
+        "u_crit_switch_lat_hh80_small_angle",
+        "hc_edge_hh80_small_angle",
+        "hc_edge_hh80",
+    ],
+)
+def test_takes_burg_delh(name: str) -> None:
+    """Callers pass Bu * delta_h by this keyword, so the name is pinned (#115)."""
+    params = inspect.signature(getattr(held_hou_1980, name)).parameters
+    assert "burg_delh" in params
+    assert "therm_ross_num" not in params

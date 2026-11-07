@@ -15,6 +15,7 @@ different tau/height/theta_ref values than sibling modules, so relying on
 defaults invites silent inconsistencies.
 """
 
+import inspect
 import types
 from collections.abc import Callable
 from typing import Any
@@ -24,6 +25,7 @@ import pytest
 import scipy.optimize
 import xarray as xr
 
+from puffins import eq_area
 from puffins.eq_area import (
     _eq_area_cqe_fixed_tt,
     _equal_area_model_bouss,
@@ -170,7 +172,7 @@ class TestCellEdgeMeanRo:
             rtol=1e-13,
         )
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """An array of thermal Rossby numbers gives an array of edges."""
         ro = 0.5
         therms = np.array([0.02, 0.1, 0.3])
@@ -255,7 +257,7 @@ class TestEqPotTempMeanRo:
         assert np.all(np.diff(temps) < 0)
 
     def test_dataarrays_broadcast(self) -> None:
-        """DataArrays of Ro and Ro_th broadcast to their outer product."""
+        """DataArrays of Ro and burg_delh broadcast to their outer product."""
         ro_vals = np.array([1.0, 0.5])
         therm_vals = np.array([0.05, 0.1, 0.2])
         result = eq_pot_temp_mean_ro(
@@ -427,7 +429,7 @@ class TestHeatFluxMeanRo:
     def test_zero_outside_each_cell_for_array_ro(self) -> None:
         """With an array of Ro, each latitude is masked by its own Ro's edge.
 
-        The edges for Ro = 1 and 0.5 at Ro_th = 0.1 are 23.4 and 33.1
+        The edges for Ro = 1 and 0.5 at burg_delh = 0.1 are 23.4 and 33.1
         degrees, so 28 degrees is outside the first cell and inside the
         second, and 40 degrees is outside both.
         """
@@ -467,7 +469,7 @@ class TestHeatFluxMeanRo:
         assert isinstance(result, float)
         assert np.ndim(result) == 0
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """A DataArray of thermal Rossby numbers broadcasts against latitude."""
         ro = 0.5
         therm_vals = np.array([0.05, 0.1, 0.2])
@@ -803,7 +805,7 @@ class TestUSfcMeanRo:
                 rtol=1e-13,
             )
 
-    def test_array_therm_ross_num(self) -> None:
+    def test_array_burg_delh(self) -> None:
         """A DataArray of thermal Rossby numbers broadcasts against latitude."""
         ro = 0.5
         therm_vals = np.array([0.05, 0.1, 0.2])
@@ -973,7 +975,7 @@ class TestCellEdgeLinRo:
         edge = cell_edge_lin_ro_lata0_full(0.1, 0.7, 0.3)
         assert np.isrealobj(edge)
 
-    def test_zero_thermal_ro_gives_zero_edge(self) -> None:
+    def test_zero_burg_delh_gives_zero_edge(self) -> None:
         """No thermal forcing means no cell."""
         np.testing.assert_allclose(
             cell_edge_lin_ro_lata0_full(0.0, 0.7, 0.3), 0.0, atol=1e-13
@@ -1017,7 +1019,7 @@ class TestLinRoEqualArea:
 
     This exercises the full chain: quartic cell edge (ms Eq. 7),
     edge-continuity equatorial temperature, and the Eq. (6) profile,
-    all of which must use the same Burger number Ro_th/delta_h.
+    all of which must use the same Burger number burg_delh/delta_h.
     """
 
     @pytest.mark.parametrize("therm", [0.02, 0.1])
@@ -1111,7 +1113,7 @@ class TestEqualAreaBouss:
     @pytest.mark.parametrize("ro", [1.0, 0.5])
     def test_ro_scaled_matches_small_angle_analytics(self, ro: float) -> None:
         """Scaling del_h_over_ro by Ro solves the fixed-Ro equal-area model;
-        at small Ro_th it must agree with the small-angle closed forms for
+        at small burg_delh it must agree with the small-angle closed forms for
         the cell edge and equatorial temperature."""
         therm = 0.005
         edge_analytic = float(cell_edge_mean_ro(ro, therm))
@@ -1345,3 +1347,26 @@ class TestSolverConvergenceChecks:
                 radius=RADIUS,
                 c_p=C_P,
             )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "eq_pot_temp_mean_ro",
+        "pot_temp_mean_ro",
+        "cell_edge_mean_ro",
+        "heat_flux_mean_ro",
+        "mom_flux_mean_ro",
+        "u_sfc_mean_ro",
+        "cell_edge_lin_ro_lata0_full",
+        "cell_edge_lin_ro_lata0_approx",
+        "eq_pot_temp_lin_ro_lata0_small_ang",
+        "pot_temp_lin_ro_eq_area",
+        "equal_area_lh88",
+    ],
+)
+def test_takes_burg_delh(name: str) -> None:
+    """Callers pass Bu * delta_h by this keyword, so the name is pinned (#115)."""
+    params = inspect.signature(getattr(eq_area, name)).parameters
+    assert "burg_delh" in params
+    assert not {"therm_ross_num", "therm_ross", "thermal_ro"} & set(params)
