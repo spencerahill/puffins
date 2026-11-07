@@ -366,12 +366,21 @@ class TestHadCellStrength:
         assert result.item() == pytest.approx(expected, rel=1e-4)
         assert result[LEV_STR].item() == pytest.approx(np.mean(_GAUSS_PLEVS))
 
-    def test_do_interp_lat_strength_is_max_over_levels(self) -> None:
-        # The gridpoint maximum lies on the wide cell at plev=400, so the
-        # center is interpolated along that level, to 10N. The narrow cell at
-        # plev=600 is lower at the gridpoints 9N and 11N but higher at 10N, so
-        # the strength, the maximum over levels at the interpolated latitude,
-        # is taken at plev=600, above the wide cell's peak of 1e11.
+    @pytest.mark.parametrize(
+        ("other_dim", "values"),
+        [(LEV_STR, [400.0, 600.0]), (TIME_STR, [0, 1])],
+        ids=["level", "time"],
+    )
+    def test_do_interp_lat_strength_is_max_over_other_dims(
+        self, other_dim: str, values: list[float]
+    ) -> None:
+        # A wide cell of peak 1e11 at the first value of the other dimension
+        # and a narrow cell of peak 1.02e11 at the second, both centered at
+        # 10N, midway between gridpoints. The gridpoint maximum lies on the
+        # wide cell, since the narrow one is lower at 9N and 11N. At the
+        # interpolated center, 10N, the narrow cell is higher, so the
+        # strength, the maximum over the other dimension there, is the
+        # narrow cell's, close to its peak.
         sf = xr.DataArray(
             np.stack(
                 [
@@ -379,14 +388,14 @@ class TestHadCellStrength:
                     1.02e11 * np.exp(-(((_GAUSS_LATS - 10.0) / 5.0) ** 2)),
                 ]
             ),
-            dims=(LEV_STR, LAT_STR),
-            coords={LEV_STR: [400.0, 600.0], LAT_STR: _GAUSS_LATS},
+            dims=(other_dim, LAT_STR),
+            coords={other_dim: values, LAT_STR: _GAUSS_LATS},
         )
-        assert had_cell_strength(sf)[LEV_STR].item() == 400.0
+        assert had_cell_strength(sf)[other_dim].item() == values[0]
         result = had_cell_strength(sf, do_interp_lat=True)
         assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
-        assert result[LEV_STR].item() == 600.0
-        assert 1e11 < result.item() < 1.02e11
+        assert result[other_dim].item() == values[1]
+        assert result.item() == pytest.approx(1.02e11, rel=2e-3)
 
     @pytest.mark.parametrize("dim", [None, TIME_STR], ids=["no_dim", "dim"])
     def test_do_interp_lat_extra_dim_of_length_one(self, dim: str | None) -> None:
@@ -448,6 +457,77 @@ class TestHadCellStrength:
         ]
         with pytest.raises(ValueError, match="zero crossings"):
             had_cell_strength(sf, dim=TIME_STR, do_interp_lat=True)
+
+    @pytest.mark.parametrize(
+        ("center", "lat_gridpoint"),
+        [(9.5, 9.0), (10.5, 11.0)],
+        ids=["north_of_gridpoint", "south_of_gridpoint"],
+    )
+    def test_do_interp_lat_center_off_midpoint(
+        self, center: float, lat_gridpoint: float
+    ) -> None:
+        # A cell centered a quarter of the grid spacing from a gridpoint,
+        # north of its gridpoint maximum or south of it, so either half of the
+        # search window is needed. The center is not midway between
+        # gridpoints, so it is recovered only to the accuracy of the method,
+        # measured at 3.3e-3 degrees on this grid.
+        sf = _gauss_cell(center)
+        assert had_cell_strength(sf)[LAT_STR].item() == lat_gridpoint
+        result = had_cell_strength(sf, do_interp_lat=True)
+        assert result[LAT_STR].item() == pytest.approx(center, abs=5e-3)
+        assert result.item() == pytest.approx(1e11 * _GAUSS_VERT_PEAK, rel=1e-4)
+
+    def test_do_interp_lat_ignores_crossings_beyond_one_spacing(self) -> None:
+        # The gridpoint maximum is at the northernmost latitude, 89N, where
+        # the latitude derivative does not change sign. A narrow second cell
+        # at 83N gives the derivative zero crossings between 83N and 85N and
+        # between 85N and 87N. The search window around 89N holds only the
+        # gridpoints 87N and 89N, so no crossing is found, and the call
+        # raises.
+        merid = np.exp(-(((_GAUSS_LATS - 95.0) / 15.0) ** 2)) + 0.3 * np.exp(
+            -(((_GAUSS_LATS - 83.0) / 3.0) ** 2)
+        )
+        sf = xr.DataArray(
+            1e11 * np.outer(np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0), merid),
+            dims=(LEV_STR, LAT_STR),
+            coords={LEV_STR: _GAUSS_PLEVS, LAT_STR: _GAUSS_LATS},
+        )
+        assert had_cell_strength(sf)[LAT_STR].item() == 89.0
+        with pytest.raises(ValueError, match="zero crossings"):
+            had_cell_strength(sf, do_interp_lat=True)
+
+    @pytest.mark.parametrize("dim", [None, TIME_STR], ids=["no_dim", "dim"])
+    def test_do_interp_lat_custom_lat_name(self, dim: str | None) -> None:
+        sf = (
+            _gauss_cell(10.0).expand_dims({TIME_STR: [0]}).rename({LAT_STR: "latitude"})
+        )
+        result = had_cell_strength(sf, dim=dim, do_interp_lat=True, lat_str="latitude")
+        assert result["latitude"].values.ravel().tolist() == pytest.approx(
+            [10.0], abs=1e-9
+        )
+        assert result.values.ravel().tolist() == pytest.approx(
+            [1e11 * _GAUSS_VERT_PEAK], rel=1e-4
+        )
+
+    def test_do_interp_lat_dim_cannot_be_latitude(self) -> None:
+        # Interpolating the center's latitude separately at each latitude has
+        # no meaning; without the check, each group's search hit an IndexError.
+        with pytest.raises(ValueError, match="cannot be the latitude dimension"):
+            had_cell_strength(_gauss_cell(10.0), dim=LAT_STR, do_interp_lat=True)
+
+    def test_do_interp_lat_nan_anywhere_raises(self) -> None:
+        # One NaN, at 79S and 700 hPa, far from the maximum at 10N and
+        # 500 hPa, makes the cubic interpolation NaN at every level, so the
+        # call raises. Averaging over the levels skips the NaN, and the
+        # strength is then that of the field without it.
+        sf = _gauss_cell(10.0).copy(deep=True)
+        sf.loc[{LAT_STR: -79.0, LEV_STR: 700.0}] = np.nan
+        with pytest.raises(ValueError, match="All-NaN"):
+            had_cell_strength(sf, do_interp_lat=True)
+        result = had_cell_strength(sf, do_avg_vert=True, do_interp_lat=True)
+        expected = 1e11 * np.mean(np.sin(np.pi * (_GAUSS_PLEVS - 100.0) / 900.0))
+        assert result[LAT_STR].item() == pytest.approx(10.0, abs=1e-9)
+        assert result.item() == pytest.approx(expected, rel=1e-4)
 
 
 class TestHadCellsStrength:
@@ -768,21 +848,24 @@ class TestHadCellsStrength:
         # level each made every search fall back on its gridpoint. Each cell
         # is centered midway between gridpoints and is symmetric about its
         # center, so its interpolated center is its center. Its strength is
-        # its peak times the level mean of the vertical structure, or times
-        # that structure's peak, 1 at plev=550.
+        # its peak times the mean of the vertical structure over the levels
+        # up to max_plev, or times that structure's peak, 1 at plev=550.
+        # max_plev=900 puts the level mean at 500, apart from the peak's 550.
         sf = _bump_cells_streamfunc([(-1e11, -12.5, 12.0), (0.8e11, 14.5, 14.0)])
         if extra_dim:
             sf = sf.expand_dims({TIME_STR: [0]})
-        plevs = np.arange(100.0, 1001.0, 50.0)
+        plevs = np.arange(100.0, 901.0, 50.0)
         vert = np.mean(np.sin(np.pi * (plevs - 100.0) / 900.0)) if do_avg_vert else 1.0
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            result = had_cells_strength(sf, do_avg_vert=do_avg_vert, do_interp_lat=True)
+            result = had_cells_strength(
+                sf, max_plev=900.0, do_avg_vert=do_avg_vert, do_interp_lat=True
+            )
         assert result[LAT_STR].values.tolist() == pytest.approx([-12.5, 14.5], abs=1e-9)
         assert result.values.tolist() == pytest.approx(
-            [-1e11 * vert, 0.8e11 * vert], rel=1e-3
+            [-1e11 * vert, 0.8e11 * vert], rel=1e-4
         )
-        expected_lev = np.mean(plevs) if do_avg_vert else 550.0
+        expected_lev = 500.0 if do_avg_vert else 550.0
         assert result[LEV_STR].values.tolist() == pytest.approx([expected_lev] * 2)
 
     @pytest.mark.parametrize(

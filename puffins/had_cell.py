@@ -120,11 +120,17 @@ def had_cell_strength(
     zero along the line of latitudes through the gridpoint maximum, with every
     other dimension held at the maximum's position. The strength is then the
     maximum, over every other dimension, of the streamfunction interpolated
-    cubically to that latitude. Given `dim`, this is done separately at each
-    value of `dim`. A ValueError is raised when the derivative has no zero
-    crossing within one grid spacing of the gridpoint maximum, as when that
-    maximum lies at the edge of the latitudes searched; given `dim`, this
-    happening at any one value of `dim` raises for the whole call.
+    cubically to that latitude. Given `dim`, which must not be the latitude
+    dimension, this is done separately at each value of `dim`.
+
+    A ValueError is raised in two cases. One is when the derivative has no
+    zero crossing within 1.1 times the mean latitude spacing of the gridpoint
+    maximum, as when that maximum lies at the edge of the latitudes searched.
+    The other is when the streamfunction contains NaN anywhere, since the
+    cubic interpolation then returns NaN everywhere. Excluding the levels
+    that hold NaN with `min_plev` or `max_plev`, or averaging over the levels
+    with `do_avg_vert`, which skips NaN, avoids the second. Given `dim`,
+    either case at any one value of `dim` raises for the whole call.
 
     """
     if min_plev is None and max_plev is None:
@@ -152,6 +158,11 @@ def had_cell_strength(
     if do_interp_lat:
         if dim is None:
             return _max_interp_lat(sf_valid, lat_str)
+        if dim == lat_str:
+            raise ValueError(
+                "do_interp_lat interpolates the center's latitude, so dim cannot "
+                f"be the latitude dimension {lat_str!r}."
+            )
         return cast(
             xr.DataArray, sf_valid.groupby(dim).map(_max_interp_lat, lat_str=lat_str)
         )
@@ -165,10 +176,10 @@ def _max_interp_lat(sf: xr.DataArray, lat_str: str = LAT_STR) -> xr.DataArray:
     """Maximum of `sf`, with its latitude interpolated between gridpoints.
 
     The latitude is where the latitude derivative of `sf` crosses zero within
-    one grid spacing of the gridpoint maximum, along the line of latitudes
-    through that maximum, with every other dimension held at the maximum's
-    position. The strength is the maximum, over every other dimension, of
-    `sf` interpolated cubically to that latitude.
+    1.1 times the mean latitude spacing of the gridpoint maximum, along the
+    line of latitudes through that maximum, with every other dimension held
+    at the maximum's position. The strength is the maximum, over every other
+    dimension, of `sf` interpolated cubically to that latitude.
 
     """
     i_max = np.unravel_index(np.nanargmax(sf.data), sf.shape)
