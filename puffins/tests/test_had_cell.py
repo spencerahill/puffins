@@ -1287,6 +1287,48 @@ def _sigma_vert(sig: float) -> float:
 _SIGMA_PEAK_REL = np.sin(np.pi * 14.75 / 30.0)
 
 
+def _sigma_cells(
+    sh_scale: float = 1.0, nh_scale: float = 1.0, ferrel: float = 0.0, amp: float = 1e10
+) -> xr.DataArray:
+    """Hadley cells of ``_sigma_streamfunc`` scaled per hemisphere, plus Ferrel cells.
+
+    The Ferrel cells have the opposite sign to their hemisphere's Hadley cell
+    and amplitude ``ferrel * amp``. Each is a half sine wave 30 degrees wide
+    touching the Hadley cell, between nodes at 30.25 and 60.25 or at -59.75 and
+    -29.75, so every cell's gridded peak is ``_SIGMA_PEAK_REL`` of its
+    amplitude.
+    """
+    hadley = _sigma_streamfunc(amp)
+    lat_c = hadley[LAT_STR] - _SIGMA_NODE_OFFSET
+    hadley = hadley * xr.where(lat_c < 0, sh_scale, nh_scale)
+    x = np.abs(lat_c) - 30.0
+    vert = np.sin(np.pi * (hadley[SIGMA_STR] - 0.1) / 0.9)
+    merid = xr.where(
+        (x > 0) & (x <= 30.0), -np.sign(lat_c) * np.sin(np.pi * x / 30.0), 0.0
+    )
+    return cast(
+        xr.DataArray, (hadley + ferrel * amp * vert * merid).rename("streamfunc")
+    )
+
+
+def _sigma_edge_inset(frac_thresh: float) -> float:
+    """How far inside its two nodes each half-sine cell's edges lie.
+
+    The edge is where sin(pi * x / 30), x degrees from a node, falls to
+    ``frac_thresh`` times the cell's gridded peak.
+    """
+    return float(30.0 * np.arcsin(frac_thresh * _SIGMA_PEAK_REL) / np.pi)
+
+
+# The nodes bounding each cell of ``_sigma_cells``, from south to north.
+_SIGMA_CELL_NODES = [
+    (_SIGMA_NODE_OFFSET - 60.0, _SIGMA_NODE_OFFSET - 30.0),
+    (_SIGMA_NODE_OFFSET - 30.0, _SIGMA_NODE_OFFSET),
+    (_SIGMA_NODE_OFFSET, _SIGMA_NODE_OFFSET + 30.0),
+    (_SIGMA_NODE_OFFSET + 30.0, _SIGMA_NODE_OFFSET + 60.0),
+]
+
+
 class TestCellEdgesSigma:
     """Edges, centers, and strengths of cells found in sigma coords."""
 
@@ -1352,6 +1394,39 @@ class TestCellEdgesSigma:
             > plain.sel(cell="nh_hadley").sel(lat="edge_north").item()
         )
 
+    def test_cos_factor_known_values(self) -> None:
+        """With cos_factor, the edges are where psi / cos(lat), scaled to 1 at the
+        gridded maximum, falls to the threshold.
+
+        The crossings of the continuous profile come from brentq. The code
+        interpolates linearly between gridpoints and lands within 0.005 degrees
+        of them; leaving cos(lat_max) out of the scaling moves each edge by
+        0.06 to 0.07 degrees.
+        """
+        frac = 0.2
+        cells = cell_edges_sigma(_sigma_streamfunc(), frac_thresh=frac, cos_factor=True)
+        for label, sign, lat_max, (south, north) in [
+            ("sh_hadley", -1.0, -15.0, _SIGMA_CELL_NODES[1]),
+            ("nh_hadley", 1.0, 15.0, _SIGMA_CELL_NODES[2]),
+        ]:
+
+            def excess(
+                lat: float, sign: float = sign, lat_max: float = lat_max
+            ) -> float:
+                weighted = sign * np.sin(np.pi * (lat - _SIGMA_NODE_OFFSET) / 30.0)
+                weighted /= np.cos(np.deg2rad(lat))
+                return float(
+                    weighted / (_SIGMA_PEAK_REL / np.cos(np.deg2rad(lat_max))) - frac
+                )
+
+            cell = cells.sel(cell=label)
+            assert cell.sel(lat="edge_south").item() == pytest.approx(
+                brentq(excess, south + 0.01, lat_max), abs=0.01
+            )
+            assert cell.sel(lat="edge_north").item() == pytest.approx(
+                brentq(excess, lat_max, north - 0.01), abs=0.01
+            )
+
     def test_custom_dim_names(self) -> None:
         amp = 1e10
         sf = _sigma_streamfunc(amp)
@@ -1366,6 +1441,117 @@ class TestCellEdgesSigma:
         np.testing.assert_allclose(
             result["cell_strength"].values, default["cell_strength"].values
         )
+
+    @pytest.mark.parametrize(("sh_scale", "nh_scale"), [(0.9, 1.0), (1.0, 0.9)])
+    def test_unequal_hadley_cells(self, sh_scale: float, nh_scale: float) -> None:
+        """Each Hadley cell gets its own edges when the two differ in strength.
+
+        Issue #127: the weaker cell got the stronger one's edges, and with the
+        southern cell weaker the two Hadley labels went to the wrong cells.
+        """
+        amp = 1e10
+        cells = cell_edges_sigma(_sigma_cells(sh_scale, nh_scale, amp=amp))
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+        inset = _sigma_edge_inset(0.1)
+        expected = {
+            "sh_hadley": (_SIGMA_CELL_NODES[1], -15.0, -sh_scale),
+            "nh_hadley": (_SIGMA_CELL_NODES[2], 15.0, nh_scale),
+        }
+        for label, ((south, north), center, scale) in expected.items():
+            cell = cells.sel(cell=label)
+            assert cell.sel(lat="edge_south").item() == pytest.approx(
+                south + inset, abs=0.01
+            )
+            assert cell.sel(lat="edge_north").item() == pytest.approx(
+                north - inset, abs=0.01
+            )
+            assert cell.sel(lat="center").item() == center
+            assert cell["cell_strength"].item() == pytest.approx(
+                scale * amp * _SIGMA_PEAK_REL
+            )
+
+    def test_four_cells_known_values(self) -> None:
+        """Hadley and Ferrel cells of unequal strengths each get their own edges.
+
+        The southern Hadley cell is 0.8 of the northern and the Ferrel cells
+        0.3, so every cell but the northern Hadley cell has a stronger cell of
+        the opposite sign beside it.
+        """
+        amp = 1e10
+        cells = cell_edges_sigma(_sigma_cells(0.8, 1.0, ferrel=0.3, amp=amp))
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
+        inset = _sigma_edge_inset(0.1)
+        centers = [-45.0, -15.0, 15.0, 45.0]
+        scales = [0.3, -0.8, 1.0, -0.3]
+        for i, (south, north) in enumerate(_SIGMA_CELL_NODES):
+            cell = cells.isel(cell=i)
+            assert cell.sel(lat="edge_south").item() == pytest.approx(
+                south + inset, abs=0.01
+            )
+            assert cell.sel(lat="edge_north").item() == pytest.approx(
+                north - inset, abs=0.01
+            )
+            assert cell.sel(lat="center").item() == centers[i]
+            assert cell["cell_strength"].item() == pytest.approx(
+                scales[i] * amp * _SIGMA_PEAK_REL
+            )
+
+    def test_cos_factor_keeps_each_cell_inside_its_own_nodes(self) -> None:
+        """With cos_factor, the four unequal cells keep edges within their nodes."""
+        cells = cell_edges_sigma(_sigma_cells(0.8, 1.0, ferrel=0.3), cos_factor=True)
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
+        for i, (south, north) in enumerate(_SIGMA_CELL_NODES):
+            cell = cells.isel(cell=i)
+            edge_south = cell.sel(lat="edge_south").item()
+            center = cell.sel(lat="center").item()
+            edge_north = cell.sel(lat="edge_north").item()
+            assert south < edge_south < center < edge_north < north
+
+    def test_edge_beside_zero_streamfunction(self) -> None:
+        """An edge is found where the streamfunction falls to zero between gridpoints.
+
+        The cell spans nodes at 0.98 and 30.98, with zero streamfunction
+        outside, so its last gridpoint, 30, lies just above the threshold and
+        the next, 31, is zero. Zeros used to be masked out, which left no
+        crossing and gave a NaN edge, and the cell was then dropped.
+        """
+        lats = np.arange(-85.0, 86.0, 1.0)
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        x = lat - 0.98
+        merid = xr.where((x > 0) & (x < 30.0), np.sin(np.pi * x / 30.0), 0.0)
+        sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
+        cells = cell_edges_sigma(sf)
+        assert list(cells["cell"].values) == ["nh_hadley"]
+        # Linear interpolation of the normalized field between 30 and 31.
+        peak = np.sin(np.pi * 15.02 / 30.0)
+        at_30 = np.sin(np.pi * 29.02 / 30.0) / peak
+        edge_north = cells.sel(cell="nh_hadley", lat="edge_north").item()
+        assert edge_north == pytest.approx(30.0 + (at_30 - 0.1) / at_30, rel=1e-12)
+        # Within 0.01 degrees of the closed-form crossing, 0.956 inside the node.
+        inset = 30.0 * np.arcsin(0.1 * peak) / np.pi
+        assert edge_north == pytest.approx(30.98 - inset, abs=0.01)
+
+    def test_edge_past_the_end_of_the_grid(self) -> None:
+        """A cell still above the threshold at the last latitude ends at the pole.
+
+        The cell is a half sine wave from 0.25 to 120.25, so at 85, the last
+        latitude, it is still 0.8 of its peak. The edge is then interpolated
+        between 85 and a zero placed at 90.
+        """
+        lats = np.arange(-85.0, 86.0, 1.0)
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        x = lat - _SIGMA_NODE_OFFSET
+        merid = xr.where(x > 0, np.sin(np.pi * x / 120.0), 0.0)
+        sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
+        cells = cell_edges_sigma(sf)
+        assert list(cells["cell"].values) == ["nh_hadley"]
+        at_85 = np.sin(np.pi * 84.75 / 120.0) / np.sin(np.pi * 59.75 / 120.0)
+        edge_north = cells.sel(cell="nh_hadley", lat="edge_north").item()
+        assert edge_north == pytest.approx(85.0 + 5.0 * (at_85 - 0.1) / at_85)
 
 
 def _time_model_streamfunc() -> xr.DataArray:

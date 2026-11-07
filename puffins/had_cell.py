@@ -912,10 +912,17 @@ def _cell_at_max(
 def _cell_and_opp_sign_cells(
     sf_at_max: xr.DataArray, labels: xr.DataArray, n: int, sigma_str: str = SIGMA_STR
 ) -> xr.DataArray:
-    """Restrict to one positive overturning cell and negative cells."""
+    """Restrict to one positive overturning cell, negative cells and zeros.
+
+    A zero streamfunction is outside every cell, so it is kept as a value below
+    any edge threshold; masked out, it left the edge search no crossing beside
+    a cell bounded by zeros, and so a NaN edge.
+    """
     labels_at_max = labels.sel({sigma_str: sf_at_max[sigma_str]})
     sign_at_max = np.sign(sf_at_max)
-    return cast(xr.DataArray, sf_at_max.where((labels_at_max == n) | (sign_at_max < 0)))
+    return cast(
+        xr.DataArray, sf_at_max.where((labels_at_max == n) | (sign_at_max <= 0))
+    )
 
 
 def _cell_is_bad(
@@ -941,19 +948,21 @@ def _one_cell_edges(
     cos_factor: bool = False,
     lat_str: str = LAT_STR,
 ) -> list[xr.DataArray]:
-    """Compute northern and southern edges of a cell."""
+    """Compute northern and southern edges of a cell.
+
+    The cell is the positive part of ``sf_and_opp_sign``. Its negative values
+    are the opposite-signed cells beside it, which the edge search may cross
+    into, so the edges are measured from the cell's own maximum, never from a
+    stronger neighbor's.
+    """
     edges = []
     # Look for the northern edge and then, by reversing the sign of the
     # latitudes array, the southern edge.
     for sign_factor in [1, -1]:
         sf_cell = sf_and_opp_sign.copy()
         lats = sf_cell[lat_str]
-        if sf_cell.max(lat_str) < np.abs(sf_cell.min(lat_str)):
-            sf_max = sf_cell.min(lat_str)
-            lat_max = lats[sf_cell.argmin(lat_str)]
-        else:
-            sf_max = sf_cell.max(lat_str)
-            lat_max = lats[sf_cell.argmax(lat_str)]
+        sf_max = sf_cell.max(lat_str)
+        lat_max = lats[sf_cell.argmax(lat_str)]
 
         if cos_factor:
             sf_norm = (sf_cell / cosdeg(lats)) / (sf_max / cosdeg(lat_max))
