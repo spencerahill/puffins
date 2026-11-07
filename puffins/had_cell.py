@@ -900,7 +900,7 @@ def fixed_ro_bci_edge_small_angle_lata0(
 def fixed_ro_bci_edge(
     ascentlat: ArrayLike,
     lat_fixed_ro_ann: ArrayLike | None = None,
-    burg_num: float | None = None,
+    burg_num: ArrayLike | None = None,
     ross_num: float = 1.0,
     c_descent: float = 1.0,
     delta_v: float = DELTA_V,
@@ -919,18 +919,25 @@ def fixed_ro_bci_edge(
         s^2 + (X - sin^2(ascentlat)) s - X = 0,  X = Bu delta_v / (2 Ro),
 
     which is -X at s = 0 and cos^2(ascentlat) at s = 1, so exactly one root
-    lies in (0, 1]. That root is computed in closed form.
+    lies in (0, 1]. The function computes that root in closed form as
+
+        1 - s = 2 cos^2(ascentlat) / (1 + cos^2(ascentlat) + X
+                + ((sin^2(ascentlat) - X)^2 + 4 X)^(1/2)),
+
+    whose denominator is at least 1 and a sum of non-negative terms, so the
+    result keeps full precision for any X.
 
     Parameters
     ----------
     ascentlat : float or array-like
         Latitude of the ascending edge (degrees). Only its magnitude enters.
     lat_fixed_ro_ann : float or array-like, optional
-        X^(1/4) in degrees: the edge for equatorial ascent at
+        X^(1/4) in degrees: the small-angle edge for equatorial ascent at
         ``c_descent = 1``, which ``fixed_ro_bci_edge_small_angle_lata0``
-        returns with its default ``c_descent``. If given, ``burg_num``,
-        ``ross_num``, ``delta_v`` and the planetary arguments are unused.
-    burg_num : float, optional
+        returns with its default ``c_descent``. The full-angle edge for
+        equatorial ascent is smaller. If given, ``burg_num``, ``ross_num``,
+        ``delta_v`` and the planetary arguments are unused.
+    burg_num : float or array-like, optional
         Planetary Burger number. Default: computed from ``height``, ``grav``,
         ``rot_rate`` and ``radius``.
     ross_num : float, optional
@@ -958,12 +965,22 @@ def fixed_ro_bci_edge(
         lat_fixed_ro_ann4 = burg_num * delta_v / (2.0 * ross_num)
     else:
         lat_fixed_ro_ann4 = np.deg2rad(lat_fixed_ro_ann) ** 4
-    # The positive root of the quadratic in s = sin^2(lat).
-    sin2_ascent_minus_x = sindeg(ascentlat) ** 2 - lat_fixed_ro_ann4
-    sin2_edge = 0.5 * (
-        sin2_ascent_minus_x + np.sqrt(sin2_ascent_minus_x**2 + 4 * lat_fixed_ro_ann4)
+    # The root as 1 - s, the squared cosine of the edge. Every term of the
+    # denominator is non-negative and the first is 1, so for no X does it
+    # cancel or divide by zero.
+    sin2_ascent = sindeg(ascentlat) ** 2
+    cos2_ascent = cosdeg(ascentlat) ** 2
+    cos2_edge = (
+        2
+        * cos2_ascent
+        / (
+            1
+            + cos2_ascent
+            + lat_fixed_ro_ann4
+            + np.sqrt((sin2_ascent - lat_fixed_ro_ann4) ** 2 + 4 * lat_fixed_ro_ann4)
+        )
     )
-    return cast(ArrayLike, c_descent * np.rad2deg(np.arcsin(np.sqrt(sin2_edge))))
+    return cast(ArrayLike, c_descent * np.rad2deg(np.arccos(np.sqrt(cos2_edge))))
 
 
 def fixed_ro_bci_edge_small_angle(
@@ -984,7 +1001,7 @@ def fixed_ro_bci_edge_small_angle(
 
     Both ascentlat and lat_fixed_ro_ann should be in degrees, not radians.
     And the return value is in degrees, not radians. ``lat_fixed_ro_ann`` is
-    the edge for equatorial ascent at ``c_descent = 1``, as in
+    the small-angle edge for equatorial ascent at ``c_descent = 1``, as in
     ``fixed_ro_bci_edge``; ``c_descent`` multiplies the solution in either
     case.
 
@@ -1100,6 +1117,15 @@ def fixed_ro_bci_edge_supercrit_ascent(
     ``burg_delh_sin_latmax``, for forcing peaked in the Southern Hemisphere,
     gives the edge mirrored about the equator, negative; the sign of
     ``max_lat`` does not matter.
+
+    The returned edge has the sign of ``burg_delh_sin_latmax``, so it lies in
+    the hemisphere of the forcing maximum, as the summer cell's descending
+    edge does. The edge condition is symmetric about the equator, and Hill et
+    al. (2022, p. 2518) apply it equally to the cross-equatorial winter cell,
+    given a Rossby number representative of that cell; that cell's
+    descending edge is then the negative of the returned value. At
+    ``max_lat = 0`` the Burger number cannot be recovered from
+    ``burg_delh_sin_latmax``, and the function divides by zero.
 
     """
     lat_ascent = lat_ascent_eta0_approx(burg_delh_sin_latmax, c_ascent=c_ascent)

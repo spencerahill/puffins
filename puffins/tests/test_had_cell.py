@@ -2,6 +2,7 @@
 
 import inspect
 import warnings
+from decimal import Decimal, localcontext
 from typing import Any, cast
 
 import numpy as np
@@ -16,7 +17,8 @@ from puffins.constants import (
     RAD_EARTH,
     ROT_RATE_EARTH,
 )
-from puffins.grad_bal import u_lin_ro_small_ang
+from puffins.dynamics import u_bci_2layer_qg
+from puffins.grad_bal import u_lin_ro_small_ang, u_unif_ro, u_unif_ro_small_ang
 from puffins.had_cell import (
     cell_edges_sigma,
     fixed_ro_bci_edge,
@@ -1262,7 +1264,50 @@ class TestBciEdgeFormulas:
             float(np.asarray(fixed_ro_bci_edge_supercrit_ascent(r, **self._SUPERCRIT)))
             for r in ro_th
         ]
+        # assert_allclose counts NaN as equal to NaN, so check finiteness too.
+        assert np.isfinite(result).all()
+        assert result[0] == pytest.approx(-result[2], rel=1e-12)
         np.testing.assert_allclose(result, expected, rtol=1e-12)
+
+    def test_supercrit_ascent_defaults_known_value(self) -> None:
+        """At the defaults: max_lat = 90, delta_h = 1/15, c_a = c_d = Ro = 1."""
+        burg_delh_sin_latmax = 0.4
+        result = fixed_ro_bci_edge_supercrit_ascent(burg_delh_sin_latmax)
+        lat_ascent = (0.5 * burg_delh_sin_latmax) ** (1.0 / 3.0)
+        term = (
+            2.0 ** (1.0 / 3.0)
+            * DELTA_V
+            / ((1.0 / 15.0) * burg_delh_sin_latmax ** (1.0 / 3.0))
+        )
+        expected = np.rad2deg(lat_ascent * np.sqrt(0.5 + np.sqrt(0.25 + term)))
+        assert result == pytest.approx(expected, rel=1e-12)
+
+    def test_supercrit_edge_balances_small_angle_bci_wind(self) -> None:
+        """At c_descent = 1, small-angle u_Ro equals small-angle u_BCI at the edge.
+
+        u_BCI is the small-angle Eq. 3 of Hill et al. (2025), Bu Omega a
+        delta_v / (2 lat^2), with Bu = Ro_th / (delta_h sin(max_lat)).
+        """
+        kw = dict(self._SUPERCRIT, c_descent=1.0)
+        burg_delh_sin_latmax = 0.4
+        edge = float(
+            np.asarray(fixed_ro_bci_edge_supercrit_ascent(burg_delh_sin_latmax, **kw))
+        )
+        lat_ascent = np.rad2deg(
+            kw["c_ascent"] * (0.5 * burg_delh_sin_latmax) ** (1.0 / 3.0)
+        )
+        burg = burg_delh_sin_latmax / (
+            kw["delta_h"] * np.sin(np.deg2rad(kw["max_lat"]))
+        )
+        u_ro = u_unif_ro_small_ang(edge, lat_ascent, kw["ross_num"])
+        u_bci = (
+            burg
+            * ROT_RATE_EARTH
+            * RAD_EARTH
+            * kw["delta_v"]
+            / (2 * np.deg2rad(edge) ** 2)
+        )
+        assert u_ro == pytest.approx(u_bci, rel=1e-12)
 
 
 def _bci_polynomial_residual(lat: float, ascentlat: float, h00lat: float) -> float:
@@ -1282,6 +1327,23 @@ def _bci_root(ascentlat: float, h00lat: float) -> float:
         _bci_polynomial_residual, 1e-9, 90.0, args=(ascentlat, h00lat), xtol=1e-14
     )
     return float(root)
+
+
+def _bci_root_60_digits(ascentlat: float, x: float) -> float:
+    """Edge from s^2 + (X - sin^2 lat_a) s - X = 0, s = sin^2, at 60 digits.
+
+    Converted to degrees by whichever of arcsin(sqrt(s)) and
+    arccos(sqrt(1 - s)) is well conditioned, so that large X, with s near 1,
+    keeps full precision.
+    """
+    with localcontext() as ctx:
+        ctx.prec = 60
+        sin2_a = Decimal(float(np.sin(np.deg2rad(ascentlat)) ** 2))
+        x_dec = Decimal(x)
+        s = ((sin2_a - x_dec) + ((sin2_a - x_dec) ** 2 + 4 * x_dec).sqrt()) / 2
+        if s < Decimal("0.5"):
+            return float(np.rad2deg(np.arcsin(np.sqrt(float(s)))))
+        return float(np.rad2deg(np.arccos(np.sqrt(float(1 - s)))))
 
 
 class TestFixedRoBciEdge:
@@ -1342,6 +1404,80 @@ class TestFixedRoBciEdge:
             c_descent * _bci_root(ascentlat, float(h00lat)), abs=1e-9
         )
 
+    def test_explicit_burg_num_value(self) -> None:
+        """A given burg_num, at non-default ross_num, delta_v and c_descent."""
+        burg, ross_num, delta_v, c_descent = 0.37, 0.6, 0.2, 1.1
+        edge = float(
+            np.asarray(
+                fixed_ro_bci_edge(
+                    12.0,
+                    burg_num=burg,
+                    ross_num=ross_num,
+                    delta_v=delta_v,
+                    c_descent=c_descent,
+                )
+            )
+        )
+        h00lat = float(np.rad2deg((burg * delta_v / (2.0 * ross_num)) ** 0.25))
+        assert edge == pytest.approx(c_descent * _bci_root(12.0, h00lat), abs=1e-9)
+
+    def test_lat_fixed_ro_ann_overrides_other_args(self) -> None:
+        """Given lat_fixed_ro_ann, burg_num, ross_num, delta_v and the planet
+        are unused, as the docstring says."""
+        ref = fixed_ro_bci_edge(12.0, lat_fixed_ro_ann=25.0)
+        other = fixed_ro_bci_edge(
+            12.0,
+            lat_fixed_ro_ann=25.0,
+            burg_num=5.0,
+            ross_num=0.3,
+            delta_v=0.5,
+            height=1e3,
+            grav=3.0,
+            rot_rate=1e-5,
+            radius=1e6,
+        )
+        assert other == pytest.approx(ref, rel=1e-14)
+
+    @pytest.mark.parametrize("ascentlat", [0.0, 8.0, 25.0])
+    def test_edge_balances_bci_wind(self, ascentlat: float) -> None:
+        """At the edge, grad_bal's u_Ro equals dynamics' u_BCI.
+
+        These are Eqs. 2 and 3 of Hill et al. (2025), on a planet other than
+        Earth, so the test also checks how X is built from the winds.
+        """
+        height, grav, rot_rate, radius = 1.2e4, 9.0, 6e-5, 5.5e6
+        ross_num, delta_v = 0.6, 0.2
+        edge = fixed_ro_bci_edge(
+            ascentlat,
+            ross_num=ross_num,
+            delta_v=delta_v,
+            height=height,
+            grav=grav,
+            rot_rate=rot_rate,
+            radius=radius,
+        )
+        u_ro = u_unif_ro(edge, ascentlat, ross_num, rot_rate=rot_rate, radius=radius)
+        u_bci = u_bci_2layer_qg(
+            edge,
+            height=height,
+            delta_v=delta_v,
+            grav=grav,
+            rot_rate=rot_rate,
+            radius=radius,
+        )
+        assert u_ro == pytest.approx(u_bci, rel=1e-12)
+
+    @pytest.mark.parametrize("ascentlat", [0.0, 30.0])
+    @pytest.mark.parametrize("x", [1e6, 1e12, 1e18])
+    def test_large_x_keeps_precision(self, ascentlat: float, x: float) -> None:
+        """Near the pole the edge keeps full precision, for any X.
+
+        The textbook root formula for s = sin^2(lat) cancels for large X; at
+        X = 1e18 it returns 0 degrees in place of 89.99999994.
+        """
+        edge = fixed_ro_bci_edge(ascentlat, lat_fixed_ro_ann=np.rad2deg(x**0.25))
+        assert edge == pytest.approx(_bci_root_60_digits(ascentlat, x), abs=1e-10)
+
     def test_c_descent_multiplies_explicit_ann_lat_solution(self) -> None:
         base = fixed_ro_bci_edge(20.0, lat_fixed_ro_ann=30.0)
         scaled = fixed_ro_bci_edge(20.0, lat_fixed_ro_ann=30.0, c_descent=1.2)
@@ -1356,13 +1492,19 @@ class TestFixedRoBciEdge:
     def test_small_angle_limit(self) -> None:
         """Near the equator the full-angle edge approaches Eq. 4 of Hill et al.
 
-        At these latitudes, under 1 degree, sin(lat) differs from lat by a
-        relative 1e-4 at most.
+        The relative gap between the two is of second order in the angles, so
+        doubling both latitudes multiplies it by 4.
         """
-        full = fixed_ro_bci_edge(0.5, lat_fixed_ro_ann=0.6)
-        small = fixed_ro_bci_edge_small_angle(0.5, lat_fixed_ro_ann=0.6)
-        assert full == pytest.approx(small, rel=1e-4)
-        assert full != small
+
+        def rel_gap(scale: float) -> float:
+            full = fixed_ro_bci_edge(0.5 * scale, lat_fixed_ro_ann=0.6 * scale)
+            small = fixed_ro_bci_edge_small_angle(
+                0.5 * scale, lat_fixed_ro_ann=0.6 * scale
+            )
+            return float(np.asarray((small - full) / full))
+
+        assert 0 < rel_gap(1.0) < 1e-5
+        assert rel_gap(2.0) / rel_gap(1.0) == pytest.approx(4.0, rel=1e-2)
 
     def test_nan_input_gives_nan(self) -> None:
         """A NaN ascent latitude or Rossby number gives NaN, not an error (#108)."""
@@ -1372,7 +1514,9 @@ class TestFixedRoBciEdge:
             )
         )
         assert np.isnan(edges[1])
-        assert np.isfinite(edges[[0, 2]]).all()
+        h00lat = float(np.rad2deg((2.586 * DELTA_V / (2.0 * 0.3)) ** 0.25))
+        assert edges[0] == pytest.approx(_bci_root(5.0, h00lat), abs=1e-9)
+        assert edges[2] == pytest.approx(_bci_root(15.0, h00lat), abs=1e-9)
         assert np.isnan(fixed_ro_bci_edge(10.0, burg_num=2.586, ross_num=np.nan))
 
     def test_takes_no_solver_bracket(self) -> None:
