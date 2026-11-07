@@ -180,6 +180,21 @@ class TestBrentqSolverSweepParam:
         )
         assert np.isnan(result.values).all()
 
+    def test_infinite_value_brackets_a_root_beside_a_pole(self) -> None:
+        """An infinite function value counts by its sign.
+
+        -ln(x) - 1 is +inf at x = 0 and negative at every other guess, so the
+        only bracket lies between 0 and the initial guess 2, and it holds the
+        root exp(-1).
+        """
+        result = brentq_solver_sweep_param(
+            lambda x, p: np.inf if x == 0 else -np.log(x) - p,
+            param_range=1.0,
+            init_guess=2.0,
+            bound_guess_range=[0.0, 0.5, 1.0, 2.0],
+        )
+        np.testing.assert_allclose(result.values, [np.exp(-1.0)], rtol=1e-10)
+
     def test_returns_dataarray(self) -> None:
         """Return type is always xr.DataArray."""
         result = brentq_solver_sweep_param(
