@@ -417,6 +417,68 @@ def pfull_from_phalf_avg(
     return cast(xr.DataArray, (0.5 * dp + phalf_top).rename(pfull_str))
 
 
+def pfull_from_phalf_log_mean(
+    phalf: xr.DataArray,
+    pfull_ref: xr.DataArray,
+    phalf_str: str = PHALF_STR,
+    pfull_str: str = PFULL_STR,
+) -> xr.DataArray:
+    """Full-level pressures as log-means of bounding half levels.
+
+    The pressure of the layer between half levels p1 and p2 is
+    (p2 - p1) / ln(p2 / p1), which lies between p1 and p2 and below their
+    arithmetic mean. It is the definition of the Ensemble Mars Atmosphere
+    Reanalysis System (EMARS) [1]_. Works with pressure increasing or
+    decreasing along ``phalf_str``.
+
+    Parameters
+    ----------
+    phalf : xarray.DataArray
+        Pressure at half levels (interfaces).
+    pfull_ref : xarray.DataArray
+        Reference full-level pressures for output coordinates.
+    phalf_str : str, optional
+        Name of the half-level dimension. Default: 'phalf'.
+    pfull_str : str, optional
+        Name of the full-level dimension. Default: 'pfull'.
+
+    Returns
+    -------
+    xarray.DataArray
+        Pressure at full levels, in the units of ``phalf``.
+
+    Raises
+    ------
+    ValueError
+        If any half-level pressure is zero or negative. The log-mean of a
+        layer whose top is at zero pressure is zero, so for a model whose top
+        half level is 0 Pa use :func:`pfull_from_phalf_avg` or
+        :func:`pfull_simm_burr`.
+
+    References
+    ----------
+    .. [1] Greybush, S. J., et al. (2019). "The Ensemble Mars Atmosphere
+       Reanalysis System (EMARS) Version 1.0." Geosci. Data J., 6, 137-150,
+       doi:10.1002/gdj3.77, p. 142.
+    """
+    if bool((phalf <= 0).any()):
+        raise ValueError(
+            "The log-mean full-level pressure is zero for a layer whose top half"
+            " level is at zero pressure, and undefined below it. For a model"
+            " whose top half level is 0 Pa, use pfull_from_phalf_avg or"
+            " pfull_simm_burr (pfull_method='arithmetic_mean' or"
+            " 'simmons_burridge' in interp.interp_eta_to_plevs)."
+        )
+    dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
+    dlogp = np.abs(
+        np.log(
+            phalf.isel({phalf_str: slice(1, None)}).values
+            / phalf.isel({phalf_str: slice(None, -1)}).values
+        )
+    )
+    return cast(xr.DataArray, (dp / dlogp).rename(pfull_str))
+
+
 def pfull_vals_simm_burr(
     phalf: xr.DataArray,
     phalf_ref: xr.DataArray,
@@ -560,11 +622,11 @@ def pfull_simm_burr(
     # Selecting a single half level drops the vertical dimension, leaving a
     # scalar-coordinate ``pfull``; ``expand_dims`` restores it as a length-1
     # dimension so it concatenates cleanly with ``pfull_not_top`` (issue #26).
+    # ``drop=True`` keeps a labeled ``phalf`` from leaving that half level's
+    # coordinate value on the result.
+    phalf_next_to_top = phalf.isel({phalf_str: ind_phalf_next_to_top}, drop=True)
     pfull_top = cast(
-        xr.DataArray,
-        (top_lev_factor * phalf.isel({phalf_str: ind_phalf_next_to_top})).expand_dims(
-            pfull_str
-        ),
+        xr.DataArray, (top_lev_factor * phalf_next_to_top).expand_dims(pfull_str)
     )
     # If the working array carries a ``pfull`` dimension-coordinate, label the
     # expanded top level to match ``pfull_not_top`` so ``xr.concat`` keeps a

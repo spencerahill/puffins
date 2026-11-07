@@ -21,6 +21,7 @@ from puffins.vert_coords import (
     int_dlogp,
     int_dp_g,
     pfull_from_phalf_avg,
+    pfull_from_phalf_log_mean,
     pfull_simm_burr,
     pfull_vals_simm_burr,
     phalf_from_pfull,
@@ -617,6 +618,64 @@ class TestPfullFromPhalfAvg:
 
 
 # ---------------------------------------------------------------------------
+# TestPfullFromPhalfLogMean
+# ---------------------------------------------------------------------------
+
+
+class TestPfullFromPhalfLogMean:
+    """Tests for pfull_from_phalf_log_mean."""
+
+    def test_emars_top_layer(self) -> None:
+        """EMARS's own full-level pressure for its top layer.
+
+        Issue #118 quotes EMARS's top half levels, 0.0002 and 0.00057381 hPa,
+        and its stored top full level, 0.00035467 hPa, to five significant
+        figures; the log-mean of the first two is 1.45e-5 below the third. The
+        arithmetic mean is 9.1% above it and the geometric mean 4.5% below.
+        """
+        phalf = xr.DataArray([0.02, 0.057381], dims=[PHALF_STR])
+        pfull_ref = xr.DataArray([0.0], dims=[PFULL_STR])
+        result = pfull_from_phalf_log_mean(phalf, pfull_ref)
+        np.testing.assert_allclose(result.values, [0.035467], rtol=2e-5)
+
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_closed_form(self, increasing: bool) -> None:
+        """(p2 - p1) / ln(p2 / p1) for each layer, in either order.
+
+        The log-mean also lies strictly between the two half levels and
+        below their arithmetic mean.
+        """
+        column = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
+        phalf_vals = np.stack([column, 0.9 * column])
+        if not increasing:
+            phalf_vals = phalf_vals[:, ::-1]
+        phalf = xr.DataArray(
+            phalf_vals, dims=["lat", PHALF_STR], coords={"lat": [0.0, 30.0]}
+        )
+        pfull_ref = xr.DataArray(
+            np.arange(5.0), dims=[PFULL_STR], coords={PFULL_STR: np.arange(5.0)}
+        )
+        result = pfull_from_phalf_log_mean(phalf, pfull_ref)
+        assert result.dims == ("lat", PFULL_STR)
+        np.testing.assert_array_equal(result[PFULL_STR].values, np.arange(5.0))
+        p1, p2 = phalf_vals[:, :-1], phalf_vals[:, 1:]
+        np.testing.assert_allclose(
+            result.values, (p2 - p1) / np.log(p2 / p1), rtol=1e-14
+        )
+        assert (result.values > np.minimum(p1, p2)).all()
+        assert (result.values < np.maximum(p1, p2)).all()
+        assert (result.values < 0.5 * (p1 + p2)).all()
+
+    @pytest.mark.parametrize("top", [0.0, -1.0])
+    def test_nonpositive_half_level_raises(self, top: float) -> None:
+        """A half level at or below zero pressure raises a ValueError."""
+        phalf = xr.DataArray([top, 5000.0, 20000.0], dims=[PHALF_STR])
+        pfull_ref = xr.DataArray([0.0, 1.0], dims=[PFULL_STR])
+        with pytest.raises(ValueError, match="pfull_simm_burr"):
+            pfull_from_phalf_log_mean(phalf, pfull_ref)
+
+
+# ---------------------------------------------------------------------------
 # TestPfullValsSimBurr
 # ---------------------------------------------------------------------------
 
@@ -790,6 +849,25 @@ class TestPfullSimBurr:
             result.transpose(PFULL_STR, ...).values,
             baseline.transpose(PFULL_STR, ...).values,
             rtol=1e-12,
+        )
+
+    @pytest.mark.parametrize("increasing", [True, False])
+    def test_labeled_phalf_leaves_no_coordinate(self, increasing: bool) -> None:
+        """A ``phalf`` coordinate on the input does not reach the output.
+
+        The top level is computed from one half level, whose ``phalf`` value
+        used to stay on the result as a scalar coordinate. That coordinate
+        clashed with the ``phalf`` dimension of the Dataset in
+        ``interp.interp_eta_to_plevs``.
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs(increasing=increasing)
+        labeled = phalf.assign_coords({PHALF_STR: phalf_ref.values})
+        result = pfull_simm_burr(labeled, phalf_ref, pfull_ref)
+        baseline = pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+        assert PHALF_STR not in result.coords
+        np.testing.assert_array_equal(
+            result.transpose(PFULL_STR, ...).values,
+            baseline.transpose(PFULL_STR, ...).values,
         )
 
 

@@ -1,10 +1,13 @@
 """Tests for interp module."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 import xarray as xr
 
 from puffins.interp import (
+    PfullMethod,
     _maybe_interp_in_p,
     drop_all_nan_slices,
     drop_nans_and_interp,
@@ -28,6 +31,12 @@ from puffins.names import (
     PK_STR,
     SIGMA_STR,
     TIME_STR,
+)
+from puffins.vert_coords import (
+    pfull_from_phalf_avg,
+    pfull_from_phalf_log_mean,
+    pfull_simm_burr,
+    phalf_from_psfc,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,11 +83,14 @@ def _make_sigma_dataset(nlat: int = 5, nsigma: int = 8) -> xr.Dataset:
     return xr.Dataset({P_SFC_STR: p_sfc, "temp": temp})
 
 
-def _make_eta_dataset(nlat: int = 5, nlev: int = 6) -> xr.Dataset:
+def _make_eta_dataset(nlat: int = 5, nlev: int = 6, p_top: float = 100.0) -> xr.Dataset:
     """Dataset with eta (hybrid sigma-pressure) coordinates.
 
-    Uses a pure-sigma setup: bk linearly spaced from 0 to 1, pk = 0.
-    Half-levels have nlev+1 points; full-levels have nlev points.
+    bk is linearly spaced from 0 to 1, and pk is zero except at the top half
+    level, where it is ``p_top`` (Pa). The default ``p_top`` keeps the top
+    half level above zero pressure, where the default log-mean full level of
+    ``interp_eta_to_plevs`` is defined. Half-levels have nlev+1 points;
+    full-levels have nlev points.
     """
     lats = np.linspace(-60, 60, nlat)
 
@@ -86,6 +98,7 @@ def _make_eta_dataset(nlat: int = 5, nlev: int = 6) -> xr.Dataset:
     nhalf = nlev + 1
     bk_vals = np.linspace(0, 1, nhalf)
     pk_vals = np.zeros(nhalf)
+    pk_vals[0] = p_top
     phalf_coord = np.arange(nhalf)
 
     bk = xr.DataArray(
@@ -120,6 +133,59 @@ def _make_eta_dataset(nlat: int = 5, nlev: int = 6) -> xr.Dataset:
     return xr.Dataset(
         {"temp": temp, BK_STR: bk, PK_STR: pk, "ps": ps, PFULL_STR: pfull_ref}
     )
+
+
+def _make_hybrid_dataset(p_top: float = 2.0, nlev: int = 12) -> xr.Dataset:
+    """Hybrid sigma-pressure Dataset whose reference coordinates are pressures.
+
+    The half levels are ``ps * bk + pk``, with ``bk = s**2`` and ``pk`` equal to
+    ``p_top`` (Pa) at the top and zero at the surface, for ``s`` evenly spaced
+    from 0 to 1. The ``phalf`` and ``pfull`` coordinates are the half levels at
+    1000 hPa and their log-means (their arithmetic means if ``p_top`` is 0), in
+    hPa. Temperature varies with pressure and with latitude.
+    """
+    s = np.linspace(0.0, 1.0, nlev + 1)
+    bk = s**2
+    pk = p_top + (5e4 - p_top) * s * (1 - s)
+    pk[-1] = 0.0
+    phalf_ref = (1e5 * bk + pk) / 100
+    upper, lower = phalf_ref[:-1], phalf_ref[1:]
+    if p_top > 0:
+        pfull_ref = (lower - upper) / np.log(lower / upper)
+    else:
+        pfull_ref = 0.5 * (upper + lower)
+    lats = np.array([-30.0, 0.0, 30.0])
+    temp = (
+        200
+        + 30 * np.log(pfull_ref)[np.newaxis, :]
+        + 10 * np.sin(np.log(pfull_ref))[np.newaxis, :]
+        + np.arange(3)[:, np.newaxis]
+    )
+    return xr.Dataset(
+        {
+            "temp": ((LAT_STR, PFULL_STR), temp),
+            BK_STR: (PHALF_STR, bk),
+            PK_STR: (PHALF_STR, pk),
+            "ps": (LAT_STR, [95000.0, 97500.0, 100000.0]),
+        },
+        coords={LAT_STR: lats, PFULL_STR: pfull_ref, PHALF_STR: phalf_ref},
+    )
+
+
+# Each pfull_method of interp_eta_to_plevs and the vert_coords function it uses.
+_PFULL_FUNCS = {
+    "log_mean": lambda phalf, ds: pfull_from_phalf_log_mean(phalf, ds[PFULL_STR]),
+    "arithmetic_mean": lambda phalf, ds: pfull_from_phalf_avg(phalf, ds[PFULL_STR]),
+    "simmons_burridge": lambda phalf, ds: pfull_simm_burr(
+        phalf, ds[PHALF_STR], ds[PFULL_STR]
+    ),
+}
+
+
+def _own_levels_hpa(ds: xr.Dataset, pfull_method: str) -> xr.DataArray:
+    """A dataset's full-level pressures (hPa) as ``pfull_method`` computes them."""
+    phalf = phalf_from_psfc(ds[BK_STR], ds[PK_STR], ds["ps"])
+    return cast(xr.DataArray, _PFULL_FUNCS[pfull_method](phalf, ds) * 1e-2)
 
 
 # ---------------------------------------------------------------------------
@@ -553,3 +619,134 @@ class TestInterpNestedToPlevs:
             ds, plevs, dim1=LAT_STR, dim2=TIME_STR, method="linear"
         )
         assert isinstance(result, xr.Dataset)
+
+
+# ---------------------------------------------------------------------------
+# TestFullLevelPressures
+# ---------------------------------------------------------------------------
+
+
+def _column(arr: xr.DataArray, i: int) -> np.ndarray:
+    """Values of one latitude's column, in full-level order."""
+    return cast(np.ndarray, arr.isel({LAT_STR: i}).values)
+
+
+class TestFullLevelPressures:
+    """Where interp_eta_to_plevs places the model levels (issue #118)."""
+
+    @pytest.mark.parametrize("pfull_method", list(_PFULL_FUNCS))
+    def test_column_unchanged_at_its_own_levels(
+        self, pfull_method: PfullMethod
+    ) -> None:
+        """Interpolating a column to its own full levels returns it unchanged.
+
+        Each latitude has its own surface pressure, so each column is checked
+        at its own levels. Had the function used another method's levels, some
+        column of this dataset would change by at least 0.78 K.
+        """
+        ds = _make_hybrid_dataset()
+        levels = _own_levels_hpa(ds, pfull_method)
+        for i in range(ds.sizes[LAT_STR]):
+            result = interp_eta_to_plevs(
+                ds, _column(levels, i), dim=LAT_STR, pfull_method=pfull_method
+            )
+            np.testing.assert_allclose(
+                _column(result["temp"], i), _column(ds["temp"], i), rtol=1e-12
+            )
+
+    def test_default_is_log_mean(self) -> None:
+        """By default each level is at the log-mean of its two half levels."""
+        ds = _make_hybrid_dataset()
+        levels = _own_levels_hpa(ds, "log_mean")
+        result = interp_eta_to_plevs(ds, _column(levels, 0), dim=LAT_STR)
+        np.testing.assert_allclose(
+            _column(result["temp"], 0), _column(ds["temp"], 0), rtol=1e-12
+        )
+
+    def test_log_mean_raises_with_a_zero_pressure_top(self) -> None:
+        """A top half level at 0 Pa raises under the log-mean, naming the others."""
+        ds = _make_hybrid_dataset(p_top=0.0)
+        plevs = np.array([100.0, 500.0])
+        with pytest.raises(ValueError, match="'simmons_burridge'"):
+            interp_eta_to_plevs(ds, plevs, dim=LAT_STR)
+        result = interp_eta_to_plevs(
+            ds, plevs, dim=LAT_STR, pfull_method="arithmetic_mean"
+        )
+        assert bool(np.isfinite(result["temp"]).all())
+
+    @pytest.mark.filterwarnings(
+        "ignore:divide by zero encountered in divide:RuntimeWarning"
+    )
+    @pytest.mark.filterwarnings(
+        "ignore:invalid value encountered in multiply:RuntimeWarning"
+    )
+    def test_simmons_burridge_with_a_zero_pressure_top(self) -> None:
+        """Simmons-Burridge levels work with a top half level at 0 Pa.
+
+        pfull_simm_burr computes the top layer from ln(p / 0) before replacing
+        it, which raises the two RuntimeWarnings filtered here.
+        """
+        ds = _make_hybrid_dataset(p_top=0.0)
+        levels = _own_levels_hpa(ds, "simmons_burridge")
+        assert float(levels.min()) > 0
+        result = interp_eta_to_plevs(
+            ds, _column(levels, 1), dim=LAT_STR, pfull_method="simmons_burridge"
+        )
+        np.testing.assert_allclose(
+            _column(result["temp"], 1), _column(ds["temp"], 1), rtol=1e-12
+        )
+
+    def test_unknown_method_raises(self) -> None:
+        with pytest.raises(ValueError, match="pfull_method must be"):
+            interp_eta_to_plevs(
+                _make_hybrid_dataset(),
+                np.array([500.0]),
+                dim=LAT_STR,
+                pfull_method=cast(PfullMethod, "geometric_mean"),
+            )
+
+    @pytest.mark.parametrize("pfull_method", list(_PFULL_FUNCS))
+    def test_custom_full_level_name(self, pfull_method: PfullMethod) -> None:
+        """A full-level dimension under another name, given by pfull_str, works."""
+        ds = _make_hybrid_dataset()
+        plevs = np.array([100.0, 500.0, 800.0])
+        expected = interp_eta_to_plevs(
+            ds, plevs, dim=LAT_STR, pfull_method=pfull_method
+        )
+        result = interp_eta_to_plevs(
+            ds.rename({PFULL_STR: "lev_full"}),
+            plevs,
+            dim=LAT_STR,
+            pfull_str="lev_full",
+            pfull_method=pfull_method,
+        )
+        np.testing.assert_array_equal(
+            result["temp"].transpose(LAT_STR, "lev_full").values,
+            expected["temp"].transpose(LAT_STR, PFULL_STR).values,
+        )
+
+    def test_nested_passes_the_method(self) -> None:
+        """interp_nested_to_plevs uses the pfull_method it is given."""
+        ds = _make_hybrid_dataset()
+        nested = xr.concat(
+            [ds, ds.assign(temp=ds["temp"] + 1.0)], dim=TIME_STR
+        ).assign_coords({TIME_STR: [0, 1]})
+        arith_levels = _column(_own_levels_hpa(ds, "arithmetic_mean"), 0)
+        log_levels = _column(_own_levels_hpa(ds, "log_mean"), 0)
+        by_arith = interp_nested_to_plevs(
+            nested,
+            arith_levels,
+            dim1=LAT_STR,
+            dim2=TIME_STR,
+            pfull_method="arithmetic_mean",
+        )
+        by_default = interp_nested_to_plevs(
+            nested, log_levels, dim1=LAT_STR, dim2=TIME_STR
+        )
+        for result in (by_arith, by_default):
+            for t in (0, 1):
+                np.testing.assert_allclose(
+                    _column(result["temp"].sel({TIME_STR: t}), 0),
+                    _column(ds["temp"], 0) + t,
+                    rtol=1e-12,
+                )

@@ -29,7 +29,7 @@ The package is structured into several functional groups:
 - `names.py`: String constants for coordinate/dimension names (lat, lon, lev, time, etc.)
 - `nb_utils.py`: Jupyter notebook utilities including coordinate array creation and trigonometric helpers
 - `calculus.py`: Derivatives, integrals, and averages; also grid geometry (cell bounds, surface area, latitude circumference) and meridional transport diagnostics
-- `interp.py`: Interpolation utilities
+- `interp.py`: Interpolation utilities, including from hybrid sigma-pressure model levels to fixed pressure levels, with each model level at the log-mean of its half-level pressures by default (`pfull_method`)
 - `num_solver.py`: Numerical solvers
 - `dates.py`: Date utilities
 - `longitude.py`: Longitude utilities and `Longitude` class
@@ -39,7 +39,7 @@ The package is structured into several functional groups:
 - `dynamics.py`: Fundamental dynamical quantities (Coriolis parameter, absolute angular momentum, vorticity, Rossby number)
 - `thermodynamics.py`: Thermodynamic calculations
 - `tropopause.py`: Tropopause diagnostics
-- `vert_coords.py`: Vertical coordinate transformations and pressure-level utilities (mass-weighted column integrals and averages, Simmons-Burridge full-level pressures)
+- `vert_coords.py`: Vertical coordinate transformations and pressure-level utilities (mass-weighted column integrals and averages; full-level pressures from half levels as their arithmetic mean, their log-mean, or by Simmons-Burridge)
 - `lcl.py`: Lifted condensation level calculations
 - `radiation.py`: Blackbody radiation (Planck function, Wien's displacement law)
 
