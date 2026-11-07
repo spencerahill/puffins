@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 import xarray as xr
@@ -18,10 +18,16 @@ from .names import (
     LEV_STR,
     P_SFC_STR,
     PFULL_STR,
+    PHALF_STR,
     PK_STR,
     SIGMA_STR,
 )
-from .vert_coords import pfull_from_phalf_avg, phalf_from_psfc
+from .vert_coords import (
+    pfull_from_phalf_avg,
+    pfull_from_phalf_log_mean,
+    pfull_simm_burr,
+    phalf_from_psfc,
+)
 
 P_INTERP_VALS: np.ndarray = np.arange(0, 1000.5, 1.0)
 
@@ -204,6 +210,25 @@ def zero_cross_interp(arr: xr.DataArray, dim: str, num_cross: int = 0) -> xr.Dat
 
 
 # Interpolation to fixed pressure levels.
+PfullMethod = Literal["log_mean", "arithmetic_mean", "simmons_burridge"]
+
+
+def _pfull_from_phalf(
+    ds: xr.Dataset, phalf: xr.DataArray, pfull_method: PfullMethod, pfull_str: str
+) -> xr.DataArray:
+    """Full-level pressures of ``ds`` from its half-level pressures."""
+    if pfull_method == "log_mean":
+        return pfull_from_phalf_log_mean(phalf, ds[pfull_str], pfull_str=pfull_str)
+    if pfull_method == "arithmetic_mean":
+        return pfull_from_phalf_avg(phalf, ds[pfull_str], pfull_str=pfull_str)
+    if pfull_method == "simmons_burridge":
+        return pfull_simm_burr(phalf, ds[PHALF_STR], ds[pfull_str], pfull_str=pfull_str)
+    raise ValueError(
+        "pfull_method must be 'log_mean', 'arithmetic_mean' or"
+        f" 'simmons_burridge', not {pfull_method!r}."
+    )
+
+
 def interp_eta_to_plevs(
     ds: xr.Dataset,
     plevs_target: np.ndarray,
@@ -212,9 +237,10 @@ def interp_eta_to_plevs(
     pfull_str: str = PFULL_STR,
     bk_str: str = BK_STR,
     pk_str: str = PK_STR,
-    p_sfc_str: str = P_SFC_STR,
+    p_sfc_str: str = "ps",
     lev_str: str = LEV_STR,
     lat_str: str = LAT_STR,
+    pfull_method: PfullMethod = "log_mean",
 ) -> xr.Dataset:
     """Interpolate Dataset from eta coordinates to fixed pressure levels.
 
@@ -222,9 +248,31 @@ def interp_eta_to_plevs(
     pressure and one other dimension (e.g. latitude).  It will silently give
     errant results if there are other dimensions.
 
+    The surface pressure is the variable named ``p_sfc_str``, in Pa.
+
+    Each model level is placed at the pressure ``pfull_method`` computes from
+    the two half-level pressures bounding it, ``p_sfc * bk + pk``:
+
+    - ``"log_mean"`` (the default): (p2 - p1) / ln(p2 / p1), the definition
+      of EMARS (Greybush et al. 2019, Geosci. Data J., p. 142). Raises a
+      ValueError where a half level is at zero pressure, as at the top of a
+      model whose top half level is 0 Pa; use one of the other two there.
+    - ``"arithmetic_mean"``: (p1 + p2) / 2, the only method before this
+      argument was added. It is the definition of ECMWF's L137 model levels,
+      as in ERA5, whose top half level is 0 Pa.
+    - ``"simmons_burridge"``: Simmons and Burridge (1981), as computed by
+      :func:`puffins.vert_coords.pfull_simm_burr`. It scales the top level by
+      the ratio of the dataset's reference ``pfull`` and ``phalf``
+      coordinates, so it raises a ValueError unless they are pressures in the
+      same units, each full level between its two half levels, running in
+      the same vertical order as the data.
+
+    Interpolating a column to its own full-level pressures, computed by the
+    same method, returns it unchanged.
+
     """
-    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds["ps"])
-    pfull = pfull_from_phalf_avg(phalf, ds[pfull_str])
+    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds[p_sfc_str])
+    pfull = _pfull_from_phalf(ds, phalf, pfull_method, pfull_str)
     pfull *= 1e-2  # Pa to hPa
 
     interped = []
@@ -247,15 +295,19 @@ def interp_nested_to_plevs(
     pfull_str: str = PFULL_STR,
     bk_str: str = BK_STR,
     pk_str: str = PK_STR,
-    p_sfc_str: str = P_SFC_STR,
+    p_sfc_str: str = "ps",
     lev_str: str = LEV_STR,
     lat_str: str = LAT_STR,
+    pfull_method: PfullMethod = "log_mean",
 ) -> xr.Dataset:
     """Interpolate Dataset from eta coordinates to fixed pressure levels.
 
     Note: the logic only works correctly if the dataset is only defined in
     pressure and *two* other dimension (e.g. latitude and time).  It will
     silently give errant results if there are other dimensions.
+
+    Each value of ``dim2`` is passed to :func:`interp_eta_to_plevs`, with
+    ``pfull_method`` setting how the full-level pressures are computed.
 
     """
     coord2 = ds[dim2]
@@ -271,6 +323,7 @@ def interp_nested_to_plevs(
             p_sfc_str=p_sfc_str,
             lev_str=lev_str,
             lat_str=lat_str,
+            pfull_method=pfull_method,
         )
         for val2 in coord2
     ]
