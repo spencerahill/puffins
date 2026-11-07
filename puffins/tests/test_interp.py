@@ -493,6 +493,28 @@ class TestInterpEtaToPlevs:
         result = interp_eta_to_plevs(ds, plevs, dim=LAT_STR, method="linear")
         assert isinstance(result, xr.Dataset)
 
+    def test_surface_pressure_name(self) -> None:
+        """The surface pressure is read from the variable ``p_sfc_str`` names."""
+        ds = _make_eta_dataset(nlat=5, nlev=6)
+        plevs = np.array([200, 400, 600, 800])
+        expected = interp_eta_to_plevs(ds, plevs, dim=LAT_STR, method="linear")
+        renamed = ds.rename({"ps": "surf_pres"})
+        result = interp_eta_to_plevs(
+            renamed, plevs, dim=LAT_STR, method="linear", p_sfc_str="surf_pres"
+        )
+        xr.testing.assert_identical(result["temp"], expected["temp"])
+        nested = interp_nested_to_plevs(
+            renamed.expand_dims({TIME_STR: [0]}),
+            plevs,
+            dim1=LAT_STR,
+            dim2=TIME_STR,
+            method="linear",
+            p_sfc_str="surf_pres",
+        )
+        xr.testing.assert_allclose(
+            nested["temp"].isel({TIME_STR: 0}, drop=True), expected["temp"]
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestInterpNestedToPlevs

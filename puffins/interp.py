@@ -212,7 +212,7 @@ def interp_eta_to_plevs(
     pfull_str: str = PFULL_STR,
     bk_str: str = BK_STR,
     pk_str: str = PK_STR,
-    p_sfc_str: str = P_SFC_STR,
+    p_sfc_str: str = "ps",
     lev_str: str = LEV_STR,
     lat_str: str = LAT_STR,
 ) -> xr.Dataset:
@@ -222,8 +222,10 @@ def interp_eta_to_plevs(
     pressure and one other dimension (e.g. latitude).  It will silently give
     errant results if there are other dimensions.
 
+    The surface pressure is the variable named ``p_sfc_str``, in Pa.
+
     """
-    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds["ps"])
+    phalf = phalf_from_psfc(ds[bk_str], ds[pk_str], ds[p_sfc_str])
     pfull = pfull_from_phalf_avg(phalf, ds[pfull_str])
     pfull *= 1e-2  # Pa to hPa
 
@@ -247,7 +249,7 @@ def interp_nested_to_plevs(
     pfull_str: str = PFULL_STR,
     bk_str: str = BK_STR,
     pk_str: str = PK_STR,
-    p_sfc_str: str = P_SFC_STR,
+    p_sfc_str: str = "ps",
     lev_str: str = LEV_STR,
     lat_str: str = LAT_STR,
 ) -> xr.Dataset:
