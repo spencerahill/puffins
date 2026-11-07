@@ -450,7 +450,7 @@ def pfull_from_phalf_log_mean(
     Raises
     ------
     ValueError
-        If any half-level pressure is zero or negative. The log-mean of a
+        If any half-level pressure is negative, or zero. The log-mean of a
         layer whose top is at zero pressure is zero, so for a model whose top
         half level is 0 Pa use :func:`pfull_from_phalf_avg` or
         :func:`pfull_simm_burr`.
@@ -461,13 +461,18 @@ def pfull_from_phalf_log_mean(
        Reanalysis System (EMARS) Version 1.0." Geosci. Data J., 6, 137-150,
        doi:10.1002/gdj3.77, p. 142.
     """
-    if bool((phalf <= 0).any()):
+    if bool((phalf < 0).any()):
+        raise ValueError(
+            "A half-level pressure is negative; check the surface pressure for"
+            " fill values."
+        )
+    if bool((phalf == 0).any()):
         raise ValueError(
             "The log-mean full-level pressure is zero for a layer whose top half"
-            " level is at zero pressure, and undefined below it. For a model"
-            " whose top half level is 0 Pa, use pfull_from_phalf_avg or"
-            " pfull_simm_burr (pfull_method='arithmetic_mean' or"
-            " 'simmons_burridge' in interp.interp_eta_to_plevs)."
+            " level is at zero pressure. For a model whose top half level is 0 Pa,"
+            " use pfull_from_phalf_avg or pfull_simm_burr"
+            " (pfull_method='arithmetic_mean' or 'simmons_burridge' in"
+            " interp.interp_eta_to_plevs)."
         )
     dp = dp_from_phalf(phalf, pfull_ref, phalf_str=phalf_str, pfull_str=pfull_str)
     dlogp = np.abs(
@@ -477,6 +482,40 @@ def pfull_from_phalf_log_mean(
         )
     )
     return cast(xr.DataArray, (dp / dlogp).rename(pfull_str))
+
+
+def _check_simm_burr_refs(
+    phalf: xr.DataArray,
+    phalf_ref: xr.DataArray,
+    pfull_ref: xr.DataArray,
+    phalf_str: str,
+) -> None:
+    """Raise unless the references can set the Simmons-Burridge top level.
+
+    The top level is scaled by a ratio of the reference pressures, and the
+    vertical order is read from the reference half levels. So the references
+    must be pressures in one unit, each full level strictly between its two
+    half levels, running in the same vertical order as ``phalf``.
+    """
+    half = np.asarray(phalf_ref, dtype=float)
+    full = np.asarray(pfull_ref, dtype=float)
+    if full.shape != half[1:].shape or not bool(
+        (
+            (full > np.minimum(half[:-1], half[1:]))
+            & (full < np.maximum(half[:-1], half[1:]))
+        ).all()
+    ):
+        raise ValueError(
+            "Each reference full-level pressure must lie strictly between its two"
+            " reference half-level pressures, in the same units, since they set"
+            " the Simmons-Burridge top level. At least one does not, as when the"
+            " references are indices or in different units."
+        )
+    step = (phalf.isel({phalf_str: 1}) - phalf.isel({phalf_str: 0})).values
+    if bool(((step > 0) != (half[1] > half[0]))[np.isfinite(step)].any()):
+        raise ValueError(
+            "The reference half levels and phalf run in opposite vertical orders."
+        )
 
 
 def pfull_vals_simm_burr(
@@ -516,6 +555,7 @@ def pfull_vals_simm_burr(
     --------
     pfull_simm_burr : xarray-aware wrapper.
     """
+    _check_simm_burr_refs(phalf, phalf_ref, pfull_ref, phalf_str)
     # ``above`` means vertically above (i.e. lower pressure). Handle both
     # pressure orderings the same way as ``pfull_simm_burr`` (issue #26): the
     # top level is index 0 when pressure increases with index and index -1 when
@@ -558,7 +598,12 @@ def pfull_simm_burr(
 ) -> xr.DataArray:
     """Compute full-level pressures using Simmons-Burridge spacing.
 
-    Handles both increasing and decreasing pressure ordering.
+    Handles both increasing and decreasing pressure ordering. The top level is
+    the next half level scaled by the ratio of the top reference full level to
+    the same reference half level, and the vertical order is read from
+    ``phalf_ref``. A ValueError is raised unless each reference full level
+    lies strictly between its two reference half levels, in the same units,
+    and the references run in the same vertical order as ``phalf``.
 
     Parameters
     ----------
@@ -588,6 +633,7 @@ def pfull_simm_burr(
     --------
     pfull_vals_simm_burr : Returns raw numpy values.
     """
+    _check_simm_burr_refs(phalf, phalf_ref, pfull_ref, phalf_str)
     # Above means vertically above (i.e. lower pressure).
     if phalf_ref[0] < phalf_ref[1]:
         p_is_increasing = True

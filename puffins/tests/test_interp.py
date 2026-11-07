@@ -642,7 +642,7 @@ class TestFullLevelPressures:
 
         Each latitude has its own surface pressure, so each column is checked
         at its own levels. Had the function used another method's levels, some
-        column of this dataset would change by at least 0.78 K.
+        column of this dataset would change by at least 0.77 K.
         """
         ds = _make_hybrid_dataset()
         levels = _own_levels_hpa(ds, pfull_method)
@@ -663,9 +663,101 @@ class TestFullLevelPressures:
             _column(result["temp"], 0), _column(ds["temp"], 0), rtol=1e-12
         )
 
-    def test_log_mean_raises_with_a_zero_pressure_top(self) -> None:
-        """A top half level at 0 Pa raises under the log-mean, naming the others."""
+    def test_levels_against_the_fixture_closed_form(self) -> None:
+        """At 1000 hPa surface pressure the levels are the fixture's own log-means.
+
+        The ``pfull`` coordinate of the third column's dataset is computed in
+        raw numpy, independently of puffins. Its end levels differ from the
+        function's by rounding, which puts them just outside the column, so the
+        round trip uses the interior levels and the ends are compared directly.
+        """
+        ds = _make_hybrid_dataset()
+        assert float(ds["ps"].isel({LAT_STR: 2})) == 100000.0
+        independent = ds[PFULL_STR].values
+        np.testing.assert_allclose(
+            _column(_own_levels_hpa(ds, "log_mean"), 2), independent, rtol=1e-14
+        )
+        result = interp_eta_to_plevs(ds, independent[1:-1], dim=LAT_STR)
+        np.testing.assert_allclose(
+            _column(result["temp"], 2), _column(ds["temp"], 2)[1:-1], rtol=1e-12
+        )
+
+    def test_method_sets_the_interpolation(self) -> None:
+        """``method`` sets how values between the model levels are interpolated.
+
+        Between the levels of this column, cubic and linear interpolation
+        differ by 0.096 to 5.4 K.
+        """
+        ds = _make_hybrid_dataset()
+        levels = _column(_own_levels_hpa(ds, "log_mean"), 2)
+        mids = np.sqrt(levels[:-1] * levels[1:])
+        linear = interp_eta_to_plevs(ds, mids, dim=LAT_STR, method="linear")
+        np.testing.assert_allclose(
+            _column(linear["temp"], 2),
+            np.interp(mids, levels, _column(ds["temp"], 2)),
+            rtol=1e-12,
+        )
+        cubic = interp_eta_to_plevs(ds, mids, dim=LAT_STR)
+        gap = np.abs(_column(cubic["temp"], 2) - _column(linear["temp"], 2))
+        assert float(gap.min()) > 0.05
+
+    def test_custom_variable_names(self) -> None:
+        """Both functions read bk, pk, pfull and ps under the names given."""
+        ds = _make_hybrid_dataset()
+        nested = ds.expand_dims({TIME_STR: [0]})
+        plevs = np.array([100.0, 500.0, 800.0])
+        renamed = {
+            BK_STR: "b_coef",
+            PK_STR: "a_coef",
+            PFULL_STR: "lev_full",
+            "ps": "surf_pres",
+        }
+        expected = interp_eta_to_plevs(ds, plevs, dim=LAT_STR)
+        result = interp_eta_to_plevs(
+            ds.rename(renamed),
+            plevs,
+            dim=LAT_STR,
+            bk_str="b_coef",
+            pk_str="a_coef",
+            pfull_str="lev_full",
+            p_sfc_str="surf_pres",
+        )
+        np.testing.assert_array_equal(
+            result["temp"].transpose(LAT_STR, "lev_full").values,
+            expected["temp"].transpose(LAT_STR, PFULL_STR).values,
+        )
+        nested_result = interp_nested_to_plevs(
+            nested.rename(renamed),
+            plevs,
+            dim1=LAT_STR,
+            dim2=TIME_STR,
+            bk_str="b_coef",
+            pk_str="a_coef",
+            pfull_str="lev_full",
+            p_sfc_str="surf_pres",
+        )
+        np.testing.assert_array_equal(
+            nested_result["temp"]
+            .isel({TIME_STR: 0})
+            .transpose(LAT_STR, "lev_full")
+            .values,
+            expected["temp"].transpose(LAT_STR, PFULL_STR).values,
+        )
+
+    @pytest.mark.parametrize("top_first", [True, False])
+    def test_log_mean_raises_with_a_zero_pressure_top(self, top_first: bool) -> None:
+        """A top half level at 0 Pa raises under the log-mean, naming the others.
+
+        With the column stored surface first, the zero is the last half level.
+        """
         ds = _make_hybrid_dataset(p_top=0.0)
+        if not top_first:
+            ds = ds.isel(
+                {
+                    PHALF_STR: slice(None, None, -1),
+                    PFULL_STR: slice(None, None, -1),
+                }
+            )
         plevs = np.array([100.0, 500.0])
         with pytest.raises(ValueError, match="'simmons_burridge'"):
             interp_eta_to_plevs(ds, plevs, dim=LAT_STR)
@@ -704,6 +796,29 @@ class TestFullLevelPressures:
                 dim=LAT_STR,
                 pfull_method=cast(PfullMethod, "geometric_mean"),
             )
+
+    def test_simmons_burridge_needs_pressure_coordinates(self) -> None:
+        """Index coordinates on phalf and pfull raise under Simmons-Burridge.
+
+        They would otherwise set the top level's scale factor to 0 / 1, with no
+        error; the other two methods do not use the coordinates.
+        """
+        ds = _make_hybrid_dataset()
+        indexed = ds.assign_coords(
+            {
+                PHALF_STR: np.arange(ds.sizes[PHALF_STR]),
+                PFULL_STR: np.arange(ds.sizes[PFULL_STR]),
+            }
+        )
+        plevs = np.array([100.0, 500.0])
+        with pytest.raises(ValueError, match="strictly between"):
+            interp_eta_to_plevs(
+                indexed, plevs, dim=LAT_STR, pfull_method="simmons_burridge"
+            )
+        xr.testing.assert_identical(
+            interp_eta_to_plevs(indexed, plevs, dim=LAT_STR)["temp"],
+            interp_eta_to_plevs(ds, plevs, dim=LAT_STR)["temp"],
+        )
 
     @pytest.mark.parametrize("pfull_method", list(_PFULL_FUNCS))
     def test_custom_full_level_name(self, pfull_method: PfullMethod) -> None:

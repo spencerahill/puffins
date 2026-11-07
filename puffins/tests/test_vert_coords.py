@@ -1,6 +1,7 @@
 """Tests for vert_coords module."""
 
 import warnings
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -603,7 +604,8 @@ class TestPfullFromPhalfAvg:
         layer's thickness to it, placing every full level below its layer.
         """
         column = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
-        phalf_vals = np.stack([column, 0.9 * column])
+        # Not proportional to the first column, so no column is a scaled copy.
+        phalf_vals = np.stack([column, 0.9 * column + 300.0])
         if not increasing:
             phalf_vals = phalf_vals[:, ::-1]
         phalf = xr.DataArray(
@@ -612,6 +614,7 @@ class TestPfullFromPhalfAvg:
         pfull_ref = xr.DataArray(np.arange(5.0), dims=[PFULL_STR])
         result = pfull_from_phalf_avg(phalf, pfull_ref)
         assert result.dims == ("lat", PFULL_STR)
+        assert result.name == PFULL_STR
         np.testing.assert_allclose(
             result.values, 0.5 * (phalf_vals[:, :-1] + phalf_vals[:, 1:]), rtol=1e-15
         )
@@ -643,10 +646,11 @@ class TestPfullFromPhalfLogMean:
         """(p2 - p1) / ln(p2 / p1) for each layer, in either order.
 
         The log-mean also lies strictly between the two half levels and
-        below their arithmetic mean.
+        below their arithmetic mean. The second column is not a scaled copy of
+        the first, which would give it the same log-pressure thicknesses.
         """
         column = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
-        phalf_vals = np.stack([column, 0.9 * column])
+        phalf_vals = np.stack([column, 0.9 * column + 300.0])
         if not increasing:
             phalf_vals = phalf_vals[:, ::-1]
         phalf = xr.DataArray(
@@ -657,6 +661,7 @@ class TestPfullFromPhalfLogMean:
         )
         result = pfull_from_phalf_log_mean(phalf, pfull_ref)
         assert result.dims == ("lat", PFULL_STR)
+        assert result.name == PFULL_STR
         np.testing.assert_array_equal(result[PFULL_STR].values, np.arange(5.0))
         p1, p2 = phalf_vals[:, :-1], phalf_vals[:, 1:]
         np.testing.assert_allclose(
@@ -666,13 +671,46 @@ class TestPfullFromPhalfLogMean:
         assert (result.values < np.maximum(p1, p2)).all()
         assert (result.values < 0.5 * (p1 + p2)).all()
 
-    @pytest.mark.parametrize("top", [0.0, -1.0])
-    def test_nonpositive_half_level_raises(self, top: float) -> None:
-        """A half level at or below zero pressure raises a ValueError."""
-        phalf = xr.DataArray([top, 5000.0, 20000.0], dims=[PHALF_STR])
+    @pytest.mark.parametrize("increasing", [True, False])
+    @pytest.mark.parametrize(
+        ("top", "message"), [(0.0, "pfull_simm_burr"), (-1.0, "negative")]
+    )
+    def test_nonpositive_half_level_raises(
+        self, top: float, message: str, increasing: bool
+    ) -> None:
+        """A half level at or below zero pressure raises a ValueError.
+
+        Only a zero-pressure top is sent to the other two methods; a negative
+        pressure, such as from a fill value, is reported as invalid. With
+        pressure decreasing along ``phalf``, the bad value is the last one.
+        """
+        vals = [top, 5000.0, 20000.0] if increasing else [20000.0, 5000.0, top]
+        phalf = xr.DataArray(vals, dims=[PHALF_STR])
         pfull_ref = xr.DataArray([0.0, 1.0], dims=[PFULL_STR])
-        with pytest.raises(ValueError, match="pfull_simm_burr"):
+        with pytest.raises(ValueError, match=message):
             pfull_from_phalf_log_mean(phalf, pfull_ref)
+
+
+@pytest.mark.parametrize("func", [pfull_from_phalf_avg, pfull_from_phalf_log_mean])
+def test_pfull_from_phalf_dimension_names(func: Callable[..., xr.DataArray]) -> None:
+    """Both means use the half- and full-level dimension names they are given."""
+    column = np.array([100.0, 5000.0, 20000.0, 50000.0, 80000.0, 101325.0])
+    phalf = xr.DataArray(
+        np.stack([column, 0.9 * column + 300.0]),
+        dims=["lat", PHALF_STR],
+        coords={"lat": [0.0, 30.0]},
+    )
+    pfull_ref = xr.DataArray(np.arange(5.0), dims=[PFULL_STR])
+    expected = func(phalf, pfull_ref)
+    result = func(
+        phalf.rename({PHALF_STR: "ph"}),
+        pfull_ref.rename({PFULL_STR: "pf"}),
+        phalf_str="ph",
+        pfull_str="pf",
+    )
+    assert result.dims == ("lat", "pf")
+    assert result.name == "pf"
+    np.testing.assert_array_equal(result.values, expected.values)
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +907,44 @@ class TestPfullSimBurr:
             result.transpose(PFULL_STR, ...).values,
             baseline.transpose(PFULL_STR, ...).values,
         )
+
+    @pytest.mark.parametrize(
+        ("bad_refs", "message"),
+        [
+            ("indices", "strictly between"),
+            ("full levels in hPa", "strictly between"),
+            ("full levels in hundredths of a Pa", "strictly between"),
+            ("full levels on the half levels", "strictly between"),
+            ("order", "opposite vertical orders"),
+        ],
+    )
+    def test_references_must_be_pressures(self, bad_refs: str, message: str) -> None:
+        """Index, mixed-unit or reversed references raise, in both functions.
+
+        The top level is scaled by the ratio of the references, and the
+        vertical order is read from them, so each of these would otherwise
+        give a wrong top level, or invert the column, with no error.
+        """
+        phalf, phalf_ref, pfull_ref = self._make_inputs()
+        n_half = phalf_ref.sizes[PHALF_STR]
+        if bad_refs == "indices":
+            phalf_ref = xr.DataArray(np.arange(n_half, dtype=float), dims=[PHALF_STR])
+            pfull_ref = xr.DataArray(
+                np.arange(n_half - 1, dtype=float), dims=[PFULL_STR]
+            )
+        elif bad_refs == "full levels in hPa":
+            pfull_ref = pfull_ref / 100.0
+        elif bad_refs == "full levels in hundredths of a Pa":
+            pfull_ref = pfull_ref * 100.0
+        elif bad_refs == "full levels on the half levels":
+            pfull_ref = pfull_ref.copy(data=phalf_ref.values[1:])
+        else:
+            phalf_ref = phalf_ref.isel({PHALF_STR: slice(None, None, -1)})
+            pfull_ref = pfull_ref.isel({PFULL_STR: slice(None, None, -1)})
+        with pytest.raises(ValueError, match=message):
+            pfull_simm_burr(phalf, phalf_ref, pfull_ref)
+        with pytest.raises(ValueError, match=message):
+            pfull_vals_simm_burr(phalf.isel(time=0), phalf_ref, pfull_ref)
 
 
 # ---------------------------------------------------------------------------

@@ -258,11 +258,14 @@ def interp_eta_to_plevs(
       ValueError where a half level is at zero pressure, as at the top of a
       model whose top half level is 0 Pa; use one of the other two there.
     - ``"arithmetic_mean"``: (p1 + p2) / 2, the only method before this
-      argument was added.
+      argument was added. It is the definition of ECMWF's L137 model levels,
+      as in ERA5, whose top half level is 0 Pa.
     - ``"simmons_burridge"``: Simmons and Burridge (1981), as computed by
       :func:`puffins.vert_coords.pfull_simm_burr`. It scales the top level by
       the ratio of the dataset's reference ``pfull`` and ``phalf``
-      coordinates, which must therefore be pressures in the same units.
+      coordinates, so it raises a ValueError unless they are pressures in the
+      same units, each full level between its two half levels, running in
+      the same vertical order as the data.
 
     Interpolating a column to its own full-level pressures, computed by the
     same method, returns it unchanged.
