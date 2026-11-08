@@ -592,12 +592,9 @@ def col_int_merid_flux(
 
     Notes
     -----
-    ``dp`` must carry the same below-ground mask as ``v``.  The vertical sum
-    skips NaN but sums every ``dp``, so an unmasked ``dp`` paired with a
-    masked ``v`` dilutes the column mean that ``subtract_col_avg`` removes and
-    leaves a large spurious column mass flux behind.  Building ``dp`` from the
-    level coordinate alone and masking only the fields is the way this goes
-    wrong.
+    ``dp`` need not be masked below ground where ``v`` is: the vertical sum
+    skips the levels where ``v * arr`` is NaN, and ``subtract_col_avg``
+    averages ``v`` over the levels where it is defined.
 
     The vertical sum skips NaN, so a column with missing levels is integrated
     over the levels that remain.  That is correct for genuinely below-ground

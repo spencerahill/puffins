@@ -321,6 +321,51 @@ class TestColAvg:
         )
         assert np.isnan(col_avg(arr, dp).item())
 
+    def test_masked_level_left_out_of_the_thickness(self) -> None:
+        """A NaN level of arr is left out of the column's thickness too (#82).
+
+        Five levels 200 hPa thick, arr 3 with the bottom level NaN, as below
+        ground, and dp unmasked: the mean over the four defined levels is 3.
+        Summing the thickness over all five levels gave 3 * 4 / 5 = 2.4.
+        """
+        plev = [1e4, 3e4, 5e4, 7e4, 9e4]
+        dp = xr.DataArray(np.full(5, 2e4), dims=[LEV_STR], coords={LEV_STR: plev})
+        arr = xr.DataArray(
+            [3.0, 3.0, 3.0, 3.0, np.nan],
+            dims=[LEV_STR],
+            coords={LEV_STR: plev},
+            name="arr",
+        )
+        np.testing.assert_allclose(col_avg(arr, dp).item(), 3.0, rtol=1e-14)
+
+    @pytest.mark.parametrize("mask_dp", [False, True], ids=["dp_unmasked", "dp_masked"])
+    def test_each_column_over_its_own_defined_levels(self, mask_dp: bool) -> None:
+        """Each column is averaged over the levels where it is defined.
+
+        The three columns are defined at all five levels, at the top four,
+        and at the second and third, against an unmasked dp of 100 to 500
+        Pa, or dp masked like arr, which gives the same averages.
+        """
+        plev = [1e4, 3e4, 5e4, 7e4, 9e4]
+        dp_vals = np.array([100.0, 200.0, 300.0, 400.0, 500.0])
+        vals = np.array(
+            [
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [1.0, 2.0, 3.0, 4.0, np.nan],
+                [np.nan, 2.0, 3.0, np.nan, np.nan],
+            ]
+        )
+        dp = xr.DataArray(dp_vals, dims=[LEV_STR], coords={LEV_STR: plev})
+        arr = xr.DataArray(
+            vals, dims=["col", LEV_STR], coords={LEV_STR: plev}, name="arr"
+        )
+        if mask_dp:
+            dp = dp.where(arr.notnull())
+        defined = np.isfinite(vals)
+        expected = np.nansum(vals * dp_vals, axis=1) / (defined * dp_vals).sum(axis=1)
+        np.testing.assert_allclose(expected, [5500 / 1500, 3000 / 1000, 1300 / 500])
+        np.testing.assert_allclose(col_avg(arr, dp).values, expected, rtol=1e-14)
+
 
 # ---------------------------------------------------------------------------
 # TestSubtractColAvg
@@ -346,6 +391,29 @@ class TestSubtractColAvg:
         arr = _sample_arr_on_pfull(pfull)
         result = subtract_col_avg(arr, dp)
         assert result.shape == arr.shape
+
+    def test_masked_level_integrates_to_zero(self) -> None:
+        """With arr masked below ground and dp not, the defined levels sum to 0 (#82).
+
+        Five levels 200 hPa thick, arr 1 to 4 with the bottom level NaN: the
+        column average over the four defined levels is 2.5. Averaging over all
+        five thicknesses gave 2, which left a column integral of 2 times the
+        thickness of one level.
+        """
+        plev = [1e4, 3e4, 5e4, 7e4, 9e4]
+        dp = xr.DataArray(np.full(5, 2e4), dims=[LEV_STR], coords={LEV_STR: plev})
+        arr = xr.DataArray(
+            [1.0, 2.0, 3.0, 4.0, np.nan],
+            dims=[LEV_STR],
+            coords={LEV_STR: plev},
+            name="arr",
+        )
+        result = subtract_col_avg(arr, dp)
+        np.testing.assert_allclose(
+            result.values[:4], [-1.5, -0.5, 0.5, 1.5], rtol=1e-14
+        )
+        assert np.isnan(result.values[4])
+        np.testing.assert_allclose(int_dp_g(result, dp).item(), 0.0, atol=1e-10)
 
 
 # ---------------------------------------------------------------------------
