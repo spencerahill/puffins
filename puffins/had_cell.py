@@ -786,10 +786,35 @@ def cell_edges_sigma(
     center_max_sigma: float = 1,
     cell_min_sigma_depth: float = 0.3,
     max_lat_gap: float = 10,
+    min_frac_strength: float = 0.05,
+    max_num_cells: int = 4,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
     """Compute edges of all contiguous streamfunction overturning cells.
+
+    Each cell is a connected region of latitude and sigma where the
+    streamfunction is positive, or one where it is negative, between sigma
+    `center_min_sigma` and `center_max_sigma`. A NaN is neither, so a column
+    of NaN splits a cell in two. A cell's center is where its magnitude is
+    largest, and its edges are where, at the level of its center, it falls
+    to `frac_thresh` of that maximum; with `cos_factor`, where the
+    streamfunction divided by cos(latitude) falls to `frac_thresh` of its
+    value at the center. Cells are then dropped, in this order:
+
+    - a cell spanning less than `cell_min_sigma_depth` in sigma;
+    - a cell no stronger than `min_frac_strength` times the strongest cell;
+    - a cell lying entirely between the edges of another cell;
+    - with a `UserWarning` giving its center and strength, a cell whose
+      edges cannot be measured: one whose maximum lies at the first or last
+      latitude of the grid, beyond which it may peak, and one with an edge
+      that cannot be found because the latitude beside the edge is NaN or
+      lies in another cell of the same sign;
+    - with a `UserWarning` for each, the cells of either sign beyond the
+      `max_num_cells` strongest of that sign, when more than
+      `max_num_cells` cells remain in all.
+
+    A `ValueError` is raised when no cell remains.
 
     The two Hadley cells are labeled "sh_hadley" and "nh_hadley" by their
     sense of circulation, which requires the sign that `merid_streamfunc`
@@ -854,7 +879,14 @@ def cell_edges_sigma(
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
-    return _hadley_ferrel_cells(cells_arr, max_lat_gap=max_lat_gap, lat_str=lat_str)
+    return _hadley_ferrel_cells(
+        cells_arr,
+        min_frac_strength=min_frac_strength,
+        max_num_cells=max_num_cells,
+        max_lat_gap=max_lat_gap,
+        lat_str=lat_str,
+        sigma_str=sigma_str,
+    )
 
 
 def _find_cell_and_edges(
@@ -882,19 +914,40 @@ def _find_cell_and_edges(
     sf_at_max = _cell_at_max(streamfunc * cell_sign, sf_max, sigma_str)
     # Retain this cell and those with opposite sign.
     sf_and_opp_sign = _cell_and_opp_sign_cells(sf_at_max, labels, n, sigma_str)
-    # If identified cell is physically meaningful, find its edges.
-    if _cell_is_bad(
+    # A cell whose edges cannot be measured gets NaN edges and the reason,
+    # and `_hadley_ferrel_cells` drops it with a warning.
+    skip_reason = _cell_skip_reason(
         sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=1, lat_str=lat_str
-    ):
-        raise ValueError("Cell is not physically meaningful.")
-    edges = _one_cell_edges(
-        sf_and_opp_sign, cell_sign, frac_thresh, cos_factor=cos_factor, lat_str=lat_str
     )
+    if skip_reason:
+        no_edge = sf_max[lat_str] * np.nan
+        edges = [no_edge, no_edge]
+    else:
+        edges = _one_cell_edges(
+            sf_and_opp_sign,
+            cell_sign,
+            frac_thresh,
+            cos_factor=cos_factor,
+            lat_str=lat_str,
+        )
+        nan_sides = [
+            side
+            for side, edge in zip(("southern", "northern"), edges, strict=True)
+            if np.isnan(edge.item())
+        ]
+        if nan_sides:
+            skip_reason = (
+                f"its {' and '.join(nan_sides)} "
+                f"{'edge' if len(nan_sides) == 1 else 'edges'} could not be "
+                "found: the latitude beside the edge is NaN, or lies in another "
+                "cell of the same sign, as when a column of NaN splits a cell"
+            )
     # Convert to a single DataArray with the cell center included.
     edges.insert(-1, sf_max[lat_str])
     edges_arr = xr.concat(edges, dim=lat_str)
     edges_arr[lat_str] = ["edge_south", "center", "edge_north"]
     edges_arr.coords["cell_strength"] = float(sf_max * cell_sign)
+    edges_arr.coords["skip_reason"] = skip_reason
     return edges_arr
 
 
@@ -948,20 +1001,23 @@ def _cell_and_opp_sign_cells(
     )
 
 
-def _cell_is_bad(
+def _cell_skip_reason(
     sf_max: xr.DataArray,
     lats: xr.DataArray,
     sf_and_opp_sign: xr.DataArray,
     min_width: int = 3,
     lat_str: str = LAT_STR,
-) -> bool:
-    """Determine if identified cell is physically meaningful or not."""
+) -> str:
+    """Why an identified cell's edges cannot be measured, or "" if they can."""
     lat_max = float(sf_max[lat_str].values)
-    center_at_pole = np.abs(lat_max) == float(np.abs(lats.values[0]))
-    cell_too_narrow = (
-        len(sf_and_opp_sign.where(sf_and_opp_sign > 0, drop=True)) < min_width
-    )
-    return bool(center_at_pole or cell_too_narrow)
+    if lat_max in (float(lats.values[0]), float(lats.values[-1])):
+        return (
+            "its maximum lies at the first or last latitude of the grid, beyond "
+            "which it may peak"
+        )
+    if len(sf_and_opp_sign.where(sf_and_opp_sign > 0, drop=True)) < min_width:
+        return f"it spans fewer than {min_width} latitudes at the level of its maximum"
+    return ""
 
 
 def _one_cell_edges(
@@ -1041,9 +1097,23 @@ def _one_cell_edges(
         )
 
         edges.append(edge)
-    # Put southern edge first.
-    edges.sort()
-    return edges
+    # The northern edge was found first. Put each edge in the slot of the side
+    # it was searched on, which a sort cannot do for a NaN edge.
+    return edges[::-1]
+
+
+def _warn_dropped_cell(
+    cell: xr.DataArray, reason: str, lat_str: str, sigma_str: str
+) -> None:
+    """Warn that `cell_edges_sigma` dropped `cell`, giving its center and strength."""
+    warnings.warn(
+        "cell_edges_sigma dropped the cell centered at latitude "
+        f"{cell.sel({lat_str: 'center'}).item():g} and sigma "
+        f"{cell[sigma_str].item():g}, of strength "
+        f"{cell['cell_strength'].item():.3g}: {reason}.",
+        UserWarning,
+        stacklevel=_stacklevel_outside_module(),
+    )
 
 
 def _hadley_ferrel_cells(
@@ -1052,6 +1122,7 @@ def _hadley_ferrel_cells(
     max_num_cells: int = 4,
     max_lat_gap: float = 10,
     lat_str: str = LAT_STR,
+    sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
     """From identified cell edges, keep only the Hadley and Ferrel cells.
 
@@ -1065,21 +1136,42 @@ def _hadley_ferrel_cells(
     cells = cells.where(
         np.abs(cells["cell_strength"]) > min_frac_strength * max_strength, drop=True
     )
-    # Discard cells that are entirely within the edges of a larger cell.
-    for i, cell in enumerate(cells):
-        bad = (
-            cell.sel({lat_str: "edge_south"}) > cells.sel({lat_str: "edge_south"})
-        ) & (cell.sel({lat_str: "edge_north"}) < cells.sel({lat_str: "edge_north"}))
-        if np.any(bad):
-            cells = cells.where(cells["cell"] != i)
-    cells = cells.dropna("cell")
+    # Discard cells that are entirely within the edges of another cell. A NaN
+    # edge compares False, so a cell with one neither contains nor lies in
+    # another.
+    edges_south = cells.sel({lat_str: "edge_south"}).values
+    edges_north = cells.sel({lat_str: "edge_north"}).values
+    nested = (
+        (edges_south[:, np.newaxis] > edges_south)
+        & (edges_north[:, np.newaxis] < edges_north)
+    ).any(axis=1)
+    cells = cells.isel(cell=~nested)
+    # Drop, with a warning, each cell whose edges could not be measured.
+    skip_reasons = np.broadcast_to(cells["skip_reason"].values, cells.sizes["cell"])
+    for i in np.flatnonzero(skip_reasons != ""):
+        _warn_dropped_cell(cells.isel(cell=i), skip_reasons[i], lat_str, sigma_str)
+    cells = cells.isel(cell=skip_reasons == "").drop_vars("skip_reason")
+    if cells.sizes["cell"] == 0:
+        raise ValueError(
+            "cell_edges_sigma: no cell remains whose edges could be measured."
+        )
     # Restrict candidates to the strongest few of each sign.
     if len(cells["cell"]) > max_num_cells:
         cells_pos = cells.where(cells["cell_strength"] > 0, drop=True)
         cells_pos = cells_pos.sortby(cells_pos["cell_strength"], ascending=False)
-        cells_pos = cells_pos.isel(cell=slice(0, max_num_cells))
         cells_neg = cells.where(cells["cell_strength"] < 0, drop=True)
         cells_neg = cells_neg.sortby(cells_neg["cell_strength"], ascending=True)
+        for weaker in (cells_pos, cells_neg):
+            for k in range(max_num_cells, weaker.sizes["cell"]):
+                _warn_dropped_cell(
+                    weaker.isel(cell=k),
+                    f"more than {max_num_cells} cells remain, and it is not among "
+                    f"the {max_num_cells} strongest of its sign; raise "
+                    "max_num_cells to keep it",
+                    lat_str,
+                    sigma_str,
+                )
+        cells_pos = cells_pos.isel(cell=slice(0, max_num_cells))
         cells_neg = cells_neg.isel(cell=slice(0, max_num_cells))
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
     # Sort from south to north.
