@@ -158,10 +158,10 @@ def col_avg(arr: xr.DataArray, dp: xr.DataArray, dim: str = LEV_STR) -> xr.DataA
 
     Notes
     -----
-    The average is over the levels where ``arr`` is defined: a level where
-    ``arr`` is NaN, as below ground, is left out of both the integral of
-    ``arr`` and the column's pressure thickness, so ``dp`` need not be NaN
-    at the same levels.
+    The average is over the levels where both ``arr`` and ``dp`` are
+    defined: a level where ``arr`` is NaN, as below ground, is left out of
+    both the integral of ``arr`` and the column's pressure thickness, so
+    ``dp`` need not be NaN at the same levels.
     """
     dp_defined = dp.where(arr.notnull())
     return cast(xr.DataArray, int_dp_g(arr, dp, dim) / int_dp_g(1.0, dp_defined, dim))
