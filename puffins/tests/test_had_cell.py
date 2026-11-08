@@ -1863,6 +1863,30 @@ class TestCellEdgesSigma:
         assert list(cells["cell"].values) == ["sh_hadley", "1"]
         assert cells.sel(cell="sh_hadley", lat="center").item() == -9.0
 
+    @pytest.mark.parametrize(
+        ("max_lat_gap", "paired"), [(None, False), (10.5, False), (11.0, True)]
+    )
+    def test_max_lat_gap(self, max_lat_gap: float | None, paired: bool) -> None:
+        """max_lat_gap sets how far apart the Hadley cells' facing edges may be.
+
+        Two cells 32 degrees wide each meet at 0.25. At frac_thresh 0.5 each
+        facing edge lies 32 arcsin(0.5) / pi = 16 / 3 degrees from the node
+        the cells share, so the facing edges are 32 / 3 = 10.67 degrees
+        apart: beyond the default limit of 10 and beyond 10.5, within 11.
+        """
+        sf = _sigma_half_sine_cells([(-31.75, 0.25, -1.0), (0.25, 32.25, 1.0)])
+        if max_lat_gap is None:
+            cells = cell_edges_sigma(sf, frac_thresh=0.5)
+        else:
+            cells = cell_edges_sigma(sf, frac_thresh=0.5, max_lat_gap=max_lat_gap)
+        gap = (
+            cells.isel(cell=1).sel(lat="edge_south").item()
+            - cells.isel(cell=0).sel(lat="edge_north").item()
+        )
+        assert gap == pytest.approx(32.0 / 3.0, abs=0.02)
+        expected = ["sh_hadley", "nh_hadley"] if paired else ["sh_hadley", "1"]
+        assert list(cells["cell"].values) == expected
+
 
 def _time_model_streamfunc() -> xr.DataArray:
     """Two-cell fields of 3 times by 2 models, each with its own edge latitude.

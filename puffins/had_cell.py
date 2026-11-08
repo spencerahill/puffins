@@ -785,6 +785,7 @@ def cell_edges_sigma(
     center_min_sigma: float = 0.1,
     center_max_sigma: float = 1,
     cell_min_sigma_depth: float = 0.3,
+    max_lat_gap: float = 10,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
@@ -796,13 +797,15 @@ def cell_edges_sigma(
     whose maximum lies nearest the equator is taken as one Hadley cell, the
     southern one of two at the same distance. The other is its neighbor on
     the side of its ascending branch, if that neighbor has the opposite sign
-    and their facing edges are less than 10 degrees apart. Those edges are
-    where each cell falls to `frac_thresh` of its own maximum, so their gap
-    grows with `frac_thresh` and with the cells' widths. Two half-sine cells
-    meeting at a node, w_s and w_n degrees wide, have facing edges
-    (w_s + w_n) arcsin(frac_thresh) / pi degrees apart: 2.0 degrees for
-    cells 64 degrees wide in all at the default `frac_thresh`, and 10.7 at
-    0.5, where they are no longer paired. Every other cell is labeled by its
+    and their facing edges are less than `max_lat_gap` degrees apart, 10 by
+    default. Those edges are where each cell falls to `frac_thresh` of its
+    own maximum, so their gap grows with `frac_thresh` and with the cells'
+    widths. Two half-sine cells meeting at a node, w_s and w_n degrees wide,
+    have facing edges (w_s + w_n) arcsin(frac_thresh) / pi degrees apart:
+    2.0 degrees for cells 64 degrees wide in all at the default
+    `frac_thresh`, and 10.7 at 0.5, which the default `max_lat_gap` does
+    not pair. Raise `max_lat_gap` for a high `frac_thresh` or wide cells.
+    Every other cell is labeled by its
     position among the cells returned, as a string counting from "0" in the
     south. A streamfunction of the opposite sign gets wrong labels, without
     a warning. Where other cells lie between the Hadley cells, as in a
@@ -851,7 +854,7 @@ def cell_edges_sigma(
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
-    return _hadley_ferrel_cells(cells_arr, lat_str=lat_str)
+    return _hadley_ferrel_cells(cells_arr, max_lat_gap=max_lat_gap, lat_str=lat_str)
 
 
 def _find_cell_and_edges(
