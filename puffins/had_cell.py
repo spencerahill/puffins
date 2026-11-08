@@ -800,7 +800,10 @@ def cell_edges_sigma(
     largest, and its edges are where, at the level of its center, it falls
     to `frac_thresh` of that maximum; with `cos_factor`, where the
     streamfunction divided by cos(latitude) falls to `frac_thresh` of its
-    value at the center. Cells are then dropped, in this order:
+    value at the center. Where a cell is still above that fraction at the end
+    of the grid, the edge on that side is interpolated between the grid's last
+    latitude and a value of zero at the pole. Cells are then dropped, in this
+    order:
 
     - a cell spanning less than `cell_min_sigma_depth` in sigma;
     - a cell no stronger than `min_frac_strength` times the strongest cell;
@@ -876,6 +879,11 @@ def cell_edges_sigma(
         else:
             cells.append(candidate)
 
+    if not cells:
+        raise ValueError(
+            "cell_edges_sigma: no cell found that spans at least "
+            f"cell_min_sigma_depth={cell_min_sigma_depth} in sigma."
+        )
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
@@ -1015,6 +1023,8 @@ def _cell_skip_reason(
             "its maximum lies at the first or last latitude of the grid, beyond "
             "which it may peak"
         )
+    # Never true at min_width=1, as `_find_cell_and_edges` calls it: the row
+    # counted includes the cell's maximum, which is positive.
     if len(sf_and_opp_sign.where(sf_and_opp_sign > 0, drop=True)) < min_width:
         return f"it spans fewer than {min_width} latitudes at the level of its maximum"
     return ""
