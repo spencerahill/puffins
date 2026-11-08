@@ -785,10 +785,33 @@ def cell_edges_sigma(
     center_min_sigma: float = 0.1,
     center_max_sigma: float = 1,
     cell_min_sigma_depth: float = 0.3,
+    max_lat_gap: float = 10,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
     """Compute edges of all contiguous streamfunction overturning cells.
+
+    The two Hadley cells are labeled "sh_hadley" and "nh_hadley" by their
+    sense of circulation, which requires the sign that `merid_streamfunc`
+    returns: the southern cell negative and the northern positive. The cell
+    whose maximum lies nearest the equator is taken as one Hadley cell, the
+    southern one of two at the same distance. The other is its neighbor on
+    the side of its ascending branch, if that neighbor has the opposite sign
+    and their facing edges are less than `max_lat_gap` degrees apart, 10 by
+    default. Those edges are where each cell falls to `frac_thresh` of its
+    own maximum, so their gap grows with `frac_thresh` and with the cells'
+    widths. Two half-sine cells meeting at a node, w_s and w_n degrees wide,
+    have facing edges (w_s + w_n) arcsin(frac_thresh) / pi degrees apart:
+    2.0 degrees for cells 64 degrees wide in all at the default
+    `frac_thresh`, and 10.7 at 0.5, which the default `max_lat_gap` does
+    not pair. Raise `max_lat_gap` for a high `frac_thresh` or wide cells.
+    Every other cell is labeled by its
+    position among the cells returned, as a string counting from "0" in the
+    south. A streamfunction of the opposite sign gets wrong labels, without
+    a warning. Where other cells lie between the Hadley cells, as in a
+    double ITCZ, the cell whose maximum lies nearest the equator can be one
+    of them. It then takes a Hadley label, and one of the Hadley cells goes
+    unlabeled.
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
@@ -831,7 +854,7 @@ def cell_edges_sigma(
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
-    return _hadley_ferrel_cells(cells_arr, lat_str=lat_str)
+    return _hadley_ferrel_cells(cells_arr, max_lat_gap=max_lat_gap, lat_str=lat_str)
 
 
 def _find_cell_and_edges(
@@ -912,10 +935,17 @@ def _cell_at_max(
 def _cell_and_opp_sign_cells(
     sf_at_max: xr.DataArray, labels: xr.DataArray, n: int, sigma_str: str = SIGMA_STR
 ) -> xr.DataArray:
-    """Restrict to one positive overturning cell and negative cells."""
+    """Restrict to one positive overturning cell, negative cells and zeros.
+
+    A zero streamfunction is outside every cell, so it is kept as a value below
+    any edge threshold; masked out, it left the edge search no crossing beside
+    a cell bounded by zeros, and so a NaN edge.
+    """
     labels_at_max = labels.sel({sigma_str: sf_at_max[sigma_str]})
     sign_at_max = np.sign(sf_at_max)
-    return cast(xr.DataArray, sf_at_max.where((labels_at_max == n) | (sign_at_max < 0)))
+    return cast(
+        xr.DataArray, sf_at_max.where((labels_at_max == n) | (sign_at_max <= 0))
+    )
 
 
 def _cell_is_bad(
@@ -941,19 +971,21 @@ def _one_cell_edges(
     cos_factor: bool = False,
     lat_str: str = LAT_STR,
 ) -> list[xr.DataArray]:
-    """Compute northern and southern edges of a cell."""
+    """Compute northern and southern edges of a cell.
+
+    The cell is the positive part of ``sf_and_opp_sign``. Its negative values
+    are the opposite-signed cells beside it, which the edge search may cross
+    into, so the edges are measured from the cell's own maximum, never from a
+    stronger neighbor's.
+    """
     edges = []
     # Look for the northern edge and then, by reversing the sign of the
     # latitudes array, the southern edge.
     for sign_factor in [1, -1]:
         sf_cell = sf_and_opp_sign.copy()
         lats = sf_cell[lat_str]
-        if sf_cell.max(lat_str) < np.abs(sf_cell.min(lat_str)):
-            sf_max = sf_cell.min(lat_str)
-            lat_max = lats[sf_cell.argmin(lat_str)]
-        else:
-            sf_max = sf_cell.max(lat_str)
-            lat_max = lats[sf_cell.argmax(lat_str)]
+        sf_max = sf_cell.max(lat_str)
+        lat_max = lats[sf_cell.argmax(lat_str)]
 
         if cos_factor:
             sf_norm = (sf_cell / cosdeg(lats)) / (sf_max / cosdeg(lat_max))
@@ -1052,29 +1084,30 @@ def _hadley_ferrel_cells(
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
     # Sort from south to north.
     cells = cells.sortby(cells.sel({lat_str: "center"}))
-    # Label each Hadley cell that can be identified.
-    center_nearest_eq = np.abs(cells.sel({lat_str: "center"})).min()
+    # Label the Hadley cells by their sense of circulation, the southern cell
+    # negative and the northern positive. The cell whose maximum lies nearest
+    # the equator, the southern one of a tie, is taken as one of them. The
+    # other is its neighbor on the side of its ascending branch, north of a
+    # negative cell and south of a positive one, if that neighbor has the
+    # opposite sign and their facing edges are less than max_lat_gap apart.
+    #
+    # The strength is a scalar coordinate when every cell's is the same, as
+    # with only one cell.
+    strengths = np.broadcast_to(cells["cell_strength"].values, cells.sizes["cell"])
+    edges_south = cells.sel({lat_str: "edge_south"}).values
+    edges_north = cells.sel({lat_str: "edge_north"}).values
+    i_eq = int(np.argmin(np.abs(cells.sel({lat_str: "center"}).values)))
+    if strengths[i_eq] < 0:
+        label_eq, i_other, label_other = "sh_hadley", i_eq + 1, "nh_hadley"
+    else:
+        label_eq, i_other, label_other = "nh_hadley", i_eq - 1, "sh_hadley"
     labels: list[int | str] = list(range(len(cells)))
-    for i, cell in enumerate(cells):
-        # Assume that the cell nearest the equator is one of the Hadley cells.
-        center = cell.sel({lat_str: "center"})
-        if np.abs(center) == center_nearest_eq:
-            if cell.sel({lat_str: "edge_south"}) < 0:
-                labels[i] = "sh_hadley"
-                # Once one Hadley cell has been found, assume the adjacent cell
-                # is the other one, provided it is physicaly close enough
-                if i != len(cells) - 1:
-                    lat_gap = cells[i + 1].sel({lat_str: "edge_south"}) - cell.sel(
-                        {lat_str: "edge_north"}
-                    )
-                    if lat_gap < max_lat_gap:
-                        labels[i + 1] = "nh_hadley"
-                break
-            else:
-                labels[i] = "nh_hadley"
-                if i != 0:
-                    labels[i - 1] = "sh_hadley"
-                break
+    labels[i_eq] = label_eq
+    if 0 <= i_other < len(cells):
+        i_south, i_north = sorted([i_eq, i_other])
+        lat_gap = edges_south[i_north] - edges_north[i_south]
+        if strengths[i_other] * strengths[i_eq] < 0 and lat_gap < max_lat_gap:
+            labels[i_other] = label_other
     cells["cell"] = labels
     return cells
 
