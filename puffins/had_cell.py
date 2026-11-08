@@ -790,6 +790,18 @@ def cell_edges_sigma(
 ) -> xr.DataArray:
     """Compute edges of all contiguous streamfunction overturning cells.
 
+    The two Hadley cells are labeled "sh_hadley" and "nh_hadley" by their
+    sense of circulation, which requires the sign that `merid_streamfunc`
+    returns: the southern cell negative and the northern positive. The cell
+    centered nearest the equator is taken as one Hadley cell. The other is
+    its neighbor on the side of its ascending branch, if that neighbor has
+    the opposite sign and their facing edges are less than 10 degrees apart.
+    Every other cell is labeled by its position among the cells returned,
+    counting from 0 in the south. A streamfunction of the opposite sign gets
+    wrong labels, without a warning. Where weaker cells lie between the
+    Hadley cells, as in a double ITCZ, the cell centered nearest the equator
+    can be one of them, and it then gets a Hadley label.
+
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
     the result. Where the cells found differ between those values, they are
@@ -1061,29 +1073,29 @@ def _hadley_ferrel_cells(
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
     # Sort from south to north.
     cells = cells.sortby(cells.sel({lat_str: "center"}))
-    # Label each Hadley cell that can be identified.
-    center_nearest_eq = np.abs(cells.sel({lat_str: "center"})).min()
+    # Label the Hadley cells by their sense of circulation, the southern cell
+    # negative and the northern positive. The cell centered nearest the
+    # equator is taken as one of them. The other is its neighbor on the side
+    # of its ascending branch, north of a negative cell and south of a
+    # positive one, if that neighbor has the opposite sign and their facing
+    # edges are less than max_lat_gap apart.
+    # The strength is a scalar coordinate when every cell's is the same, as
+    # with only one cell.
+    strengths = np.broadcast_to(cells["cell_strength"].values, cells.sizes["cell"])
+    edges_south = cells.sel({lat_str: "edge_south"}).values
+    edges_north = cells.sel({lat_str: "edge_north"}).values
+    i_eq = int(np.argmin(np.abs(cells.sel({lat_str: "center"}).values)))
+    if strengths[i_eq] < 0:
+        label_eq, i_other, label_other = "sh_hadley", i_eq + 1, "nh_hadley"
+    else:
+        label_eq, i_other, label_other = "nh_hadley", i_eq - 1, "sh_hadley"
     labels: list[int | str] = list(range(len(cells)))
-    for i, cell in enumerate(cells):
-        # Assume that the cell nearest the equator is one of the Hadley cells.
-        center = cell.sel({lat_str: "center"})
-        if np.abs(center) == center_nearest_eq:
-            if cell.sel({lat_str: "edge_south"}) < 0:
-                labels[i] = "sh_hadley"
-                # Once one Hadley cell has been found, assume the adjacent cell
-                # is the other one, provided it is physicaly close enough
-                if i != len(cells) - 1:
-                    lat_gap = cells[i + 1].sel({lat_str: "edge_south"}) - cell.sel(
-                        {lat_str: "edge_north"}
-                    )
-                    if lat_gap < max_lat_gap:
-                        labels[i + 1] = "nh_hadley"
-                break
-            else:
-                labels[i] = "nh_hadley"
-                if i != 0:
-                    labels[i - 1] = "sh_hadley"
-                break
+    labels[i_eq] = label_eq
+    if 0 <= i_other < len(cells):
+        i_south, i_north = sorted([i_eq, i_other])
+        lat_gap = edges_south[i_north] - edges_north[i_south]
+        if strengths[i_other] * strengths[i_eq] < 0 and lat_gap < max_lat_gap:
+            labels[i_other] = label_other
     cells["cell"] = labels
     return cells
 
