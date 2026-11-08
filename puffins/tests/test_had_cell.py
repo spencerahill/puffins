@@ -1656,14 +1656,17 @@ class TestCellEdgesSigma:
                 north - inset, abs=0.01
             )
 
-    @pytest.mark.parametrize("boundary", [-9.75, -1.75, 0.25, 9.75])
+    @pytest.mark.parametrize("boundary", [-20.25, -9.75, -1.75, 0.25, 9.75, 20.25])
     def test_hadley_labels_follow_sign(self, boundary: float) -> None:
         """The negative Hadley cell is sh_hadley and the positive one nh_hadley.
 
-        The two cells, each 30 degrees wide, meet at ``boundary``. The labels
-        used to follow whether the southern edge of the cell nearest the
-        equator lay south of it, so with the cells meeting at -9.75 or -1.75
-        the positive cell was labeled sh_hadley and the negative one 0.
+        The two cells, each 30 degrees wide, meet at ``boundary``. At -20.25
+        and 20.25 the cell nearest the equator is centered 5 degrees into the
+        hemisphere opposite its sign, which tells the sign apart from the
+        hemisphere. The labels used to follow whether the southern edge of
+        the cell nearest the equator lay south of it, so with the cells
+        meeting at -20.25, -9.75 or -1.75 the positive cell was labeled
+        sh_hadley and the negative one 0.
         """
         cells = cell_edges_sigma(
             _sigma_half_sine_cells(
@@ -1754,7 +1757,7 @@ class TestCellEdgesSigma:
         assert gap < 10.0
 
     @pytest.mark.parametrize("mirror", [False, True], ids=["nh_nearer", "sh_nearer"])
-    @pytest.mark.parametrize(("node_gap", "paired"), [(7.0, True), (9.0, False)])
+    @pytest.mark.parametrize(("node_gap", "paired"), [(7.8, True), (8.3, False)])
     def test_second_hadley_cell_within_max_lat_gap(
         self, node_gap: float, paired: bool, mirror: bool
     ) -> None:
@@ -1762,8 +1765,9 @@ class TestCellEdgesSigma:
 
         The positive cell, from 0.25 to 30.25, is nearer the equator, and the
         negative cell ends ``node_gap`` degrees south of it, so their facing
-        edges are about node_gap + 1.9 degrees apart. The second cell is
-        labeled only when that is below 10 degrees. The mirrored case puts
+        edges are about node_gap + 1.9 degrees apart, 9.7 and 10.2 degrees
+        here, either side of the 10 degrees below which the second cell is
+        labeled. The mirrored case puts
         the negative cell nearer the equator. With the positive cell nearer,
         the second label used to be given at any distance.
         """
@@ -1775,12 +1779,89 @@ class TestCellEdgesSigma:
             cells.isel(cell=1).sel(lat="edge_south").item()
             - cells.isel(cell=0).sel(lat="edge_north").item()
         )
+        assert abs(gap - 10.0) < 0.3
         assert (gap < 10.0) == paired
         if paired:
             expected = ["sh_hadley", "nh_hadley"]
         else:
             expected = ["sh_hadley", "1"] if mirror else ["0", "nh_hadley"]
         assert list(cells["cell"].values) == expected
+
+    @pytest.mark.parametrize("mirror", [False, True], ids=["first", "last"])
+    def test_hadley_cell_at_either_end(self, mirror: bool) -> None:
+        """A Hadley cell with no cell on its ascending side gets no partner.
+
+        The positive Hadley cell, from -20.25 to 30.25, is the southernmost
+        cell, with a negative Ferrel cell north of it, on its descending
+        side. Mirrored, the negative Hadley cell is the northernmost. The
+        partner sought one place past either end of the cells must not wrap
+        around to the cell at the other end, here the Ferrel cell. The
+        positive Hadley cell used to be labeled sh_hadley, and the Ferrel cell
+        nh_hadley.
+        """
+        cells_in = [(-20.25, 30.25, 1.0), (30.25, 60.25, -0.3)]
+        expected = ["nh_hadley", "1"]
+        if mirror:
+            cells_in, expected = _mirror_cells(cells_in), ["0", "sh_hadley"]
+        cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
+        assert list(cells["cell"].values) == expected
+
+    def test_ferrel_cells_stronger_than_hadley_cells(self) -> None:
+        """The Hadley cells are found by position, whatever their strength.
+
+        The southern Ferrel cell, of amplitude 1, is the strongest and the
+        northern one, 0.8, the next, with Hadley cells of 0.5 and 0.6
+        between them, so the labels go to the two cells nearest the equator
+        and to neither of the strongest.
+        """
+        cells = cell_edges_sigma(
+            _sigma_half_sine_cells(
+                [
+                    (-59.75, -29.75, 1.0),
+                    (-29.75, 0.25, -0.5),
+                    (0.25, 30.25, 0.6),
+                    (30.25, 60.25, -0.8),
+                ]
+            )
+        )
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
+        np.testing.assert_array_equal(
+            np.sign(cells["cell_strength"].values), [1, -1, 1, -1]
+        )
+
+    def test_cells_of_equal_strength(self) -> None:
+        """Two cells of the same strength, which comes back as a scalar.
+
+        Both cells are positive, of amplitude 1 and 30 degrees wide, centered
+        at -25 and 20. The one nearer the equator is nh_hadley, and the
+        other, of the same sign, is unlabeled; it used to be labeled
+        sh_hadley.
+        """
+        cells = cell_edges_sigma(
+            _sigma_half_sine_cells([(-40.25, -10.25, 1.0), (5.25, 35.25, 1.0)])
+        )
+        # The case under test: one strength shared by two cells, held as a
+        # scalar coordinate.
+        assert cells["cell_strength"].ndim == 0
+        assert list(cells["cell"].values) == ["0", "nh_hadley"]
+
+    def test_cell_nearest_the_equator_by_its_maximum(self) -> None:
+        """The first Hadley cell is the one whose maximum lies nearest the equator.
+
+        The negative cell is two half-sine cells summed, from -60.25 to 0.25
+        at 0.4 and from -16.25 to 0.25 at 1, so its maximum lies at -9 and
+        the midpoint of its edges at -27.4. The positive cell, from 10.25 to
+        40.25, has its maximum at 25 and its edges' midpoint at 25.25. Their
+        facing edges are 11.5 degrees apart, too far to pair, so only the
+        negative cell is labeled.
+        """
+        cells = cell_edges_sigma(
+            _sigma_half_sine_cells(
+                [(-60.25, 0.25, -0.4), (-16.25, 0.25, -1.0), (10.25, 40.25, 1.0)]
+            )
+        )
+        assert list(cells["cell"].values) == ["sh_hadley", "1"]
+        assert cells.sel(cell="sh_hadley", lat="center").item() == -9.0
 
 
 def _time_model_streamfunc() -> xr.DataArray:

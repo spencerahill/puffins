@@ -793,14 +793,22 @@ def cell_edges_sigma(
     The two Hadley cells are labeled "sh_hadley" and "nh_hadley" by their
     sense of circulation, which requires the sign that `merid_streamfunc`
     returns: the southern cell negative and the northern positive. The cell
-    centered nearest the equator is taken as one Hadley cell. The other is
-    its neighbor on the side of its ascending branch, if that neighbor has
-    the opposite sign and their facing edges are less than 10 degrees apart.
-    Every other cell is labeled by its position among the cells returned,
-    counting from 0 in the south. A streamfunction of the opposite sign gets
-    wrong labels, without a warning. Where weaker cells lie between the
-    Hadley cells, as in a double ITCZ, the cell centered nearest the equator
-    can be one of them, and it then gets a Hadley label.
+    whose maximum lies nearest the equator is taken as one Hadley cell, the
+    southern one of two at the same distance. The other is its neighbor on
+    the side of its ascending branch, if that neighbor has the opposite sign
+    and their facing edges are less than 10 degrees apart. Those edges are
+    where each cell falls to `frac_thresh` of its own maximum, so their gap
+    grows with `frac_thresh` and with the cells' widths. Two half-sine cells
+    meeting at a node, w_s and w_n degrees wide, have facing edges
+    (w_s + w_n) arcsin(frac_thresh) / pi degrees apart: 2.0 degrees for
+    cells 64 degrees wide in all at the default `frac_thresh`, and 10.7 at
+    0.5, where they are no longer paired. Every other cell is labeled by its
+    position among the cells returned, as a string counting from "0" in the
+    south. A streamfunction of the opposite sign gets wrong labels, without
+    a warning. Where other cells lie between the Hadley cells, as in a
+    double ITCZ, the cell whose maximum lies nearest the equator can be one
+    of them. It then takes a Hadley label, and one of the Hadley cells goes
+    unlabeled.
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
@@ -1074,11 +1082,12 @@ def _hadley_ferrel_cells(
     # Sort from south to north.
     cells = cells.sortby(cells.sel({lat_str: "center"}))
     # Label the Hadley cells by their sense of circulation, the southern cell
-    # negative and the northern positive. The cell centered nearest the
-    # equator is taken as one of them. The other is its neighbor on the side
-    # of its ascending branch, north of a negative cell and south of a
-    # positive one, if that neighbor has the opposite sign and their facing
-    # edges are less than max_lat_gap apart.
+    # negative and the northern positive. The cell whose maximum lies nearest
+    # the equator, the southern one of a tie, is taken as one of them. The
+    # other is its neighbor on the side of its ascending branch, north of a
+    # negative cell and south of a positive one, if that neighbor has the
+    # opposite sign and their facing edges are less than max_lat_gap apart.
+    #
     # The strength is a scalar coordinate when every cell's is the same, as
     # with only one cell.
     strengths = np.broadcast_to(cells["cell_strength"].values, cells.sizes["cell"])
