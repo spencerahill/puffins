@@ -256,6 +256,48 @@ class TestIntDpG:
             int_dp_g(1.0, dp).values, np.array([600.0, 400.0, np.nan]) / GRAV_EARTH
         )
 
+    def test_return_count(self) -> None:
+        """return_count also gives the levels integrated in each column (#72).
+
+        Four columns of three levels: all defined; arr NaN at the middle
+        level, as below ground; arr NaN at every level; and dp NaN at the
+        middle level where arr is defined. A level counts only where
+        arr * dp is defined, so the counts are 3, 2, 0 and 2, and the
+        integrals are those without return_count.
+        """
+        plev = [1e4, 5e4, 9e4]
+        dp = xr.DataArray(
+            [[100.0, 200.0, 300.0]] * 3 + [[100.0, np.nan, 300.0]],
+            dims=["col", LEV_STR],
+            coords={LEV_STR: plev},
+        )
+        vals = [[1.0, 2.0, 3.0], [1.0, np.nan, 3.0], [np.nan] * 3, [1.0, 2.0, 3.0]]
+        arr = xr.DataArray(
+            vals, dims=["col", LEV_STR], coords={LEV_STR: plev}, name="arr"
+        )
+        integral, count = int_dp_g(arr, dp, return_count=True)
+        assert count.dims == ("col",)
+        assert count.values.tolist() == [3, 2, 0, 2]
+        np.testing.assert_allclose(
+            integral.values,
+            np.array([1400.0, 1000.0, np.nan, 1000.0]) / GRAV_EARTH,
+        )
+        xr.testing.assert_identical(integral, int_dp_g(arr, dp))
+        alone = int_dp_g(arr, dp, return_count=False)
+        assert isinstance(alone, xr.DataArray)
+        xr.testing.assert_identical(alone, integral)
+        # A scalar arr counts the levels where dp is defined.
+        _, count_dp = int_dp_g(1.0, dp, return_count=True)
+        assert count_dp.values.tolist() == [3, 3, 3, 2]
+        # A vertical dimension of another name.
+        _, count_lev = int_dp_g(
+            arr.rename({LEV_STR: "lev"}),
+            dp.rename({LEV_STR: "lev"}),
+            dim="lev",
+            return_count=True,
+        )
+        assert count_lev.values.tolist() == [3, 2, 0, 2]
+
 
 # ---------------------------------------------------------------------------
 # TestIntDlogp

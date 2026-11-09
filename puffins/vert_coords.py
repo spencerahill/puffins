@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import operator
 import warnings
-from typing import cast, overload
+from typing import Literal, cast, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -68,12 +68,32 @@ def to_pascal(arr: ArrayLike, is_dp: bool = False, warn: bool = False) -> ArrayL
     return arr
 
 
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: Literal[False] = ...,
+) -> xr.DataArray: ...
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: Literal[True],
+) -> tuple[xr.DataArray, xr.DataArray]: ...
 def int_dp_g(
     arr: ArrayLike,
     dp: xr.DataArray,
     dim: str = LEV_STR,
     grav: float = GRAV_EARTH,
-) -> xr.DataArray:
+    *,
+    return_count: bool = False,
+) -> xr.DataArray | tuple[xr.DataArray, xr.DataArray]:
     """Mass-weighted vertical integral: sum(arr * dp) / g.
 
     Parameters
@@ -86,11 +106,17 @@ def int_dp_g(
         Name of the vertical dimension. Default: 'plev'.
     grav : float, optional
         Gravitational acceleration (m/s^2). Default: Earth.
+    return_count : bool, optional
+        If True, also return the number of levels integrated in each column.
+        Default: False.
 
     Returns
     -------
     xarray.DataArray
         Vertically integrated field.
+    xarray.DataArray
+        Only with `return_count`: the number of levels in each column where
+        ``arr * dp`` is not NaN, which are the levels the integral covers.
 
     Notes
     -----
@@ -101,9 +127,18 @@ def int_dp_g(
     ground, which contains no mass; when integrating over a layer above the
     surface, set to 0 the columns whose surface pressure is lower than the
     layer's top pressure.
+
+    The integral itself does not say how many levels a column lost, so a NaN
+    that is not below ground, as from a corrupt value or a missing level,
+    looks the same as topography.  The count from `return_count` tells them
+    apart: compare it with the number of levels above ground in each column,
+    or with the count over the same columns of a field known to be complete.
     """
     weighted = cast(xr.DataArray, arr * dp)
-    return cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
+    integral = cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
+    if not return_count:
+        return integral
+    return integral, weighted.notnull().sum(dim=dim)
 
 
 def int_dlogp(
