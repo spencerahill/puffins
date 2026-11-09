@@ -969,12 +969,16 @@ def cell_edges_sigma(
     one grid spacing of the pole, the edge is interpolated between that
     latitude and a value of zero at the pole.
 
-    A cell whose edge on one side lies beyond the end of the data is kept,
-    with NaN for that edge and with a `UserWarning`. On that side, the data
-    end either at the end of a grid whose last latitude lies more than one
-    grid spacing from the pole, as for a band of latitudes or a single
-    hemisphere, or where a run of NaN begins that reaches the end of the
-    grid, as for data masked poleward of some latitude.
+    A cell whose edge on one side lies beyond the end of the data, or in a
+    run of NaN, is kept, with NaN for that edge and with a `UserWarning`. On
+    that side, the data end either at the end of a grid whose last latitude
+    lies more than one grid spacing from the pole, as for a band of
+    latitudes or a single hemisphere, or where a run of NaN begins that
+    reaches the end of the grid, as for data masked poleward of some
+    latitude. An edge lies in a run of NaN beside the cell when the
+    streamfunction beyond the run is below `frac_thresh` of the cell's
+    maximum, each divided by cos(latitude) with `cos_factor`, so that it
+    falls to that fraction within the run.
 
     Cells are dropped, in this order:
 
@@ -982,16 +986,19 @@ def cell_edges_sigma(
     - a cell no stronger than `min_frac_strength` times the strongest cell
       whose edges can be measured, a cell kept with a NaN edge counting as
       measured;
-    - a cell lying entirely between the edges of another cell; a NaN edge
-      compares false, so a cell with one neither contains another cell nor
-      lies within one;
+    - a cell lying entirely between the edges of another cell. Where the
+      other cell has NaN for an edge, the edge counts for this test as lying
+      at the last latitude the other cell is known to reach on that side, at
+      the end of the data or where the run of NaN begins, since its true
+      edge lies beyond. A cell with NaN for an edge never counts as lying
+      within another;
     - with a `UserWarning`, a cell whose edges cannot be measured: one whose
       maximum lies at the end of the data, at the first or last latitude of
       the grid or beside NaN that lasts to the grid's end, beyond which it
-      may peak, and one with an edge that cannot be found because the
-      latitude beside the edge is NaN or lies in another cell of the same
-      sign, where the streamfunction beyond is not NaN all the way to the
-      end of the grid, as when a column of NaN splits a cell;
+      may peak, and one with an edge that cannot be found because, beyond a
+      run of NaN beside the cell, the streamfunction is still at least
+      `frac_thresh` of the cell's maximum, as when a column of NaN splits a
+      cell;
     - with a `UserWarning`, the cells of either sign beyond the
       `max_cells_per_sign` strongest of that sign.
 
@@ -1169,8 +1176,11 @@ def _find_cell_and_edges(
     sf_and_opp_sign = _cell_and_opp_sign_cells(sf_at_max, labels, n, sigma_str)
     # A cell whose edges cannot be measured gets NaN edges and the reason,
     # and `_hadley_ferrel_cells` drops it with a warning. A cell with an edge
-    # beyond the end of the data gets NaN for that edge and the reason, and
-    # is kept with a warning.
+    # that lies beyond the end of the data or in a run of NaN gets NaN for
+    # that edge and the reason, and is kept with a warning. Each side's reach
+    # is the edge where it was found, and otherwise the last latitude the
+    # cell is known to reach, which bounds the edge in the test for one cell
+    # lying within another.
     skip_reason = _cell_skip_reason(
         sf_max,
         streamfunc[lat_str],
@@ -1180,6 +1190,7 @@ def _find_cell_and_edges(
         lat_str=lat_str,
     )
     cut_reason = ""
+    reach = [np.nan, np.nan]
     if skip_reason:
         no_edge = sf_max[lat_str] * np.nan
         edges = [no_edge, no_edge]
@@ -1191,28 +1202,34 @@ def _find_cell_and_edges(
             cos_factor=cos_factor,
             lat_str=lat_str,
         )
-        nan_sides = [
-            side
-            for side, edge in zip(("southern", "northern"), edges, strict=True)
+        sides = ("southern", "northern")
+        nan_edges = {
+            side: _nan_edge(
+                sf_at_max,
+                sf_and_opp_sign,
+                side,
+                frac_thresh,
+                cos_factor=cos_factor,
+                lat_str=lat_str,
+            )
+            for side, edge in zip(sides, edges, strict=True)
             if np.isnan(edge.item())
-        ]
-        own_at_max = labels.sel({sigma_str: sf_at_max[sigma_str]}) == n
-        cut = {
-            side: _cut_reason(sf_at_max, own_at_max, side, lat_str)
-            for side in nan_sides
         }
-        split = [side for side in nan_sides if not cut[side]]
+        split = [side for side, (reason, _) in nan_edges.items() if not reason]
         if split:
             skip_reason = (
                 f"its {' and '.join(split)} "
                 f"{'edge' if len(split) == 1 else 'edges'} could not be "
-                "found: the latitude beside the edge is NaN, or lies in another "
-                "cell of the same sign, and the streamfunction beyond is not NaN "
-                "all the way to the end of the grid, as when a column of NaN "
-                "splits a cell"
+                "found: beyond a run of NaN beside the cell, the streamfunction "
+                "is still at least frac_thresh of the cell's maximum, as when a "
+                "column of NaN splits a cell"
             )
         else:
-            cut_reason = "; ".join(cut[side] for side in nan_sides)
+            cut_reason = "; ".join(reason for reason, _ in nan_edges.values())
+            reach = [
+                nan_edges[side][1] if side in nan_edges else edge.item()
+                for side, edge in zip(sides, edges, strict=True)
+            ]
     # Convert to a single DataArray with the cell center included.
     edges.insert(-1, sf_max[lat_str])
     edges_arr = xr.concat(edges, dim=lat_str)
@@ -1220,6 +1237,7 @@ def _find_cell_and_edges(
     edges_arr.coords["cell_strength"] = float(sf_max * cell_sign)
     edges_arr.coords["skip_reason"] = skip_reason
     edges_arr.coords["cut_reason"] = cut_reason
+    edges_arr.coords["reach_south"], edges_arr.coords["reach_north"] = reach
     return edges_arr
 
 
@@ -1310,38 +1328,65 @@ def _cell_skip_reason(
     return ""
 
 
-def _cut_reason(
-    profile: xr.DataArray, own: xr.DataArray, side: str, lat_str: str = LAT_STR
-) -> str:
-    """Why a cell's NaN edge on `side` lies beyond the end of the data, or "".
+def _nan_edge(
+    profile: xr.DataArray,
+    cell_profile: xr.DataArray,
+    side: str,
+    frac_thresh: float,
+    cos_factor: bool = False,
+    lat_str: str = LAT_STR,
+) -> tuple[str, float]:
+    """Why a cell with a NaN edge on `side` is kept, or "", and its reach there.
 
     `profile` is the streamfunction along latitude at the level of the cell's
-    center, and `own` is True at the cell's own latitudes there. The edge lies
-    beyond the end of the data when the cell reaches the end of the grid on
-    that side, or when every latitude beyond the cell on that side is NaN.
-    Otherwise data lie beyond a NaN, as when a column of NaN splits a cell.
+    maximum, times the cell's sign. `cell_profile` is the same with the other
+    cells of that sign masked, as `_one_cell_edges` searches it. Outward from
+    the maximum, the cell reaches the last latitude at which `cell_profile`
+    is defined before it first falls below `frac_thresh`, normalized as in
+    `_one_cell_edges`; that latitude is returned. The edge lies beyond the
+    end of the data when no latitude lies beyond the reach, or only NaN
+    does. It lies in a run of NaN when the first value of `profile` beyond
+    the run is below `frac_thresh`. Otherwise the streamfunction is still at
+    least `frac_thresh` beyond the NaN, as when a column of NaN splits a
+    cell, and "" is returned, for the cell to be dropped.
     """
-    lats = profile[lat_str]
-    own_lats = lats.where(own, drop=True)
+    lats = profile[lat_str].values
+    cell_values = cell_profile.values
+    i_max = int(np.nanargmax(cell_values))
+    norm = cell_values[i_max] * np.ones_like(lats)
+    if cos_factor:
+        norm = norm * cosdeg(lats) / cosdeg(lats[i_max])
+    sign_factor = 1 if side == "northern" else -1
+    outward = np.argsort(sign_factor * lats)
+    outward = outward[sign_factor * lats[outward] >= sign_factor * lats[i_max]]
+    cell_norm = (cell_values / norm)[outward]
+    below = np.flatnonzero(cell_norm < frac_thresh)
+    stop = below[0] if below.size else outward.size
+    i_reach = np.flatnonzero(~np.isnan(cell_norm[:stop]))[-1]
+    reach = float(lats[outward[i_reach]])
+    beyond = (profile.values / norm)[outward[i_reach + 1 :]]
+    defined = beyond[~np.isnan(beyond)]
     # On a grid ordered from north to south, the northern end comes first.
-    ascending = bool(lats.values[0] < lats.values[-1])
-    if side == "northern":
-        beyond = profile.where(lats > own_lats.max(), drop=True)
-        end = "last" if ascending else "first"
-    else:
-        beyond = profile.where(lats < own_lats.min(), drop=True)
-        end = "first" if ascending else "last"
+    ascending = bool(lats[0] < lats[-1])
+    end = "last" if ascending == (side == "northern") else "first"
     if beyond.size == 0:
-        return (
+        reason = (
             f"its {side} edge lies beyond the {end} latitude of the grid, which "
             "is more than one grid spacing from the pole"
         )
-    if bool(beyond.isnull().all()):
-        return (
+    elif defined.size == 0:
+        reason = (
             f"its {side} edge lies where the streamfunction is NaN, from beside "
             f"the cell to the {end} latitude of the grid"
         )
-    return ""
+    elif defined[0] < frac_thresh:
+        reason = (
+            f"its {side} edge lies in a run of NaN beside the cell, beyond which "
+            "the streamfunction is below frac_thresh of the cell's maximum"
+        )
+    else:
+        reason = ""
+    return reason, reach
 
 
 def _grid_end_near_pole(lats: xr.DataArray, sign_factor: int) -> bool:
@@ -1462,16 +1507,20 @@ def _hadley_ferrel_cells(
     measurable = np.broadcast_to(cells["skip_reason"].values, len(cells)) == ""
     reference = strengths[measurable] if measurable.any() else strengths
     cells = cells.isel(cell=strengths > min_frac_strength * reference.max())
-    # Discard cells that are entirely within the edges of another cell. A NaN
-    # edge compares False, so a cell with one neither contains nor lies in
-    # another.
+    # Discard cells that are entirely within the edges of another cell. The
+    # containing cell is bounded by its reach, which for an edge kept as NaN
+    # is the last latitude the cell is known to reach, short of its true
+    # edge. The contained cell is bounded by its edges, and a NaN edge
+    # compares False, so a cell with one never lies within another.
     edges_south = cells.sel({lat_str: "edge_south"}).values
     edges_north = cells.sel({lat_str: "edge_north"}).values
+    reach_south = np.broadcast_to(cells["reach_south"].values, cells.sizes["cell"])
+    reach_north = np.broadcast_to(cells["reach_north"].values, cells.sizes["cell"])
     nested = (
-        (edges_south[:, np.newaxis] > edges_south)
-        & (edges_north[:, np.newaxis] < edges_north)
+        (edges_south[:, np.newaxis] > reach_south)
+        & (edges_north[:, np.newaxis] < reach_north)
     ).any(axis=1)
-    cells = cells.isel(cell=~nested)
+    cells = cells.isel(cell=~nested).drop_vars(["reach_south", "reach_north"])
     # Drop, with a warning, each cell whose edges could not be measured.
     skip_reasons = np.broadcast_to(cells["skip_reason"].values, cells.sizes["cell"])
     for i in np.flatnonzero(skip_reasons != ""):

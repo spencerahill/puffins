@@ -1977,9 +1977,6 @@ class TestCellEdgesSigmaDroppedCells:
                 ["sh_hadley"],
                 [(15.0, "its northern edge"), (21.0, "its southern edge")],
             ),
-            ([29.0], ["sh_hadley"], [(15.0, "its northern edge")]),
-            ([30.0], ["sh_hadley"], [(15.0, "its northern edge")]),
-            ([-29.0], ["nh_hadley"], [(-15.0, "its southern edge")]),
             (
                 [10.0, 20.0],
                 ["sh_hadley"],
@@ -1999,19 +1996,17 @@ class TestCellEdgesSigmaDroppedCells:
         kept: list[str],
         dropped: list[tuple[float, str]],
     ) -> None:
-        """A NaN column inside a cell or beside its edge drops it, with a warning.
+        """A NaN column splitting a cell drops each part, with a warning.
 
         The field is sin(pi * (lat - 0.25) / 30) between -29.75 and 30.25,
         two Hadley cells 30 degrees wide with edges where it falls to 0.1 of
         its gridded peak, at sigma 0.55. A NaN is in neither cell, so a NaN at
         20N splits the northern cell into two, each with an edge beside the
-        other half; NaN at 10N and 20N split it into three, the middle one
-        with neither edge; and a NaN at 29N, 30N or 29S lies beside an edge.
-        Each such cell is dropped with a warning naming the side of the edge
-        not found. A NaN at 29N also leaves 30N as a cell of its own, of 0.026
-        times the strongest cell's strength, which the strength filter drops
-        without a warning. NaN outside both cells, at 31N or 60N, changes
-        nothing.
+        other half, which beyond the NaN is still above 0.1 of its peak; NaN
+        at 10N and 20N split it into three, the middle one with neither edge.
+        Each such part is dropped with a warning naming the side of the edge
+        not found. NaN outside both cells, at 31N or 60N, changes nothing. A
+        NaN column holding an edge is tested separately.
         """
         sf = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)])
         with warnings.catch_warnings():
@@ -2049,6 +2044,94 @@ class TestCellEdgesSigmaDroppedCells:
             assert len(matching) == 1
             assert f"and sigma 0.55, of strength {strength:.3g}:" in matching[0]
             assert f"{phrase} could not be found" in matching[0]
+
+    @pytest.mark.parametrize(
+        ("nan_lats", "nan_sigma", "label", "edge"),
+        [
+            ([29.0], None, "nh_hadley", "edge_north"),
+            ([30.0], None, "nh_hadley", "edge_north"),
+            ([28.0, 29.0, 30.0], None, "nh_hadley", "edge_north"),
+            ([-29.0], None, "sh_hadley", "edge_south"),
+            ([29.0], 0.55, "nh_hadley", "edge_north"),
+        ],
+        ids=["column_29N", "column_30N", "columns_28N_to_30N", "column_29S", "point"],
+    )
+    def test_edge_in_a_run_of_nan_kept(
+        self, nan_lats: list[float], nan_sigma: float | None, label: str, edge: str
+    ) -> None:
+        """A cell whose edge lies in a run of NaN is kept, with NaN for that edge.
+
+        The two Hadley cells of ``test_nan_column`` have their northern edge
+        at 29.29N and southern at 28.79S. Beyond NaN at 29N, 30N or 29S, or at
+        28N to 30N, the cell is below 0.1 of its gridded peak: 0.026 at 30N,
+        and zero at 31N and 30S. So the edge lies within the NaN, and the
+        cell is kept, with NaN for that edge, a warning, and its other values
+        as without the NaN. The same holds for a NaN at 29N only at sigma
+        0.55, the level of the cell's maximum. These cells used to be
+        dropped. A NaN column at 29N leaves 30N as a cell of its own, of 0.026
+        times the strongest cell's strength, which the strength filter drops
+        without a warning.
+        """
+        sf = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)])
+        full = cell_edges_sigma(sf)
+        mask = sf[LAT_STR].isin(nan_lats)
+        if nan_sigma is not None:
+            mask = mask & (np.abs(sf[SIGMA_STR] - nan_sigma) < 1e-9)
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where(~mask))
+        assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        for name in cells["cell"].values:
+            for lat in ("edge_south", "center", "edge_north"):
+                got = cells.sel(cell=name, lat=lat).item()
+                if (name, lat) == (label, edge):
+                    assert np.isnan(got)
+                else:
+                    assert got == full.sel(cell=name, lat=lat).item()
+        side = "northern" if edge == "edge_north" else "southern"
+        center = full.sel(cell=label, lat="center").item()
+        messages = _cut_messages(record)
+        assert len(record) == len(messages) == 1
+        assert f"at latitude {center:g} and sigma 0.55" in messages[0]
+        assert messages[0].endswith(
+            f": its {side} edge lies in a run of NaN beside the cell, beyond which "
+            "the streamfunction is below frac_thresh of the cell's maximum."
+        )
+
+    @pytest.mark.parametrize("cos_factor", [False, True])
+    def test_edge_in_a_run_of_nan_with_cos_factor(self, cos_factor: bool) -> None:
+        """Whether an edge lies in a run of NaN is judged as the edge is found.
+
+        A northern cell from 0.25 to 80.25 peaks at 40N, and a NaN column at
+        77N lies between 76N and 78N. Without the NaN, the cell's northern
+        edge is at 77.70N, where it falls to 0.1 of its peak, and at 79.63N
+        with cos_factor, where, divided by cos(latitude), it falls to 0.1 of
+        its value at 40N. At 78N, beyond the NaN, it is 0.088 of its peak, and
+        0.325 once divided by cos(latitude). So only without cos_factor does
+        the edge lie within the NaN, and the cell is kept with NaN for it;
+        with cos_factor, the cell is dropped as one split by NaN.
+        """
+        sf = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 80.25, 1.0)])
+        full = cell_edges_sigma(sf, cos_factor=cos_factor)
+        north = full.sel(cell="nh_hadley", lat="edge_north").item()
+        assert (76.0 < north < 78.0) == (not cos_factor)
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(
+                sf.where(sf[LAT_STR] != 77.0), cos_factor=cos_factor
+            )
+        if cos_factor:
+            assert cells["cell"].values.tolist() == ["sh_hadley"]
+            assert _cut_messages(record) == []
+            dropped = _dropped_messages(record)
+            matching = [m for m in dropped if "at latitude 40 and" in m]
+            assert len(matching) == 1
+            assert ": its northern edge could not be found:" in matching[0]
+        else:
+            assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+            assert np.isnan(cells.sel(cell="nh_hadley", lat="edge_north").item())
+            messages = _cut_messages(record)
+            assert len(messages) == 1
+            assert "at latitude 40 and" in messages[0]
+            assert ": its northern edge lies in a run of NaN" in messages[0]
 
     @pytest.mark.parametrize(
         ("cells", "lats", "dropped_center", "kept"),
@@ -2380,6 +2463,118 @@ class TestCellEdgesSigmaDroppedCells:
             cells = cell_edges_sigma(sf.transpose(SIGMA_STR, LAT_STR))
         assert list(cells["cell"].values) == [label for label, _ in expected]
         assert cells.sel(lat="center").values.tolist() == [c for _, c in expected]
+
+    @pytest.mark.parametrize(
+        ("lower_cell", "nan_where", "expected", "nan_edge"),
+        [
+            (
+                (10.25, 30.25),
+                "poleward_of_37N",
+                [("sh_hadley", -15.0), ("nh_hadley", 20.0)],
+                ("nh_hadley", "edge_north"),
+            ),
+            (
+                (10.25, 44.25),
+                "poleward_of_37N_aloft",
+                [("sh_hadley", -15.0), ("nh_hadley", 20.0), ("2", 27.0)],
+                ("nh_hadley", "edge_north"),
+            ),
+            (
+                (12.25, 30.25),
+                "poleward_of_25N_beneath",
+                [("sh_hadley", -15.0), ("nh_hadley", 20.0), ("2", 21.0)],
+                ("2", "edge_north"),
+            ),
+        ],
+        ids=["within_the_reach", "past_the_reach", "nan_edge_never_within"],
+    )
+    @pytest.mark.parametrize("mirror", [False, True])
+    def test_cell_within_a_cell_with_a_nan_edge(
+        self,
+        lower_cell: tuple[float, float],
+        nan_where: str,
+        expected: list[tuple[str, float]],
+        nan_edge: tuple[str, str],
+        mirror: bool,
+    ) -> None:
+        """A NaN edge bounds the cells within its cell at the latitude it reaches.
+
+        The fields are those of ``test_cell_within_another_cells_edges``: a
+        positive cell from 0.25 to 40.25 above sigma 0.53, with edges at 1.53N
+        and 38.97N, and a negative cell of half its amplitude beneath sigma
+        0.57. NaN poleward of 37N at every level leaves the upper cell with
+        NaN for its northern edge, and known to reach 37N. The lower cell,
+        from 10.25 to 30.25 with edges at 10.9N and 29.6N, lies within that
+        reach and is dropped, silently, as on the complete field. It used to
+        be returned between the Hadley cells, labeled "1", and the northern
+        Hadley cell was labeled "2" in place of "nh_hadley". With NaN
+        poleward of 37N only above sigma 0.53, a lower cell
+        from 10.25 to 44.25 has its northern edge at 43.17N, beyond the
+        reach, and is kept. A cell with NaN for an edge never lies within
+        another: NaN poleward of 25N beneath sigma 0.57 leaves a lower cell
+        from 12.25 to 30.25 with NaN for its northern edge, and it is kept,
+        though 25N, which it reaches, lies within the upper cell's edges.
+        Each field is also tested mirrored across the equator, with its sign
+        reversed, so that the NaN edge is a southern one.
+        """
+        lats = np.arange(-85.0, 86.0, 1.0)
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+
+        def half_sine(south: float, north: float) -> xr.DataArray:
+            x = (lat - south) / (north - south)
+            return cast(
+                xr.DataArray, xr.where((x > 0) & (x < 1), np.sin(np.pi * x), 0.0)
+            )
+
+        upper = xr.where(sigma < 0.53, np.sin(np.pi * (sigma - 0.05) / 0.5), 0.0)
+        lower = xr.where(sigma > 0.57, np.sin(np.pi * (sigma - 0.55) / 0.5), 0.0)
+        full = np.sin(np.pi * (sigma - 0.1) / 0.9)
+        sf = 1e10 * (
+            -full * half_sine(-29.75, 0.25)
+            + upper * half_sine(0.25, 40.25)
+            - 0.5 * lower * half_sine(*lower_cell)
+        )
+        masks = {
+            "poleward_of_37N": lat <= 37,
+            "poleward_of_37N_aloft": (lat <= 37) | (sigma > 0.53),
+            "poleward_of_25N_beneath": (lat <= 25) | (sigma < 0.57),
+        }
+
+        def oriented(field: xr.DataArray) -> xr.DataArray:
+            field = field.transpose(SIGMA_STR, LAT_STR)
+            if not mirror:
+                return field
+            return -field.assign_coords({LAT_STR: -field[LAT_STR]}).sortby(LAT_STR)
+
+        if mirror:
+            flip = {"sh_hadley": "nh_hadley", "nh_hadley": "sh_hadley", "2": "0"}
+            expected = [(flip[label], -c) for label, c in reversed(expected)]
+            nan_edge = (
+                flip[nan_edge[0]],
+                "edge_south" if nan_edge[1] == "edge_north" else "edge_north",
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            complete = cell_edges_sigma(oriented(sf))
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(oriented(sf.where(masks[nan_where])))
+        assert list(cells["cell"].values) == [label for label, _ in expected]
+        assert cells.sel(lat="center").values.tolist() == [c for _, c in expected]
+        assert np.isnan(cells.sel(cell=nan_edge[0], lat=nan_edge[1]).item())
+        # The reach bounding each cell in this test is internal.
+        for result in (cells, complete):
+            assert set(result.coords) == {"cell", LAT_STR, "cell_strength", SIGMA_STR}
+        for name in set(cells["cell"].values) & set(complete["cell"].values):
+            for edge in ("edge_south", "center", "edge_north"):
+                if (name, edge) != nan_edge:
+                    got = cells.sel(cell=name, lat=edge).item()
+                    assert got == complete.sel(cell=name, lat=edge).item()
+        messages = _cut_messages(record)
+        assert len(record) == len(messages) == 1
+        center = cells.sel(cell=nan_edge[0], lat="center").item()
+        assert f"at latitude {center:g} and" in messages[0]
 
     def test_cell_beneath_cell_at_grid_end_kept(self) -> None:
         """A cell whose maximum is at the grid's end has no edges to contain another.
