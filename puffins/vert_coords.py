@@ -148,8 +148,8 @@ def int_dp_g(
     is defined below ground, as when extrapolated there, compare it with the
     count from ``int_dp_g(1.0, dp, return_count=True)``.  Either way, a
     smaller count marks a column that lost levels to NaN in `arr`.  The count
-    says how many levels a column lost, not which; ``(arr * dp).notnull()``
-    gives the levels themselves.
+    says how many levels a column lost, and ``(arr * dp).notnull()`` says
+    which.
     """
     weighted = cast(xr.DataArray, arr * dp)
     integral = cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
