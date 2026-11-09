@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import dataclasses
 import functools
 import inspect
 import warnings
@@ -777,6 +779,159 @@ def had_cells_edges(
     return [f_kw[0](strmfunc, **f_kw[1], **shared_kwargs) for f_kw in func_and_kwargs]
 
 
+class _NoCellError(ValueError):
+    """No cell remains in one slice of a `cell_edges_sigma` call."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"cell_edges_sigma: {reason}.")
+        self.reason = reason
+
+
+_DROPPED = "dropped"
+_KEPT_CUT = "kept, with NaN for an edge,"
+_NO_CELL = "no cell"
+
+
+@dataclasses.dataclass
+class _CellReport:
+    """The cells one `cell_edges_sigma` call dropped or could not fully measure.
+
+    A call covers one slice for each value of the dimensions besides latitude
+    and sigma. The notes are gathered across every slice, and `warn` issues
+    one warning per action and reason.
+    """
+
+    n_slices: int
+    extra_dims: tuple[Hashable, ...]
+    slice_index: int = -1
+    slice_desc: str = ""
+    notes: dict[tuple[str, str], list[tuple[int, str, str]]] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def start_slice(self, streamfunc: xr.DataArray) -> None:
+        """Begin the notes for the next slice, `streamfunc`."""
+        self.slice_index += 1
+        parts = [
+            f"{dim}={streamfunc[dim].values}"
+            for dim in self.extra_dims
+            if dim in streamfunc.coords and streamfunc[dim].ndim == 0
+        ]
+        if len(parts) == len(self.extra_dims):
+            self.slice_desc = ", ".join(parts)
+        else:
+            self.slice_desc = f"slice {self.slice_index + 1} of {self.n_slices}"
+
+    def add(
+        self,
+        action: str,
+        reason: str,
+        cell: xr.DataArray | None = None,
+        lat_str: str = LAT_STR,
+        sigma_str: str = SIGMA_STR,
+    ) -> None:
+        """Note that `cell` was dropped or kept with a NaN edge, or none remains."""
+        cell_desc = ""
+        if cell is not None:
+            cell_desc = (
+                f"centered at latitude {cell.sel({lat_str: 'center'}).item():g} "
+                f"and sigma {cell[sigma_str].item():g}, of strength "
+                f"{cell['cell_strength'].item():.3g}"
+            )
+        self.notes.setdefault((action, reason), []).append(
+            (self.slice_index, self.slice_desc, cell_desc)
+        )
+
+    def warn(self) -> None:
+        """Warn once per action and reason, in the order first noted."""
+        for (action, reason), records in self.notes.items():
+            warnings.warn(
+                self._message(action, reason, records),
+                UserWarning,
+                stacklevel=_stacklevel_outside_module(),
+            )
+
+    def _message(
+        self, action: str, reason: str, records: list[tuple[int, str, str]]
+    ) -> str:
+        count = len(records)
+        _, first_slice, first_cell = records[0]
+        along = ", ".join(str(dim) for dim in self.extra_dims)
+        if action == _NO_CELL:
+            return (
+                f"cell_edges_sigma returned NaN for {count} of the "
+                f"{self.n_slices} slices along {along}: {reason}. The first is "
+                f"at {first_slice}."
+            )
+        if self.n_slices == 1:
+            if count == 1:
+                return f"cell_edges_sigma {action} the cell {first_cell}: {reason}."
+            return (
+                f"cell_edges_sigma {action} {count} cells: {reason}. The first "
+                f"is the cell {first_cell}."
+            )
+        n_hit = len({index for index, _, _ in records})
+        return (
+            f"cell_edges_sigma {action} {count} {'cell' if count == 1 else 'cells'} "
+            f"in {n_hit} of the {self.n_slices} slices along {along}: {reason}. "
+            f"The first is at {first_slice}, the cell {first_cell}."
+        )
+
+
+_CELL_REPORT: contextvars.ContextVar[_CellReport | None] = contextvars.ContextVar(
+    "_cell_report", default=None
+)
+
+
+def _report_cells(func: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Gather `cell_edges_sigma`'s notes across its slices, and warn once per reason.
+
+    It wraps the per-element decorator, so it runs once per call, around the
+    loop over the slices.
+    """
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            bound = signature.bind(*args, **kwargs)
+        except TypeError:
+            # The per-element decorator raises the error, naming the function.
+            return func(*args, **kwargs)
+        bound.apply_defaults()
+        field = bound.arguments["streamfunc"]
+        core_dims = {bound.arguments["lat_str"], bound.arguments["sigma_str"]}
+        extra_dims = tuple(dim for dim in field.dims if dim not in core_dims)
+        report = _CellReport(
+            n_slices=int(np.prod([field.sizes[dim] for dim in extra_dims])),
+            extra_dims=extra_dims,
+        )
+        token = _CELL_REPORT.set(report)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _CELL_REPORT.reset(token)
+            report.warn()
+
+    return wrapper
+
+
+def _no_cell_edges(name: Hashable, lat_str: str, sigma_str: str) -> xr.DataArray:
+    """A `cell_edges_sigma` result with no cells, for a slice in which none remains."""
+    return xr.DataArray(
+        np.empty((0, 3)),
+        dims=("cell", lat_str),
+        coords={
+            "cell": np.array([], dtype=object),
+            lat_str: ["edge_south", "center", "edge_north"],
+            "cell_strength": ("cell", np.empty(0)),
+            sigma_str: ("cell", np.empty(0)),
+        },
+        name=name,
+    )
+
+
+@_report_cells
 @_each_element("lat_str", "sigma_str")
 def cell_edges_sigma(
     streamfunc: xr.DataArray,
@@ -787,7 +942,7 @@ def cell_edges_sigma(
     cell_min_sigma_depth: float = 0.3,
     max_lat_gap: float = 10,
     min_frac_strength: float = 0.05,
-    max_num_cells: int = 4,
+    max_cells_per_sign: int = 4,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
@@ -800,22 +955,39 @@ def cell_edges_sigma(
     largest, and its edges are where, at the level of its center, it falls
     to `frac_thresh` of that maximum; with `cos_factor`, where the
     streamfunction divided by cos(latitude) falls to `frac_thresh` of its
-    value at the center. Where a cell is still above that fraction at the end
-    of the grid, the edge on that side is interpolated between the grid's last
-    latitude and a value of zero at the pole. Cells are then dropped, in this
-    order:
+    value at the center. Where a cell is still above that fraction at the
+    end of the grid, and the grid's last latitude on that side lies within
+    one grid spacing of the pole, the edge is interpolated between that
+    latitude and a value of zero at the pole.
+
+    A cell whose edge on one side lies beyond the end of the data is kept,
+    with NaN for that edge and with a `UserWarning`. On that side, the data
+    end either at the end of a grid whose last latitude lies more than one
+    grid spacing from the pole, as for a band of latitudes or a single
+    hemisphere, or where a run of NaN begins that reaches the end of the
+    grid, as for data masked poleward of some latitude.
+
+    Cells are dropped, in this order:
 
     - a cell spanning less than `cell_min_sigma_depth` in sigma;
-    - a cell no stronger than `min_frac_strength` times the strongest cell;
-    - a cell lying entirely between the edges of another cell;
-    - with a `UserWarning` giving its center and strength, a cell whose
-      edges cannot be measured: one whose maximum lies at the first or last
-      latitude of the grid, beyond which it may peak, and one with an edge
-      that cannot be found because the latitude beside the edge is NaN or
-      lies in another cell of the same sign;
-    - with a `UserWarning` for each, the cells of either sign beyond the
-      `max_num_cells` strongest of that sign, when more than
-      `max_num_cells` cells remain in all.
+    - a cell no stronger than `min_frac_strength` times the strongest cell
+      whose edges can be measured, a cell kept with a NaN edge counting as
+      measured;
+    - a cell lying entirely between the edges of another cell; a NaN edge
+      compares false, so a cell with one neither contains another cell nor
+      lies within one;
+    - with a `UserWarning`, a cell whose edges cannot be measured: one whose
+      maximum lies at the first or last latitude of the grid, beyond which
+      it may peak, and one with an edge that cannot be found because the
+      latitude beside the edge is NaN or lies in another cell of the same
+      sign, where the streamfunction beyond is not NaN all the way to the
+      end of the grid, as when a column of NaN splits a cell;
+    - with a `UserWarning`, the cells of either sign beyond the
+      `max_cells_per_sign` strongest of that sign.
+
+    Each warning covers every cell dropped, or kept with a NaN edge, for one
+    reason in the whole call. It gives how many such cells there were, in
+    how many of the slices described below, and the first of them.
 
     A `ValueError` is raised when no cell remains.
 
@@ -843,12 +1015,57 @@ def cell_edges_sigma(
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
-    the result. Where the cells found differ between those values, they are
-    numbered by position from south to north, padded with NaN where a value
-    has fewer cells, and their labels, such as "sh_hadley" and "nh_hadley",
-    are kept in the coordinate "cell_label".
+    the result. Each such value, or combination of values, is a slice. Where
+    the cells found differ between slices, they are numbered by position
+    from south to north, padded with NaN where a slice has fewer cells, and
+    their labels, such as "sh_hadley" and "nh_hadley", are kept in the
+    coordinate "cell_label". A slice in which no cell remains is all NaN,
+    with one `UserWarning` giving how many such slices there were and the
+    first of them. The `ValueError` is raised only for a streamfunction of
+    one slice.
 
     """
+    report = _CELL_REPORT.get()
+    assert report is not None, "_report_cells sets the report for each call"
+    report.start_slice(streamfunc)
+    try:
+        return _slice_cell_edges(
+            streamfunc,
+            report,
+            frac_thresh=frac_thresh,
+            cos_factor=cos_factor,
+            center_min_sigma=center_min_sigma,
+            center_max_sigma=center_max_sigma,
+            cell_min_sigma_depth=cell_min_sigma_depth,
+            max_lat_gap=max_lat_gap,
+            min_frac_strength=min_frac_strength,
+            max_cells_per_sign=max_cells_per_sign,
+            lat_str=lat_str,
+            sigma_str=sigma_str,
+        )
+    except _NoCellError as error:
+        if report.n_slices == 1:
+            raise ValueError(str(error)) from None
+        report.add(_NO_CELL, error.reason)
+        return _no_cell_edges(streamfunc.name, lat_str, sigma_str)
+
+
+def _slice_cell_edges(
+    streamfunc: xr.DataArray,
+    report: _CellReport,
+    *,
+    frac_thresh: float,
+    cos_factor: bool,
+    center_min_sigma: float,
+    center_max_sigma: float,
+    cell_min_sigma_depth: float,
+    max_lat_gap: float,
+    min_frac_strength: float,
+    max_cells_per_sign: int,
+    lat_str: str,
+    sigma_str: str,
+) -> xr.DataArray:
+    """`cell_edges_sigma` of one slice, raising `_NoCellError` if no cell remains."""
     # Discard values in the boundary layer and stratosphere (if specified).
     sigma = streamfunc[sigma_str]
     if center_min_sigma > 0 or center_max_sigma < 1:
@@ -880,17 +1097,18 @@ def cell_edges_sigma(
             cells.append(candidate)
 
     if not cells:
-        raise ValueError(
-            "cell_edges_sigma: no cell found that spans at least "
-            f"cell_min_sigma_depth={cell_min_sigma_depth} in sigma."
+        raise _NoCellError(
+            "no cell found that spans at least "
+            f"cell_min_sigma_depth={cell_min_sigma_depth} in sigma"
         )
     # Convert to an xarray.DataArray
     cells_arr = xr.concat(cells, dim="cell")
     # Restrict to Hadley and Ferrel cells.
     return _hadley_ferrel_cells(
         cells_arr,
+        report,
         min_frac_strength=min_frac_strength,
-        max_num_cells=max_num_cells,
+        max_cells_per_sign=max_cells_per_sign,
         max_lat_gap=max_lat_gap,
         lat_str=lat_str,
         sigma_str=sigma_str,
@@ -923,10 +1141,13 @@ def _find_cell_and_edges(
     # Retain this cell and those with opposite sign.
     sf_and_opp_sign = _cell_and_opp_sign_cells(sf_at_max, labels, n, sigma_str)
     # A cell whose edges cannot be measured gets NaN edges and the reason,
-    # and `_hadley_ferrel_cells` drops it with a warning.
+    # and `_hadley_ferrel_cells` drops it with a warning. A cell with an edge
+    # beyond the end of the data gets NaN for that edge and the reason, and
+    # is kept with a warning.
     skip_reason = _cell_skip_reason(
         sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=1, lat_str=lat_str
     )
+    cut_reason = ""
     if skip_reason:
         no_edge = sf_max[lat_str] * np.nan
         edges = [no_edge, no_edge]
@@ -943,19 +1164,30 @@ def _find_cell_and_edges(
             for side, edge in zip(("southern", "northern"), edges, strict=True)
             if np.isnan(edge.item())
         ]
-        if nan_sides:
+        own_at_max = labels.sel({sigma_str: sf_at_max[sigma_str]}) == n
+        cut = {
+            side: _cut_reason(sf_at_max, own_at_max, side, lat_str)
+            for side in nan_sides
+        }
+        split = [side for side in nan_sides if not cut[side]]
+        if split:
             skip_reason = (
-                f"its {' and '.join(nan_sides)} "
-                f"{'edge' if len(nan_sides) == 1 else 'edges'} could not be "
+                f"its {' and '.join(split)} "
+                f"{'edge' if len(split) == 1 else 'edges'} could not be "
                 "found: the latitude beside the edge is NaN, or lies in another "
-                "cell of the same sign, as when a column of NaN splits a cell"
+                "cell of the same sign, and the streamfunction beyond is not NaN "
+                "all the way to the end of the grid, as when a column of NaN "
+                "splits a cell"
             )
+        else:
+            cut_reason = "; ".join(cut[side] for side in nan_sides)
     # Convert to a single DataArray with the cell center included.
     edges.insert(-1, sf_max[lat_str])
     edges_arr = xr.concat(edges, dim=lat_str)
     edges_arr[lat_str] = ["edge_south", "center", "edge_north"]
     edges_arr.coords["cell_strength"] = float(sf_max * cell_sign)
     edges_arr.coords["skip_reason"] = skip_reason
+    edges_arr.coords["cut_reason"] = cut_reason
     return edges_arr
 
 
@@ -1030,6 +1262,48 @@ def _cell_skip_reason(
     return ""
 
 
+def _cut_reason(
+    profile: xr.DataArray, own: xr.DataArray, side: str, lat_str: str = LAT_STR
+) -> str:
+    """Why a cell's NaN edge on `side` lies beyond the end of the data, or "".
+
+    `profile` is the streamfunction along latitude at the level of the cell's
+    center, and `own` is True at the cell's own latitudes there. The edge lies
+    beyond the end of the data when the cell reaches the end of the grid on
+    that side, or when every latitude beyond the cell on that side is NaN.
+    Otherwise data lie beyond a NaN, as when a column of NaN splits a cell.
+    """
+    lats = profile[lat_str]
+    own_lats = lats.where(own, drop=True)
+    if side == "northern":
+        beyond = profile.where(lats > own_lats.max(), drop=True)
+        end = "last"
+    else:
+        beyond = profile.where(lats < own_lats.min(), drop=True)
+        end = "first"
+    if beyond.size == 0:
+        return (
+            f"its {side} edge lies beyond the {end} latitude of the grid, which "
+            "is more than one grid spacing from the pole"
+        )
+    if bool(beyond.isnull().all()):
+        return (
+            f"its {side} edge lies where the streamfunction is NaN, from beside "
+            f"the cell to the {end} latitude of the grid"
+        )
+    return ""
+
+
+def _grid_end_near_pole(lats: xr.DataArray, sign_factor: int) -> bool:
+    """Whether the grid's last latitude toward a pole lies within one spacing of it.
+
+    `sign_factor` is 1 for the North Pole and -1 for the South Pole.
+    """
+    ordered = np.sort(sign_factor * lats.values)
+    distance, spacing = 90.0 - ordered[-1], ordered[-1] - ordered[-2]
+    return bool(distance <= spacing or np.isclose(distance, spacing))
+
+
 def _one_cell_edges(
     sf_and_opp_sign: xr.DataArray,
     cell_sign: int,
@@ -1077,7 +1351,11 @@ def _one_cell_edges(
         sf_below = sf_one_side.where(sf_one_side < frac_thresh, drop=True)
 
         # If the threshold is never crossed, assume that the cell goes to
-        # zero at that pole.
+        # zero at that pole, provided the grid ends within one spacing of it.
+        # Otherwise the edge lies beyond the end of the grid, unmeasured.
+        if len(sf_below) == 0 and not _grid_end_near_pole(lats, sign_factor):
+            edges.append(lats.isel({lat_str: 0}) * np.nan)
+            continue
         if len(sf_below) == 0:
             first_lat_below = 90.0 * np.sign(lat_one_side.max(lat_str))
             first_below = xr.zeros_like(sf_norm.isel({lat_str: -1}))
@@ -1112,24 +1390,11 @@ def _one_cell_edges(
     return edges[::-1]
 
 
-def _warn_dropped_cell(
-    cell: xr.DataArray, reason: str, lat_str: str, sigma_str: str
-) -> None:
-    """Warn that `cell_edges_sigma` dropped `cell`, giving its center and strength."""
-    warnings.warn(
-        "cell_edges_sigma dropped the cell centered at latitude "
-        f"{cell.sel({lat_str: 'center'}).item():g} and sigma "
-        f"{cell[sigma_str].item():g}, of strength "
-        f"{cell['cell_strength'].item():.3g}: {reason}.",
-        UserWarning,
-        stacklevel=_stacklevel_outside_module(),
-    )
-
-
 def _hadley_ferrel_cells(
     cells: xr.DataArray,
+    report: _CellReport,
     min_frac_strength: float = 0.05,
-    max_num_cells: int = 4,
+    max_cells_per_sign: int = 4,
     max_lat_gap: float = 10,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
@@ -1141,11 +1406,12 @@ def _hadley_ferrel_cells(
     rather than this weaker Ferrel cell.  This needs to be fixed.
 
     """
-    # Discard cells weaker than a given fraction of the strongest cell.
-    max_strength = np.abs(cells["cell_strength"]).max()
-    cells = cells.where(
-        np.abs(cells["cell_strength"]) > min_frac_strength * max_strength, drop=True
-    )
+    # Discard cells weaker than a given fraction of the strongest cell whose
+    # edges could be measured, or of the strongest cell if none could.
+    strengths = np.abs(np.broadcast_to(cells["cell_strength"].values, len(cells)))
+    measurable = np.broadcast_to(cells["skip_reason"].values, len(cells)) == ""
+    reference = strengths[measurable] if measurable.any() else strengths
+    cells = cells.isel(cell=strengths > min_frac_strength * reference.max())
     # Discard cells that are entirely within the edges of another cell. A NaN
     # edge compares False, so a cell with one neither contains nor lies in
     # another.
@@ -1159,31 +1425,35 @@ def _hadley_ferrel_cells(
     # Drop, with a warning, each cell whose edges could not be measured.
     skip_reasons = np.broadcast_to(cells["skip_reason"].values, cells.sizes["cell"])
     for i in np.flatnonzero(skip_reasons != ""):
-        _warn_dropped_cell(cells.isel(cell=i), skip_reasons[i], lat_str, sigma_str)
+        report.add(_DROPPED, skip_reasons[i], cells.isel(cell=i), lat_str, sigma_str)
     cells = cells.isel(cell=skip_reasons == "").drop_vars("skip_reason")
     if cells.sizes["cell"] == 0:
-        raise ValueError(
-            "cell_edges_sigma: no cell remains whose edges could be measured."
-        )
+        raise _NoCellError("no cell remains whose edges could be measured")
     # Restrict candidates to the strongest few of each sign.
-    if len(cells["cell"]) > max_num_cells:
+    if len(cells["cell"]) > max_cells_per_sign:
         cells_pos = cells.where(cells["cell_strength"] > 0, drop=True)
         cells_pos = cells_pos.sortby(cells_pos["cell_strength"], ascending=False)
         cells_neg = cells.where(cells["cell_strength"] < 0, drop=True)
         cells_neg = cells_neg.sortby(cells_neg["cell_strength"], ascending=True)
         for weaker in (cells_pos, cells_neg):
-            for k in range(max_num_cells, weaker.sizes["cell"]):
-                _warn_dropped_cell(
+            for k in range(max_cells_per_sign, weaker.sizes["cell"]):
+                report.add(
+                    _DROPPED,
+                    f"more than {max_cells_per_sign} cells of its sign remain, and "
+                    f"it is not among the {max_cells_per_sign} strongest; raise "
+                    "max_cells_per_sign to keep it",
                     weaker.isel(cell=k),
-                    f"more than {max_num_cells} cells remain, and it is not among "
-                    f"the {max_num_cells} strongest of its sign; raise "
-                    "max_num_cells to keep it",
                     lat_str,
                     sigma_str,
                 )
-        cells_pos = cells_pos.isel(cell=slice(0, max_num_cells))
-        cells_neg = cells_neg.isel(cell=slice(0, max_num_cells))
+        cells_pos = cells_pos.isel(cell=slice(0, max_cells_per_sign))
+        cells_neg = cells_neg.isel(cell=slice(0, max_cells_per_sign))
         cells = xr.concat([cells_pos, cells_neg], dim="cell")
+    # Note each cell kept with a NaN edge beyond the end of the data.
+    cut_reasons = np.broadcast_to(cells["cut_reason"].values, cells.sizes["cell"])
+    for i in np.flatnonzero(cut_reasons != ""):
+        report.add(_KEPT_CUT, cut_reasons[i], cells.isel(cell=i), lat_str, sigma_str)
+    cells = cells.drop_vars("cut_reason")
     # Sort from south to north.
     cells = cells.sortby(cells.sel({lat_str: "center"}))
     # Label the Hadley cells by their sense of circulation, the southern cell

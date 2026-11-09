@@ -2,7 +2,7 @@
 
 import inspect
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from decimal import Decimal, localcontext
 from typing import Any, cast
 
@@ -1586,29 +1586,64 @@ class TestCellEdgesSigma:
         assert edge_north == pytest.approx(30.98 - inset, abs=0.01)
 
     @pytest.mark.parametrize("hemisphere", [1.0, -1.0], ids=["north", "south"])
-    def test_edge_past_the_end_of_the_grid(self, hemisphere: float) -> None:
-        """A cell still above the threshold at the last latitude ends at the pole.
+    @pytest.mark.parametrize(
+        ("south_end", "north_end"),
+        [(-89.5, 89.5), (-85.0, 85.0), (-89.5, 84.5)],
+        ids=["near_pole", "far", "near_south_pole_only"],
+    )
+    def test_edge_past_the_end_of_the_grid(
+        self, hemisphere: float, south_end: float, north_end: float
+    ) -> None:
+        """A cell above the threshold at the grid's end ends at the pole only near it.
 
         The cell is a half sine wave from 0.25 to 120.25 degrees poleward of
         the equator, of the sign of a Hadley cell in that hemisphere, so at
-        the last latitude, 85, it is still 0.8 of its peak. The edge is then
-        interpolated between 85 and a zero placed at the pole. The southern
+        the grid's end it is still 0.8 or more of its peak. On a 1-degree
+        grid ending at 89.5, within one spacing of the pole, the edge is
+        interpolated between 89.5 and a zero placed at the pole. On one
+        ending at 85 or 84.5, five or more spacings from the pole, the edge
+        is NaN, and the cell is kept with a warning. The third grid ends at
+        89.5S and 84.5N, so each end is judged by its own pole. The southern
         case runs the search with the latitudes flipped.
         """
-        lats = np.arange(-85.0, 86.0, 1.0)
+        lats = np.arange(south_end, north_end + 0.5, 1.0)
+        last_lat = abs(south_end if hemisphere < 0 else north_end)
         sigmas = np.linspace(0.1, 1.0, 19)
         lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
         sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
         x = hemisphere * lat - _SIGMA_NODE_OFFSET
         merid = hemisphere * xr.where(x > 0, np.sin(np.pi * x / 120.0), 0.0)
         sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
-        cells = cell_edges_sigma(sf)
         label = "nh_hadley" if hemisphere > 0 else "sh_hadley"
-        assert list(cells["cell"].values) == [label]
-        at_85 = np.sin(np.pi * 84.75 / 120.0) / np.sin(np.pi * 59.75 / 120.0)
         poleward = "edge_north" if hemisphere > 0 else "edge_south"
-        edge = cells.sel(cell=label, lat=poleward).item()
-        assert edge == pytest.approx(hemisphere * (85.0 + 5.0 * (at_85 - 0.1) / at_85))
+        if last_lat == 89.5:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                cells = cell_edges_sigma(sf)
+            # The gridded peak is at 60.5, 60.25 from the node.
+            at_end = np.sin(np.pi * 89.25 / 120.0) / np.sin(np.pi * 60.25 / 120.0)
+            expected = hemisphere * (89.5 + 0.5 * (at_end - 0.1) / at_end)
+            edge = cells.sel(cell=label, lat=poleward).item()
+            assert edge == pytest.approx(expected, rel=1e-12)
+        else:
+            with pytest.warns(UserWarning) as record:
+                cells = cell_edges_sigma(sf)
+            assert np.isnan(cells.sel(cell=label, lat=poleward).item())
+            assert _dropped_messages(record) == []
+            messages = _cut_messages(record)
+            assert len(messages) == 1
+            side, end = (
+                ("northern", "last") if hemisphere > 0 else ("southern", "first")
+            )
+            assert (
+                f"its {side} edge lies beyond the {end} latitude of the grid"
+                in (messages[0])
+            )
+        assert list(cells["cell"].values) == [label]
+        # The gridded peak is at 60.5 on the grids of half-degree latitudes.
+        assert cells.sel(cell=label, lat="center").item() == hemisphere * (
+            60.5 if south_end == -89.5 else 60.0
+        )
 
     def test_cell_one_gridpoint_wide(self) -> None:
         """A cell above the threshold at its maximum alone still gets both edges.
@@ -1888,10 +1923,16 @@ class TestCellEdgesSigma:
         assert list(cells["cell"].values) == expected
 
 
-def _dropped_messages(record: pytest.WarningsRecorder) -> list[str]:
+def _dropped_messages(record: Iterable[warnings.WarningMessage]) -> list[str]:
     """The messages of the warnings for cells that cell_edges_sigma dropped."""
     messages = [str(w.message) for w in record]
     return [m for m in messages if m.startswith("cell_edges_sigma dropped")]
+
+
+def _cut_messages(record: Iterable[warnings.WarningMessage]) -> list[str]:
+    """The messages of the warnings for cells kept with a NaN edge."""
+    messages = [str(w.message) for w in record]
+    return [m for m in messages if m.startswith("cell_edges_sigma kept")]
 
 
 # Southern polar, Ferrel and Hadley cells and a northern Hadley cell. The
@@ -2069,8 +2110,8 @@ class TestCellEdgesSigmaDroppedCells:
         magnitude of the first latitude, which made the call raise. The cell
         runs from 60.25 to 100.25, so its southern edge lies (40 / pi)
         arcsin(0.1 p) north of 60.25, where p = sin(pi * 19.75 / 40) is its
-        gridded peak, and it is still 0.93 of that peak at 85N, so its
-        northern edge is interpolated toward zero at the pole.
+        gridded peak. It is still 0.93 of that peak at 85N, five grid
+        spacings from the pole, so its northern edge is NaN, with a warning.
         """
         sf = _sigma_half_sine_cells(
             [
@@ -2080,9 +2121,12 @@ class TestCellEdgesSigmaDroppedCells:
                 (60.25, 100.25, 0.3),
             ]
         ).sel({LAT_STR: slice(-80.0, None)})
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
+        with pytest.warns(UserWarning) as record:
             cells = cell_edges_sigma(sf)
+        assert _dropped_messages(record) == []
+        messages = _cut_messages(record)
+        assert len(messages) == 1
+        assert "the cell centered at latitude 80 and" in messages[0]
         assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2", "3"]
         cell = cells.sel(cell="3")
         assert cell.sel(lat="center").item() == 80.0
@@ -2090,10 +2134,7 @@ class TestCellEdgesSigmaDroppedCells:
         assert cell.sel(lat="edge_south").item() == pytest.approx(
             60.25 + 40.0 * np.arcsin(0.1 * peak) / np.pi, abs=0.01
         )
-        at_85 = np.sin(np.pi * 24.75 / 40.0) / peak
-        assert cell.sel(lat="edge_north").item() == pytest.approx(
-            85.0 + 5.0 * (at_85 - 0.1) / at_85
-        )
+        assert np.isnan(cell.sel(lat="edge_north").item())
 
     def test_one_element_at_grid_end_keeps_the_others(self) -> None:
         """A cell at the grid's end in one element no longer fails the whole call.
@@ -2165,38 +2206,44 @@ class TestCellEdgesSigmaDroppedCells:
         Each polar cell's strength is ``polar`` times the Hadley cells', so
         polar cells of 0.04 fall below the default of 0.05 and pass 0.03, and
         polar cells of 0.2 pass the default and fall below 0.25. Dropping a
-        weak cell gives no warning.
+        weak cell gives no warning. The polar cells reach past the grid's end
+        at 85, five spacings from the pole, so each kept one has a NaN
+        poleward edge, with a warning.
         """
         sf = _six_sigma_cells(polar)
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
             if min_frac_strength is None:
                 cells = cell_edges_sigma(sf)
             else:
                 cells = cell_edges_sigma(sf, min_frac_strength=min_frac_strength)
+        assert _dropped_messages(record) == []
+        assert len(_cut_messages(record)) == (2 if polar_kept else 0)
         centers = [-75.0, -45.0, -15.0, 15.0, 45.0, 75.0]
         expected = centers if polar_kept else centers[1:-1]
         assert cells.sel(lat="center").values.tolist() == expected
         assert "sh_hadley" in cells["cell"].values
         assert "nh_hadley" in cells["cell"].values
 
-    @pytest.mark.parametrize("max_num_cells", [None, 5, 3])
-    def test_max_num_cells(self, max_num_cells: int | None) -> None:
-        """Beyond max_num_cells cells, only the strongest of each sign are kept.
+    @pytest.mark.parametrize("max_cells_per_sign", [None, 5, 3])
+    def test_max_cells_per_sign(self, max_cells_per_sign: int | None) -> None:
+        """Only the max_cells_per_sign strongest cells of each sign are kept.
 
         Ten alternating half-sine cells, each 17 degrees wide, with every
         maximum 0.25 degrees from a gridpoint, so their strengths rank as
-        their amplitudes. The cells beyond the strongest ``max_num_cells`` of
-        each sign are dropped, each with a warning. The positive cells are all
-        stronger than the negative ones, so keeping the strongest of each sign
-        differs from keeping the strongest twice ``max_num_cells`` overall.
+        their amplitudes. The cells beyond the strongest
+        ``max_cells_per_sign`` of each sign are dropped, with one warning
+        giving their number and the first of them. The positive cells are
+        all stronger than the negative ones, so keeping the strongest of each
+        sign differs from keeping the strongest twice ``max_cells_per_sign``
+        overall.
         """
         nodes = [-85.25 + 17.0 * k for k in range(11)]
         amps = [-0.2, 0.6, -0.4, 0.8, -0.5, 1.0, -0.3, 0.9, -0.15, 0.7]
         sf = _sigma_half_sine_cells(
             [(nodes[k], nodes[k + 1], amps[k]) for k in range(10)]
         )
-        limit = 4 if max_num_cells is None else max_num_cells
+        limit = 4 if max_cells_per_sign is None else max_cells_per_sign
         centers = np.round(np.array(nodes[:-1]) + 8.5)
         kept = set()
         for sign in (1.0, -1.0):
@@ -2207,25 +2254,30 @@ class TestCellEdgesSigmaDroppedCells:
         dropped = [centers[k] for k in range(10) if k not in kept]
         if dropped:
             with pytest.warns(UserWarning) as record:
-                if max_num_cells is None:
+                if max_cells_per_sign is None:
                     cells = cell_edges_sigma(sf)
                 else:
-                    cells = cell_edges_sigma(sf, max_num_cells=max_num_cells)
+                    cells = cell_edges_sigma(sf, max_cells_per_sign=max_cells_per_sign)
             messages = _dropped_messages(record)
         else:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", UserWarning)
-                cells = cell_edges_sigma(sf, max_num_cells=limit)
+                cells = cell_edges_sigma(sf, max_cells_per_sign=limit)
             messages = []
         assert cells.sel(lat="center").values.tolist() == [
             centers[k] for k in sorted(kept)
         ]
-        assert len(dropped) == {None: 2, 5: 0, 3: 4}[max_num_cells]
-        assert len(messages) == len(dropped)
-        for center in dropped:
-            matching = [m for m in messages if f"at latitude {center:g} and" in m]
-            assert len(matching) == 1
-            assert f"not among the {limit} strongest of its sign" in matching[0]
+        assert len(dropped) == {None: 2, 5: 0, 3: 4}[max_cells_per_sign]
+        assert len(messages) == (1 if dropped else 0)
+        if dropped:
+            assert messages[0].startswith(
+                f"cell_edges_sigma dropped {len(dropped)} cells: more than {limit} "
+                f"cells of its sign remain, and it is not among the {limit} "
+                "strongest; raise max_cells_per_sign to keep it. The first is the "
+                "cell centered at latitude "
+            )
+            first = float(messages[0].split("centered at latitude ")[1].split()[0])
+            assert first in dropped
 
     @pytest.mark.parametrize(
         ("lower_cell", "expected"),
@@ -2373,11 +2425,16 @@ class TestCellEdgesSigmaDroppedCells:
 
         The northern polar cell has the shape of the northern Hadley cell and
         half its amplitude, so its strength is exactly half the strongest.
+        It reaches past the grid's end at 85N, so when kept it has a NaN
+        northern edge, with a warning.
         """
         sf = _sigma_half_sine_cells(
             [(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0), (60.25, 90.25, 0.5)]
         )
-        cells = cell_edges_sigma(sf, min_frac_strength=min_frac_strength)
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(sf, min_frac_strength=min_frac_strength)
+        assert len(_cut_messages(record)) == (1 if kept else 0)
         strengths = np.abs(cells["cell_strength"].values)
         assert (75.0 in cells.sel(lat="center").values) == kept
         if kept:
@@ -2390,8 +2447,372 @@ class TestCellEdgesSigmaDroppedCells:
             sf = sf.expand_dims({TIME_STR: [0, 1]})
         with pytest.warns(UserWarning) as record:
             cell_edges_sigma(sf)
-        assert len(_dropped_messages(record)) == (2 if extra_dim else 1)
+        # One warning for the call, however many slices it covers.
+        assert len(_dropped_messages(record)) == 1
         assert {w.filename for w in record} == {__file__}
+
+    @pytest.mark.parametrize(
+        ("extra", "first_slice"),
+        [
+            ({TIME_STR: [10, 20, 30]}, "time=10"),
+            ({TIME_STR: [10, 20, 30], "model": ["a", "b"]}, "time=10, model=a"),
+            ({TIME_STR: 3}, "slice 1 of 3"),
+            # A dimension without a coordinate leaves the others unable to
+            # say which slice is meant.
+            ({TIME_STR: [10, 20, 30], "member": 2}, "slice 1 of 6"),
+        ],
+        ids=["time", "time_and_model", "no_coordinate", "one_without_coordinate"],
+    )
+    def test_one_warning_per_reason_across_slices(
+        self, extra: dict[str, Any], first_slice: str
+    ) -> None:
+        """Each reason gets one warning per call, giving the count and the first cell.
+
+        Every slice is the six-cell field cut to a band from 40S to 40N, whose
+        Ferrel cells peak beyond the band and so at its ends, where they are
+        dropped. Each slice used to give its own two warnings, with no word
+        of which slice they came from.
+        """
+        sf = _six_sigma_cells(0.2).sel({LAT_STR: slice(-40, 40)}).expand_dims(extra)
+        n_slices = int(np.prod([sf.sizes[dim] for dim in extra]))
+        with pytest.warns(UserWarning) as record:
+            cell_edges_sigma(sf)
+        assert len(record) == 1
+        message = str(record[0].message)
+        assert message.startswith(
+            f"cell_edges_sigma dropped {2 * n_slices} cells in {n_slices} of the "
+            f"{n_slices} slices along {', '.join(extra)}: its maximum lies at the "
+            "first or last latitude of the grid, beyond which it may peak. The "
+            f"first is at {first_slice}, the cell centered at latitude "
+        )
+        assert message.split("centered at latitude ")[1].split()[0] in ("40", "-40")
+        assert record[0].filename == __file__
+
+    @pytest.mark.parametrize(
+        ("lats", "nan_edges"),
+        [
+            (slice(-25, 25), {"sh_hadley": "edge_south", "nh_hadley": "edge_north"}),
+            (slice(2, None), {"nh_hadley": "edge_south"}),
+            (slice(None, -2), {"sh_hadley": "edge_north"}),
+        ],
+        ids=["band_25S_25N", "northern_hemisphere", "southern_hemisphere"],
+    )
+    def test_cell_cut_by_the_end_of_a_band_or_hemisphere(
+        self, lats: slice, nan_edges: dict[str, str]
+    ) -> None:
+        """A cell reaching a grid end far from the pole gets NaN for that edge.
+
+        The four Hadley and Ferrel cells of ``_sigma_cells`` are cut to a band
+        from 25S to 25N, or to one hemisphere without the equator. Each Hadley
+        cell reaching the cut is kept, with NaN for its edge on that side, its
+        other values as on the full grid, and a warning. Those edges used to
+        be interpolated toward zero at the pole, out to 76.4S and 77.6N for
+        the band, and a hemisphere grid made the call raise.
+        """
+        full = cell_edges_sigma(_sigma_cells(ferrel=0.4))
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(_sigma_cells(ferrel=0.4).sel({LAT_STR: lats}))
+        assert _dropped_messages(record) == []
+        messages = _cut_messages(record)
+        assert len(messages) == len(nan_edges)
+        # A cell's positional label differs between the grids, so each cell
+        # is matched to the full grid's by its center.
+        full_centers = full.sel(lat="center").values.tolist()
+        for label in cells["cell"].values:
+            center = cells.sel(cell=label, lat="center").item()
+            on_full = full.isel(cell=full_centers.index(center))
+            for edge in ("edge_south", "edge_north"):
+                got = cells.sel(cell=label, lat=edge).item()
+                if nan_edges.get(label) == edge:
+                    assert np.isnan(got)
+                else:
+                    assert got == on_full.sel(lat=edge).item()
+        for label, edge in nan_edges.items():
+            side, end = (
+                ("southern", "first") if edge == "edge_south" else ("northern", "last")
+            )
+            center = cells.sel(cell=label, lat="center").item()
+            matching = [m for m in messages if f"at latitude {center:g} and" in m]
+            assert len(matching) == 1
+            assert matching[0].endswith(
+                f": its {side} edge lies beyond the {end} latitude of the grid, "
+                "which is more than one grid spacing from the pole."
+            )
+
+    @pytest.mark.parametrize(
+        ("grid", "near"),
+        [("spacing_2.5", True), ("spacing_2.4", False), ("rounded_1.2", True)],
+    )
+    def test_grid_end_exactly_one_spacing_from_the_pole(
+        self, grid: str, near: bool
+    ) -> None:
+        """A grid end within one spacing of the pole, inclusive, counts as near it.
+
+        On the first two grids the northern end is 87.5, 2.5 degrees from the
+        pole, and the spacing before it is 2.5 or 2.4 degrees. The third,
+        ``np.linspace(-88.8, 88.8, 149)``, ends 1.2 degrees from the pole
+        after a spacing of 1.2, which rounding leaves 1.4e-14 short of that
+        distance. A cell from 0.25 to 120.25, peaking at the gridpoint 60, is
+        still more than 0.7 of that peak at the end. Near the pole, its
+        northern edge is interpolated between the end and a zero at the pole;
+        otherwise it is NaN, with a warning.
+        """
+        if grid == "rounded_1.2":
+            lats = np.linspace(-88.8, 88.8, 149)
+        else:
+            last_spacing = 2.5 if grid == "spacing_2.5" else 2.4
+            lats = np.concatenate(
+                [np.arange(-87.5, 84.0, 2.5), [87.5 - last_spacing, 87.5]]
+            )
+        end = lats[-1]
+        assert (90.0 - end <= end - lats[-2]) == (grid == "spacing_2.5")
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        x = lat - _SIGMA_NODE_OFFSET
+        merid = xr.where(x > 0, np.sin(np.pi * x / 120.0), 0.0)
+        sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(sf)
+        edge = cells.sel(cell="nh_hadley", lat="edge_north").item()
+        center = cells.sel(cell="nh_hadley", lat="center").item()
+        assert center == pytest.approx(60.0, abs=1e-12)
+        if near:
+            peak = np.sin(np.pi * 59.75 / 120.0)
+            at_end = np.sin(np.pi * (end - 0.25) / 120.0) / peak
+            expected = end + (90.0 - end) * (at_end - 0.1) / at_end
+            assert edge == pytest.approx(expected, rel=1e-12)
+            assert len(record) == 0
+        else:
+            assert np.isnan(edge)
+            assert len(_cut_messages(record)) == len(record) == 1
+
+    @pytest.mark.parametrize(
+        ("keep", "nan_edges"),
+        [
+            ("both", {"sh_hadley": "edge_south", "nh_hadley": "edge_north"}),
+            ("north", {"nh_hadley": "edge_north"}),
+        ],
+    )
+    def test_cell_cut_by_nan_to_the_end_of_the_grid(
+        self, keep: str, nan_edges: dict[str, str]
+    ) -> None:
+        """A cell reaching NaN that lasts to the grid's end gets NaN for that edge.
+
+        The four Hadley and Ferrel cells of ``_sigma_cells`` are masked
+        poleward of 20 degrees in both hemispheres, or in the northern one
+        only. Each Hadley cell reaching the mask is kept, with NaN for its
+        edge on that side, its other values as unmasked, and a warning. Such
+        a cell used to be dropped, and with both masked the call raised.
+        """
+        sf = _sigma_cells(ferrel=0.4)
+        lat = sf[LAT_STR]
+        mask = (np.abs(lat) <= 20) if keep == "both" else (lat <= 20)
+        full = cell_edges_sigma(sf)
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where(mask))
+        assert _dropped_messages(record) == []
+        messages = _cut_messages(record)
+        assert len(messages) == len(nan_edges)
+        expected = (
+            ["sh_hadley", "nh_hadley"]
+            if keep == "both"
+            else ["0", "sh_hadley", "nh_hadley"]
+        )
+        assert cells["cell"].values.tolist() == expected
+        for label in cells["cell"].values:
+            for edge in ("edge_south", "center", "edge_north"):
+                got = cells.sel(cell=label, lat=edge).item()
+                if nan_edges.get(label) == edge:
+                    assert np.isnan(got)
+                else:
+                    assert got == full.sel(cell=label, lat=edge).item()
+        for edge in nan_edges.values():
+            side, end = (
+                ("southern", "first") if edge == "edge_south" else ("northern", "last")
+            )
+            phrase = (
+                f": its {side} edge lies where the streamfunction is NaN, from "
+                f"beside the cell to the {end} latitude of the grid."
+            )
+            assert sum(m.endswith(phrase) for m in messages) == 1
+
+    def test_cell_split_on_one_side_and_cut_on_the_other_dropped(self) -> None:
+        """A cell split by NaN on one side is dropped, whatever the other side.
+
+        The two Hadley cells of ``_sigma_half_sine_cells`` are masked at 20N
+        and poleward of 25N. The northern cell's half south of 20N has a cell
+        of its own sign beyond the NaN, and is dropped. So is the half north
+        of 20N, which has the other half beyond the NaN to its south, though
+        to its north the NaN lasts to the grid's end.
+        """
+        sf = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)])
+        lat = sf[LAT_STR]
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where((lat <= 25) & (lat != 20)))
+        assert cells["cell"].values.tolist() == ["sh_hadley"]
+        assert _cut_messages(record) == []
+        messages = _dropped_messages(record)
+        assert len(messages) == 2
+        for center, side in [(15.0, "northern"), (21.0, "southern")]:
+            matching = [m for m in messages if f"at latitude {center:g} and" in m]
+            assert len(matching) == 1
+            assert f": its {side} edge could not be found:" in matching[0]
+
+    def test_cell_cut_on_both_sides(self) -> None:
+        """A cell cut by both ends of a band gets NaN for both edges, in one warning.
+
+        A single cell from 40.25S to 40.25N, peaking at the equator, is cut to
+        a band from 20S to 20N, at both ends of which it is still 0.7 of its
+        peak.
+        """
+        sf = _sigma_half_sine_cells([(-40.25, 40.25, 1.0)])
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.sel({LAT_STR: slice(-20, 20)}))
+        messages = _cut_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0].endswith(
+            ": its southern edge lies beyond the first latitude of the grid, which "
+            "is more than one grid spacing from the pole; its northern edge lies "
+            "beyond the last latitude of the grid, which is more than one grid "
+            "spacing from the pole."
+        )
+        cell = cells.isel(cell=0)
+        assert cell.sel(lat="center").item() == 0.0
+        assert np.isnan(cell.sel(lat="edge_south").item())
+        assert np.isnan(cell.sel(lat="edge_north").item())
+
+    def test_cut_cell_beyond_the_limit_gets_one_warning(self) -> None:
+        """A cut cell dropped by the per-sign limit is reported as dropped only.
+
+        The six cells of ``_six_sigma_cells`` include two polar cells that
+        reach past the grid's end at 85 degrees, so each would have a NaN
+        poleward edge. With max_cells_per_sign=2, they are the weakest of
+        their signs and are dropped, with one warning, and no warning says
+        they were kept.
+        """
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(_six_sigma_cells(0.2), max_cells_per_sign=2)
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -15.0, 15.0, 45.0]
+        assert _cut_messages(record) == []
+        messages = _dropped_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0].startswith("cell_edges_sigma dropped 2 cells: more than 2")
+
+    @pytest.mark.parametrize(
+        ("polar", "warned"), [(-25.0, True), (-0.001, False)], ids=["strong", "weak"]
+    )
+    def test_strength_threshold_from_measurable_cells(
+        self, polar: float, warned: bool
+    ) -> None:
+        """The strength threshold is set by the cells whose edges can be measured.
+
+        A polar cell peaking at 85S, the grid's first latitude, cannot be
+        measured. At 25 times the Hadley cells' strength, it used to set the
+        threshold, 0.05 times its own strength, above both Hadley cells, which
+        were then dropped silently, and the call raised. The Hadley cells now
+        set it, so the strong polar cell is dropped with a warning and the
+        Hadley cells are returned as without it. A polar cell of 0.001 times
+        their strength falls below the threshold and is dropped silently.
+        """
+        hadley = [(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)]
+        alone = cell_edges_sigma(_sigma_half_sine_cells(hadley))
+        sf = _sigma_half_sine_cells([(-110.25, -59.75, polar), *hadley])
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        np.testing.assert_array_equal(cells.values, alone.values)
+        assert len(record) == (1 if warned else 0)
+        if warned:
+            message = _dropped_messages(record)[0]
+            assert "at latitude -85 and" in message
+            assert "first or last latitude of the grid" in message
+
+    def test_cut_cell_counts_as_measured_for_the_strength_threshold(self) -> None:
+        """A cell kept with a NaN edge sets the strength threshold like any other.
+
+        On a grid starting at 25S, the southern Hadley cell, of strength 1, is
+        cut by the grid's end. The northern Hadley cell has strength 0.5 and
+        the northern Ferrel cell 0.04, which falls below 0.05 times the
+        southern Hadley cell but would pass 0.05 times the northern one.
+        """
+        sf = _sigma_half_sine_cells(
+            [(-29.75, 0.25, -1.0), (0.25, 30.25, 0.5), (30.25, 60.25, -0.04)]
+        ).sel({LAT_STR: slice(-25, None)})
+        with pytest.warns(UserWarning, match="its southern edge lies beyond"):
+            cells = cell_edges_sigma(sf)
+        assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        # The Ferrel cell itself is measured and kept below a threshold of
+        # 0.04 times the strongest cell.
+        with pytest.warns(UserWarning, match="its southern edge lies beyond"):
+            lower = cell_edges_sigma(sf, min_frac_strength=0.035)
+        assert lower["cell"].values.tolist() == ["sh_hadley", "nh_hadley", "2"]
+
+    @pytest.mark.parametrize(
+        ("middle", "reason"),
+        [
+            (
+                "all_nan",
+                "no cell found that spans at least cell_min_sigma_depth=0.3 in sigma",
+            ),
+            ("unmeasurable", "no cell remains whose edges could be measured"),
+        ],
+    )
+    def test_slice_with_no_cell_is_nan(self, middle: str, reason: str) -> None:
+        """A slice in which no cell remains is NaN, and the other slices are returned.
+
+        Of three times, the middle one is all NaN, as for a missing month, or
+        holds only a cell peaking at the grid's first latitude. Either used to
+        make the call raise for all three. A lone such field, or a series of
+        one, still raises.
+        """
+        outer = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)])
+        if middle == "all_nan":
+            mid = outer * np.nan
+        else:
+            mid = _sigma_half_sine_cells([(-110.25, -60.25, -0.3)])
+        sf = xr.concat([outer, mid, 2 * outer], dim=TIME_STR).assign_coords(
+            {TIME_STR: [10, 20, 30]}
+        )
+        with pytest.warns(UserWarning) as record:
+            result = cell_edges_sigma(sf)
+        messages = [str(w.message) for w in record]
+        assert len(messages) == (1 if middle == "all_nan" else 2)
+        assert (
+            f"cell_edges_sigma returned NaN for 1 of the 3 slices along time: "
+            f"{reason}. The first is at time=20."
+        ) in messages
+        if middle == "unmeasurable":
+            assert any(
+                m.startswith(
+                    "cell_edges_sigma dropped 1 cell in 1 of the 3 slices along "
+                    "time: its maximum lies at the first or last latitude"
+                )
+                for m in messages
+            )
+        assert bool(result.sel({TIME_STR: 20}).isnull().all())
+        for time, field in [(10, outer), (30, 2 * outer)]:
+            alone = cell_edges_sigma(field)
+            got = result.sel({TIME_STR: time})
+            np.testing.assert_array_equal(got.values, alone.values)
+            assert got["cell_label"].values.tolist() == alone["cell"].values.tolist()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with pytest.raises(ValueError, match=reason):
+                cell_edges_sigma(mid)
+            with pytest.raises(ValueError, match=reason):
+                cell_edges_sigma(mid.expand_dims({TIME_STR: [20]}))
+
+    def test_every_slice_with_no_cell(self) -> None:
+        sf = _sigma_half_sine_cells([(0.25, 30.25, 1.0)]) * np.nan
+        with pytest.warns(
+            UserWarning,
+            match="returned NaN for 2 of the 2 slices along time: no cell found",
+        ):
+            result = cell_edges_sigma(sf.expand_dims({TIME_STR: [10, 20]}))
+        assert dict(result.sizes) == {TIME_STR: 2, "cell": 0, LAT_STR: 3}
 
 
 def _time_model_streamfunc() -> xr.DataArray:
@@ -2621,6 +3042,13 @@ class TestEachElement:
         removed: dict[str, Any] = {"dim": TIME_STR}
         with pytest.raises(TypeError, match=r"had_cell_strength\(\).*'dim'"):
             had_cell_strength(_gauss_cell(10.0), **removed)
+
+    def test_cell_edges_sigma_unknown_argument_names_the_function(self) -> None:
+        # The renamed max_num_cells, through both of cell_edges_sigma's
+        # decorators, is refused with the function's name.
+        old_name: dict[str, Any] = {"max_num_cells": 2}
+        with pytest.raises(TypeError, match=r"cell_edges_sigma\(\).*'max_num_cells'"):
+            cell_edges_sigma(_sigma_streamfunc(), **old_name)
 
     def test_extra_dimension_of_length_zero_raises(self) -> None:
         sf = _gauss_cell(10.0).expand_dims({TIME_STR: [0]}).isel({TIME_STR: []})
