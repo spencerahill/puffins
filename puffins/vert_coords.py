@@ -86,6 +86,15 @@ def int_dp_g(
     *,
     return_count: Literal[True],
 ) -> tuple[xr.DataArray, xr.DataArray]: ...
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: bool,
+) -> xr.DataArray | tuple[xr.DataArray, xr.DataArray]: ...
 def int_dp_g(
     arr: ArrayLike,
     dp: xr.DataArray,
@@ -98,7 +107,7 @@ def int_dp_g(
 
     Parameters
     ----------
-    arr : xarray.DataArray
+    arr : xarray.DataArray, numpy.ndarray or scalar
         Field to integrate.
     dp : xarray.DataArray
         Pressure thickness of each level (Pa).
@@ -116,7 +125,8 @@ def int_dp_g(
         Vertically integrated field.
     xarray.DataArray
         Only with `return_count`: the number of levels in each column where
-        ``arr * dp`` is not NaN, which are the levels the integral covers.
+        ``arr * dp`` is not NaN, which are the levels the integral covers,
+        named "num_levels" and without the field's attributes.
 
     Notes
     -----
@@ -131,14 +141,22 @@ def int_dp_g(
     The integral itself does not say how many levels a column lost, so a NaN
     that is not below ground, as from a corrupt value or a missing level,
     looks the same as topography.  The count from `return_count` tells them
-    apart: compare it with the number of levels above ground in each column,
-    or with the count over the same columns of a field known to be complete.
+    apart, compared with a count that depends on how the levels below ground
+    are marked.  Where `arr` is NaN at every level below ground, compare it
+    with the number of levels above ground in each column, from the surface
+    pressure.  Where `arr` is NaN below ground only where `dp` is NaN too, or
+    is defined below ground, as when extrapolated there, compare it with the
+    count from ``int_dp_g(1.0, dp, return_count=True)``.  Either way, a
+    smaller count marks a column that lost levels to NaN in `arr`.  The count
+    says how many levels a column lost, not which; ``(arr * dp).notnull()``
+    gives the levels themselves.
     """
     weighted = cast(xr.DataArray, arr * dp)
     integral = cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
     if not return_count:
         return integral
-    return integral, weighted.notnull().sum(dim=dim)
+    count = weighted.notnull().sum(dim=dim).rename("num_levels")
+    return integral, count.drop_attrs(deep=False)
 
 
 def int_dlogp(
