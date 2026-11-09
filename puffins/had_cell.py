@@ -908,10 +908,19 @@ def _report_cells(func: Callable[_P, _R]) -> Callable[_P, _R]:
         )
         token = _CELL_REPORT.set(report)
         try:
-            return func(*args, **kwargs)
-        finally:
+            result = func(*args, **kwargs)
+        except Exception as error:
             _CELL_REPORT.reset(token)
-            report.warn()
+            # A warning turned into an error by the warnings filter must not
+            # replace the error the call raised.
+            try:
+                report.warn()
+            except Warning as warning:
+                error.add_note(f"A warning raised as an error: {warning}")
+            raise
+        _CELL_REPORT.reset(token)
+        report.warn()
+        return result
 
     return wrapper
 
@@ -977,8 +986,9 @@ def cell_edges_sigma(
       compares false, so a cell with one neither contains another cell nor
       lies within one;
     - with a `UserWarning`, a cell whose edges cannot be measured: one whose
-      maximum lies at the first or last latitude of the grid, beyond which
-      it may peak, and one with an edge that cannot be found because the
+      maximum lies at the end of the data, at the first or last latitude of
+      the grid or beside NaN that lasts to the grid's end, beyond which it
+      may peak, and one with an edge that cannot be found because the
       latitude beside the edge is NaN or lies in another cell of the same
       sign, where the streamfunction beyond is not NaN all the way to the
       end of the grid, as when a column of NaN splits a cell;
@@ -1011,7 +1021,9 @@ def cell_edges_sigma(
     a warning. Where other cells lie between the Hadley cells, as in a
     double ITCZ, the cell whose maximum lies nearest the equator can be one
     of them. It then takes a Hadley label, and one of the Hadley cells goes
-    unlabeled.
+    unlabeled. Likewise, where a Hadley cell is dropped or lies beyond the
+    grid, as on a band of latitudes, the cell returned nearest the equator
+    can be a Ferrel or polar cell, and it takes a Hadley label.
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
@@ -1025,6 +1037,16 @@ def cell_edges_sigma(
     one slice.
 
     """
+    if max_cells_per_sign < 1:
+        raise ValueError(
+            f"cell_edges_sigma: max_cells_per_sign is {max_cells_per_sign}, and "
+            "must be at least 1."
+        )
+    if not 0 <= min_frac_strength < 1:
+        raise ValueError(
+            f"cell_edges_sigma: min_frac_strength is {min_frac_strength}, and "
+            "must be at least 0 and less than 1."
+        )
     report = _CELL_REPORT.get()
     assert report is not None, "_report_cells sets the report for each call"
     report.start_slice(streamfunc)
@@ -1075,6 +1097,11 @@ def _slice_cell_edges(
 
     # Identify each cell candidate and loop over them.
     labels, indices = _split_streamfunc_into_cells(streamfunc)
+    if not indices:
+        raise _NoCellError(
+            "the streamfunction is NaN or zero at every latitude and sigma "
+            "searched, so it has no cell"
+        )
     cells = []
     for n in indices:
         try:
@@ -1145,7 +1172,12 @@ def _find_cell_and_edges(
     # beyond the end of the data gets NaN for that edge and the reason, and
     # is kept with a warning.
     skip_reason = _cell_skip_reason(
-        sf_max, streamfunc[lat_str], sf_and_opp_sign, min_width=1, lat_str=lat_str
+        sf_max,
+        streamfunc[lat_str],
+        sf_and_opp_sign,
+        sf_at_max,
+        min_width=1,
+        lat_str=lat_str,
     )
     cut_reason = ""
     if skip_reason:
@@ -1245,16 +1277,32 @@ def _cell_skip_reason(
     sf_max: xr.DataArray,
     lats: xr.DataArray,
     sf_and_opp_sign: xr.DataArray,
+    profile: xr.DataArray,
     min_width: int = 3,
     lat_str: str = LAT_STR,
 ) -> str:
-    """Why an identified cell's edges cannot be measured, or "" if they can."""
+    """Why an identified cell's edges cannot be measured, or "" if they can.
+
+    `profile` is the streamfunction along latitude at the level of the cell's
+    maximum. A maximum at the end of the data, the end of the grid or the
+    start of a run of NaN reaching it, may lie short of the cell's peak.
+    """
     lat_max = float(sf_max[lat_str].values)
     if lat_max in (float(lats.values[0]), float(lats.values[-1])):
         return (
             "its maximum lies at the first or last latitude of the grid, beyond "
             "which it may peak"
         )
+    profile_lats = profile[lat_str]
+    for beyond in (
+        profile.where(profile_lats < lat_max, drop=True),
+        profile.where(profile_lats > lat_max, drop=True),
+    ):
+        if bool(beyond.isnull().all()):
+            return (
+                "its maximum lies beside NaN that lasts to the end of the grid, "
+                "beyond which it may peak"
+            )
     # Never true at min_width=1, as `_find_cell_and_edges` calls it: the row
     # counted includes the cell's maximum, which is positive.
     if len(sf_and_opp_sign.where(sf_and_opp_sign > 0, drop=True)) < min_width:
@@ -1275,12 +1323,14 @@ def _cut_reason(
     """
     lats = profile[lat_str]
     own_lats = lats.where(own, drop=True)
+    # On a grid ordered from north to south, the northern end comes first.
+    ascending = bool(lats.values[0] < lats.values[-1])
     if side == "northern":
         beyond = profile.where(lats > own_lats.max(), drop=True)
-        end = "last"
+        end = "last" if ascending else "first"
     else:
         beyond = profile.where(lats < own_lats.min(), drop=True)
-        end = "first"
+        end = "first" if ascending else "last"
     if beyond.size == 0:
         return (
             f"its {side} edge lies beyond the {end} latitude of the grid, which "
