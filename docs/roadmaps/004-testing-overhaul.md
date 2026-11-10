@@ -96,7 +96,7 @@ These modules have simple input/output contracts, no I/O, and few dependencies. 
 |--------|-------------|----------------|--------|
 | `constants.py` | ~0 (values) | Sanity-check constants haven't drifted; trivial to write | — (no functions) |
 | `names.py` | ~0 (strings) | Same — verify string constants exist and are consistent | — (no functions) |
-| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (99 tests, 99% cov) |
+| `dynamics.py` | 15 | Pure math on arrays; foundational to other modules | **Done** (105 tests, 99% cov) |
 | `thermodynamics.py` | 25 | Pure math; heavily used downstream | **Done** (109 tests, 97% cov) |
 | `calculus.py` | 17 | Differentiation/integration — easy to validate against analytical solutions | **Done** (116 tests, 98% cov) |
 | `num_solver.py` | 5 | Small module, testable against known roots | **Done** (25 tests, 98% cov) |

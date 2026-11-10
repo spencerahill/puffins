@@ -95,6 +95,13 @@ def therm_ross_num(
     )
 
 
+# Rows this close to a pole, in degrees, get no relative vorticity. Float32
+# latitudes are spaced 7.6e-6 degrees apart there, and on any grid with a
+# spacing of 0.01 degrees or more the next row lies at least 0.005 degrees
+# from the pole.
+_POLE_TOL_DEG = 1e-4
+
+
 def _lat_along_dim(lat: ArrayLike | None, arr: xr.DataArray, lat_str: str) -> ArrayLike:
     """The latitudes to combine with ``arr``.
 
@@ -102,12 +109,18 @@ def _lat_along_dim(lat: ArrayLike | None, arr: xr.DataArray, lat_str: str) -> Ar
     array combined with a DataArray ``arr`` is placed along its ``lat_str``
     dimension, in order, so that it multiplies that dimension whatever the
     order of ``arr``'s dimensions; one of the wrong length raises a
-    ValueError, and so does an ``arr`` with no ``lat_str`` dimension. Anything
-    else, including any ``lat`` combined with a scalar ``arr``, is returned as
-    given.
+    ValueError, and so does an ``arr`` with no ``lat_str`` dimension. A
+    DataArray ``lat`` combined with a DataArray ``arr`` must have the same
+    coordinate as ``arr`` along every dimension they share, values and order,
+    or a ValueError is raised; xarray's default join would otherwise drop the
+    rows whose labels differ. Anything else, including any ``lat`` combined
+    with a scalar ``arr``, is returned as given.
     """
     if lat is None:
         return arr[lat_str]
+    if isinstance(lat, xr.DataArray) and isinstance(arr, xr.DataArray):
+        xr.align(lat, arr, join="exact")
+        return lat
     if isinstance(lat, np.ndarray) and lat.ndim == 1 and isinstance(arr, xr.DataArray):
         if lat_str not in arr.dims:
             raise ValueError(
@@ -129,10 +142,16 @@ def abs_ang_mom(
     """Absolute angular momentum.
 
     ``lat`` defaults to ``u``'s latitude coordinate. A one-dimensional NumPy
-    ``lat`` is taken along ``u``'s latitude dimension, in order.
+    ``lat`` is taken along ``u``'s latitude dimension, in order, and a
+    DataArray ``lat`` must have ``u``'s latitude coordinate. For a DataArray
+    ``u``, the result's dimensions are in ``u``'s order, followed by any
+    that only ``lat`` has.
     """
     coslat = cosdeg(_lat_along_dim(lat, u, lat_str))
-    return cast(xr.DataArray, radius * coslat * (rot_rate * radius * coslat + u))
+    ang_mom = radius * coslat * (rot_rate * radius * coslat + u)
+    if isinstance(u, xr.DataArray):
+        ang_mom = ang_mom.transpose(*u.dims, ...)
+    return cast(xr.DataArray, ang_mom)
 
 
 def abs_vort_vert_comp(
@@ -175,28 +194,35 @@ def rel_vort_from_u(
     """Vertical component of relative vorticity computed from zonal wind.
 
     For a zonally uniform wind, zeta = -(1/a) du/dphi + (u/a) tan(phi). The
-    latitude derivative is a centered difference inside the grid and a
-    one-sided difference at its two end rows. This form is used in place of
-    the equivalent -(1/(a cos(phi))) d(u cos(phi))/dphi because, at the end
-    rows of a grid that stops short of the poles, dividing that form's
-    one-sided difference by cos(phi) leaves an error about the size of the
-    vorticity at the pole, at any grid spacing: all of it on a grid whose end
-    rows lie half a spacing from the poles, and about 65% of it on a Gaussian
-    grid. A smooth wind has nonzero vorticity at the pole unless it vanishes
-    there faster than cos(phi). At a row at exactly 90 degrees north or south,
-    the result is unreliable in either form, since tan(phi) and 1/cos(phi)
-    evaluate there to huge finite values of either sign: magnitudes of about
-    1.6e16 for float64 latitudes and 2.3e7 for float32.
+    latitude derivative is second order at every row: a centered difference
+    inside the grid and a three-point one-sided difference at its two end
+    rows, so the latitude dimension needs at least three rows. A two-point
+    end difference would be first order on a grid that stops short of the
+    poles, such as a tropical subset.
+
+    This form is used in place of the equivalent -(1/(a cos(phi)))
+    d(u cos(phi))/dphi because, at the end rows of a grid that stops short of
+    the poles, dividing that form's two-point one-sided difference by
+    cos(phi) leaves an error about the size of the vorticity at the pole, at
+    any grid spacing: all of it on a grid whose end rows lie half a spacing
+    from the poles, and about 65% of it on a Gaussian grid. A smooth wind has
+    nonzero vorticity at the pole unless it vanishes there faster than
+    cos(phi).
+
+    Rows within 1e-4 degrees of 90 degrees north or south are NaN, since
+    tan(phi) and 1/cos(phi) evaluate there to huge finite values of either
+    sign, magnitudes of about 1.6e16 for float64 latitudes and 2.3e7 for
+    float32, so neither form gives a meaningful value.
     """
     lat = uwind[lat_str]
-    return cast(
-        xr.DataArray, (-lat_deriv(uwind, lat_str) + uwind * tandeg(lat)) / radius
-    )
+    du_dlat = np.rad2deg(uwind.differentiate(lat_str, edge_order=2))
+    rel_vort = (-du_dlat + uwind * tandeg(lat)) / radius
+    return cast(xr.DataArray, rel_vort.where(np.abs(lat) < 90.0 - _POLE_TOL_DEG))
 
 
 def ross_num_from_uwind(
     uwind: xr.DataArray,
-    lat: ArrayLike | None = None,
+    *,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
     lat_str: str = LAT_STR,
@@ -206,15 +232,12 @@ def ross_num_from_uwind(
     Traditional Rossby number definition in terms of only relative vorticity
     and the Coriolis parameter, -zeta/f, as opposed to the "3D" version
     introduced by Singh 2019. The relative vorticity zeta is that of
-    `rel_vort_from_u`, on ``uwind``'s own latitude coordinate.
-
-    ``lat`` sets the latitudes of the Coriolis parameter alone, and defaults
-    to ``uwind``'s latitude coordinate. A one-dimensional NumPy ``lat`` is
-    taken along ``uwind``'s latitude dimension, in order.
+    `rel_vort_from_u`, and both it and f are evaluated on ``uwind``'s own
+    latitude coordinate, so rows at the poles are NaN.
 
     """
     rel_vort = rel_vort_from_u(uwind, radius=radius, lat_str=lat_str)
-    coriolis = coriolis_param(_lat_along_dim(lat, uwind, lat_str), rot_rate=rot_rate)
+    coriolis = coriolis_param(uwind[lat_str], rot_rate=rot_rate)
     return cast(xr.DataArray, -rel_vort / coriolis)
 
 
@@ -222,7 +245,7 @@ def ross_num_gen(
     uwind: xr.DataArray,
     vwind: xr.DataArray,
     omega: xr.DataArray,
-    lat: ArrayLike | None = None,
+    *,
     hpa_to_pa: bool = False,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
@@ -257,12 +280,12 @@ def ross_num_gen(
     own largest abs(v) misses the levels where the flow reverses, since abs(v)
     is small at every latitude there.
 
-    ``lat`` sets the latitudes of the Coriolis parameter alone, as in
+    f is evaluated on ``uwind``'s own latitude coordinate, as in
     `ross_num_from_uwind`.
 
     """
     rel_vort = rel_vort_from_u(uwind, radius=radius, lat_str=lat_str)
-    coriolis = coriolis_param(_lat_along_dim(lat, uwind, lat_str), rot_rate=rot_rate)
+    coriolis = coriolis_param(uwind[lat_str], rot_rate=rot_rate)
     du_dp = uwind.differentiate(lev_str)
     if hpa_to_pa:
         du_dp *= 1e-2

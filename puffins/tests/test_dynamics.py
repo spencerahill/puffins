@@ -353,6 +353,64 @@ class TestAbsAngMom:
         expected = ROT_RATE_EARTH * RAD_EARTH**2 * np.cos(np.deg2rad(lats)) ** 2
         np.testing.assert_allclose(np.asarray(result), expected, rtol=1e-13)
 
+    @pytest.mark.parametrize("lat_kind", ["default", "numpy", "dataarray", "scalar"])
+    def test_result_in_u_dim_order(self, lat_kind: str) -> None:
+        """For u ordered (level, lat), every kind of lat gives (level, lat).
+
+        Master put latitude first for the default lat and kept u's order for
+        a NumPy lat.
+        """
+        uwind = _wind_fields(36, (LEV_STR, LAT_STR))[0]
+        lat = {
+            "default": None,
+            "numpy": uwind[LAT_STR].values,
+            "dataarray": uwind[LAT_STR],
+            "scalar": 45.0,
+        }[lat_kind]
+        assert abs_ang_mom(uwind, lat=lat).dims == (LEV_STR, LAT_STR)
+
+    def test_dataarray_lat_matching_coordinate(self) -> None:
+        """A DataArray lat equal to u's coordinate gives the default result."""
+        uwind = _wind_fields(36)[0]
+        result = abs_ang_mom(uwind, lat=uwind[LAT_STR].copy())
+        xr.testing.assert_identical(result, abs_ang_mom(uwind))
+
+    @pytest.mark.parametrize("kind", ["no_coordinate", "zero_dimensional"])
+    def test_dataarray_lat_values_used(self, kind: str) -> None:
+        """A DataArray lat without u's labels is used for its own values.
+
+        One with no coordinate is placed along the latitude dimension in
+        order, like a NumPy lat; a 0-d one acts as a scalar.
+        """
+        uwind = _wind_fields(36)[0]
+        if kind == "no_coordinate":
+            lat = xr.DataArray(_LAT_OFF_GRID, dims=[LAT_STR])
+            expected = abs_ang_mom(uwind, lat=_LAT_OFF_GRID)
+        else:
+            lat = xr.DataArray(60.0)
+            expected = abs_ang_mom(uwind, lat=60.0)
+        np.testing.assert_array_equal(
+            abs_ang_mom(uwind, lat=lat).values, expected.values
+        )
+
+    @pytest.mark.parametrize("mismatch", ["offset", "reversed"])
+    def test_dataarray_lat_not_matching_coordinate_raises(self, mismatch: str) -> None:
+        """A DataArray lat on other latitude labels raises.
+
+        Master joined on the labels, so latitudes offset by 1e-5 degrees,
+        as from a file storing them at another precision, gave an empty
+        result with no error.
+        """
+        uwind = _wind_fields(36)[0]
+        lats = uwind[LAT_STR].values
+        lat = (
+            _lat_dataarray(lats + 1e-5)
+            if mismatch == "offset"
+            else uwind[LAT_STR].isel({LAT_STR: slice(None, None, -1)})
+        )
+        with pytest.raises(ValueError, match="join='exact'"):
+            abs_ang_mom(uwind, lat=lat)
+
 
 # ---------------------------------------------------------------------------
 # TestAbsVortVertComp
@@ -502,6 +560,64 @@ class TestRelVortFromU:
             result.values, exact.values, rtol=0, atol=5e-4 * scale
         )
 
+    def test_second_order_end_rows_on_a_subset(self) -> None:
+        """On a grid stopping at 60 degrees, the end-row error falls 4-fold per halving.
+
+        Measured 3.88 from 1 to 0.5 degrees; a two-point end difference gives
+        2.03, first order.
+        """
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        errors = []
+        for dlat in (1.0, 0.5):
+            lat = _lat_dataarray(np.arange(-60.0 + dlat / 2, 60.0, dlat))
+            phi = np.deg2rad(lat)
+            exact = (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+            err = np.abs(
+                rel_vort_from_u(u_fn(phi).rename("uwind")).values - exact.values
+            )
+            errors.append(max(err[0], err[-1]))
+        assert errors[0] / errors[1] > 3.0
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_pole_rows_nan(self, dtype: type) -> None:
+        """Rows at exactly 90 degrees are NaN; the others match the closed form.
+
+        Float32 latitudes are included because tan(90 degrees) has the
+        opposite sign there.
+        """
+        lats: np.ndarray = np.linspace(-90.0, 90.0, 181).astype(dtype)
+        lat = xr.DataArray(lats, coords={LAT_STR: lats}, dims=[LAT_STR])
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        phi = np.deg2rad(lat.astype(np.float64))
+        uwind = u_fn(phi).rename("uwind")
+        result = rel_vort_from_u(uwind)
+        is_pole = np.abs(lats) == 90.0
+        assert is_pole.sum() == 2
+        assert np.isnan(result.values[is_pole]).all()
+        exact = ((-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH).values
+        scale = np.abs(exact[~is_pole]).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], exact[~is_pole], rtol=0, atol=5e-4 * scale
+        )
+
+    def test_rows_within_tolerance_of_a_pole_nan(self) -> None:
+        """Rows within 1e-4 degrees of a pole are NaN; one 0.01 degrees away is not.
+
+        Latitudes computed in float32 can land a few 1e-6 degrees off 90.
+        """
+        lats = np.array([-90 + 5e-5, -89.99, -60.0, 0.0, 60.0, 89.99, 90 - 5e-5])
+        uwind = _uwind_dataarray(20.0 * np.sin(2 * np.deg2rad(lats)), lats)
+        result = rel_vort_from_u(uwind)
+        np.testing.assert_array_equal(
+            np.isnan(result.values), [True, False, False, False, False, False, True]
+        )
+
+    def test_fewer_than_three_rows_raises(self) -> None:
+        """The three-point end difference needs three latitude rows."""
+        uwind = _uwind_dataarray([10.0, 12.0], [10.0, 20.0])
+        with pytest.raises(ValueError, match="at least"):
+            rel_vort_from_u(uwind)
+
 
 # ---------------------------------------------------------------------------
 # TestRossNumFromUwind
@@ -525,12 +641,17 @@ class TestRossNumFromUwind:
         result = ross_num_from_uwind(u)
         assert isinstance(result, xr.DataArray)
 
-    def test_explicit_lat(self) -> None:
-        """Works when lat is explicitly provided."""
-        lats = np.linspace(10, 80, 15)
-        u = _uwind_dataarray(np.zeros(15), lats)
-        result = ross_num_from_uwind(u, lat=lats)
-        np.testing.assert_allclose(result.values, 0.0, atol=1e-10)
+    def test_lat_argument_removed(self) -> None:
+        """``lat`` is no longer an argument; f is on uwind's own latitudes."""
+        uwind = _wind_fields(36)[0]
+        with pytest.raises(TypeError, match="lat"):
+            ross_num_from_uwind(uwind, lat=uwind[LAT_STR].values)  # type: ignore[call-arg]
+
+    def test_options_are_keyword_only(self) -> None:
+        """A positional radius raises, where it would once have bound to lat."""
+        uwind = _wind_fields(36)[0]
+        with pytest.raises(TypeError, match="positional"):
+            ross_num_from_uwind(uwind, RAD_MARS)  # type: ignore[misc]
 
     def test_matches_closed_form_with_mars_constants(self) -> None:
         """Within 4e-4 of the exact -zeta/f poleward of 5 degrees.
@@ -551,58 +672,44 @@ class TestRossNumFromUwind:
         )
 
     @pytest.mark.parametrize("nlat", [36, 17])
-    @pytest.mark.parametrize("dims", [(LAT_STR, LEV_STR), (LEV_STR, LAT_STR)])
-    def test_numpy_lat_follows_lat_dim(self, nlat: int, dims: tuple[str, str]) -> None:
-        """A NumPy lat is taken along the latitude dimension in either order.
+    def test_dimension_order_does_not_matter(self, nlat: int) -> None:
+        """(lat, level) and (level, lat) give the same values, in u's order.
 
-        Issue #124: it was multiplied along the last dimension, which raised
-        for 36 latitudes on 17 levels and gave wrong values for 17 on 17.
+        17 latitudes on 17 levels is the case where master, given a NumPy
+        lat, multiplied f along the levels with no error (issue #124).
         """
-        uwind, _, _ = _wind_fields(nlat, dims)
-        result = ross_num_from_uwind(uwind, lat=uwind[LAT_STR].values)
-        xr.testing.assert_identical(result, ross_num_from_uwind(uwind))
+        u_lat_first = _wind_fields(nlat, (LAT_STR, LEV_STR))[0]
+        u_lev_first = _wind_fields(nlat, (LEV_STR, LAT_STR))[0]
+        lat_first = ross_num_from_uwind(u_lat_first)
+        lev_first = ross_num_from_uwind(u_lev_first)
+        assert lev_first.dims == (LEV_STR, LAT_STR)
+        np.testing.assert_array_equal(lev_first.transpose(*lat_first.dims), lat_first)
 
-    @pytest.mark.parametrize("numpy_lat", [True, False])
-    def test_custom_dim_names(self, numpy_lat: bool) -> None:
-        """lat goes along ``lat_str``, whatever it is named, NumPy or default."""
+    def test_custom_dim_names(self) -> None:
+        """f and zeta are taken along ``lat_str``, whatever it is named."""
         uwind = _wind_fields(17)[0]
         renamed = uwind.rename(_CUSTOM_NAMES)
-        lat = renamed["latitude"].values if numpy_lat else None
-        result = ross_num_from_uwind(renamed, lat=lat, lat_str="latitude")
+        result = ross_num_from_uwind(renamed, lat_str="latitude")
         assert result.dims == ("latitude", "pfull")
         assert np.array_equal(result.values, ross_num_from_uwind(uwind).values)
 
-    def test_numpy_lat_of_wrong_length_raises(self) -> None:
-        """A NumPy lat of another length than the latitude dimension raises."""
-        uwind = _wind_fields(36)[0]
-        with pytest.raises(ValueError, match="conflicting dimension sizes"):
-            ross_num_from_uwind(uwind, lat=np.linspace(-87.5, 87.5, 35))
+    def test_ang_mom_conserving_wind_is_one_on_a_subset(self) -> None:
+        """Ro = 1 at every row for u = Omega a sin^2 / cos, on |lat| < 60.
 
-    def test_numpy_lat_as_long_as_levels_raises(self) -> None:
-        """17 latitudes on 36 latitudes by 17 levels raise.
-
-        Master multiplied them along the levels with no error.
+        On this 1-degree grid the largest |Ro - 1| measured was 3.9e-3. A
+        two-point end difference gave 0.068 at the end rows, and master's
+        cos(phi) form 0.0095.
         """
-        uwind = _wind_fields(36)[0]
-        with pytest.raises(ValueError, match="conflicting dimension sizes"):
-            ross_num_from_uwind(uwind, lat=np.linspace(-87.5, 87.5, 17))
-
-    def test_lat_sets_f_alone(self) -> None:
-        """-zeta/f with zeta on u's coordinate and f on a NumPy lat, in order."""
-        uwind = _wind_fields(36, (LEV_STR, LAT_STR))[0]
-        coriolis = 2 * ROT_RATE_EARTH * np.sin(np.deg2rad(_LAT_OFF_GRID))
-        zeta = rel_vort_from_u(uwind).transpose(LEV_STR, LAT_STR).values
-        result = ross_num_from_uwind(uwind, lat=_LAT_OFF_GRID)
-        np.testing.assert_allclose(
-            result.transpose(LEV_STR, LAT_STR).values, -zeta / coriolis, rtol=1e-13
+        lats = np.arange(-59.5, 60.0, 1.0)
+        phi = np.deg2rad(lats)
+        uwind = xr.DataArray(
+            ROT_RATE_EARTH * RAD_EARTH * np.sin(phi) ** 2 / np.cos(phi),
+            coords={LAT_STR: lats},
+            dims=[LAT_STR],
+            name="uwind",
         )
-
-    def test_scalar_lat(self) -> None:
-        """A scalar lat sets f at every point: f(30N) = Omega."""
-        uwind = _wind_fields(36)[0]
-        result = ross_num_from_uwind(uwind, lat=30.0)
-        expected = -rel_vort_from_u(uwind).values / ROT_RATE_EARTH
-        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+        result = ross_num_from_uwind(uwind)
+        np.testing.assert_allclose(result.values, 1.0, rtol=0, atol=5e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -705,53 +812,32 @@ class TestRossNumGen:
         np.testing.assert_allclose(vert_hpa_unflagged.values, 100.0 * vert_pa.values)
 
     @pytest.mark.parametrize("nlat", [36, 17])
-    @pytest.mark.parametrize("dims", [(LAT_STR, LEV_STR), (LEV_STR, LAT_STR)])
-    def test_numpy_lat_follows_lat_dim(self, nlat: int, dims: tuple[str, str]) -> None:
-        """A NumPy lat is taken along the latitude dimension in either order.
+    def test_dimension_order_does_not_matter(self, nlat: int) -> None:
+        """(lat, level) and (level, lat) give the same values, in u's order."""
+        lat_first = ross_num_gen(*_wind_fields(nlat, (LAT_STR, LEV_STR)))
+        lev_first = ross_num_gen(*_wind_fields(nlat, (LEV_STR, LAT_STR)))
+        assert lev_first.dims == (LEV_STR, LAT_STR)
+        np.testing.assert_array_equal(lev_first.transpose(*lat_first.dims), lat_first)
 
-        Issue #124: it was multiplied along the last dimension, which raised
-        for 36 latitudes on 17 levels and gave wrong values for 17 on 17.
-        """
-        uwind, vwind, omega = _wind_fields(nlat, dims)
-        result = ross_num_gen(uwind, vwind, omega, lat=uwind[LAT_STR].values)
-        xr.testing.assert_identical(result, ross_num_gen(uwind, vwind, omega))
-
-    @pytest.mark.parametrize("numpy_lat", [True, False])
-    def test_custom_dim_names(self, numpy_lat: bool) -> None:
-        """lat goes along ``lat_str`` and du/dlev along ``lev_str``."""
+    def test_custom_dim_names(self) -> None:
+        """f and zeta go along ``lat_str`` and du/dlev along ``lev_str``."""
         uwind, vwind, omega = _wind_fields(17)
         u_c, v_c, om_c = (x.rename(_CUSTOM_NAMES) for x in (uwind, vwind, omega))
-        result = ross_num_gen(
-            u_c,
-            v_c,
-            om_c,
-            lat=u_c["latitude"].values if numpy_lat else None,
-            lat_str="latitude",
-            lev_str="pfull",
-        )
+        result = ross_num_gen(u_c, v_c, om_c, lat_str="latitude", lev_str="pfull")
         assert result.dims == ("latitude", "pfull")
         expected = ross_num_gen(uwind, vwind, omega)
         assert np.array_equal(result.values, expected.values)
 
-    def test_numpy_lat_of_wrong_length_raises(self) -> None:
-        """A NumPy lat of another length than the latitude dimension raises."""
-        with pytest.raises(ValueError, match="conflicting dimension sizes"):
-            ross_num_gen(*_wind_fields(36), lat=np.linspace(-87.5, 87.5, 35))
-
-    def test_lat_sets_f_alone(self) -> None:
-        """(-zeta + omega (du/dp) / v) / f, with f alone on a NumPy lat.
-
-        Master also used the passed lat in the u tan(lat) term of zeta.
-        """
+    def test_lat_argument_removed(self) -> None:
+        """``lat`` is no longer an argument; f is on uwind's own latitudes."""
         uwind, vwind, omega = _wind_fields(36)
-        phi = np.deg2rad(uwind[LAT_STR].values)[:, np.newaxis]
-        du_dp = -20.0 * np.sin(2 * phi) / _P0
-        coriolis = 2 * ROT_RATE_EARTH * np.sin(np.deg2rad(_LAT_OFF_GRID))[:, None]
-        zeta = rel_vort_from_u(uwind).values
-        expected = (-zeta + omega.values * du_dp / vwind.values) / coriolis
-        result = ross_num_gen(uwind, vwind, omega, lat=_LAT_OFF_GRID)
-        scale = np.abs(expected).max()
-        np.testing.assert_allclose(result.values, expected, rtol=0, atol=1e-12 * scale)
+        with pytest.raises(TypeError, match="lat"):
+            ross_num_gen(uwind, vwind, omega, lat=uwind[LAT_STR].values)  # type: ignore[call-arg]
+
+    def test_options_are_keyword_only(self) -> None:
+        """A positional hpa_to_pa raises, where it would once have bound to lat."""
+        with pytest.raises(TypeError, match="positional"):
+            ross_num_gen(*_wind_fields(36), True)  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
