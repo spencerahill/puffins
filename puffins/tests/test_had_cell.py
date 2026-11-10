@@ -259,6 +259,36 @@ class TestMeridStreamfunc:
         # And the free version must not satisfy this, else no teeth.
         assert float(np.abs(result_free.isel({LEV_STR: -1})).max()) > 1e-3 * scale
 
+    def test_impose_zero_col_flux_with_level_below_ground(self) -> None:
+        """A level masked below ground in v, but not in dp, is left out (#82).
+
+        At the equator v is NaN at the bottom level, 800 hPa. The column mean
+        removed there is over the two levels above, so the streamfunction
+        returns to zero at 500 hPa. Averaging v over all three thicknesses left
+        a column mass flux at the equator.
+        """
+        grav, radius = 10.0, 2e6
+        v, dp, v_vals, dp_vals = self._v_dp()
+        v_masked = v.copy(deep=True)
+        v_masked.loc[{LAT_STR: 0.0, LEV_STR: 800e2}] = np.nan
+        result = merid_streamfunc(v_masked, dp, grav=grav, radius=radius)
+        v_eq, dp_eq = v_vals[2, :2], dp_vals[:2]
+        v_corr = v_eq - (v_eq * dp_eq).sum() / dp_eq.sum()
+        expected = 2.0 * np.pi * radius * np.cumsum(v_corr * dp_eq) / grav
+        at_eq = result.sel({LAT_STR: 0.0})
+        # The value at 500 hPa is zero to roundoff in both, so it is compared
+        # against the value at 200 hPa rather than against the rebuild.
+        np.testing.assert_allclose(at_eq.values[0], expected[0], rtol=1e-12)
+        assert abs(expected[1]) < 1e-12 * abs(expected[0])
+        assert abs(at_eq.values[1]) < 1e-12 * abs(at_eq.values[0])
+        assert np.isnan(at_eq.values[2])
+        # The other latitudes are as without the mask.
+        clean = merid_streamfunc(v, dp, grav=grav, radius=radius)
+        for lat in (-60.0, -30.0, 30.0, 60.0):
+            np.testing.assert_array_equal(
+                result.sel({LAT_STR: lat}).values, clean.sel({LAT_STR: lat}).values
+            )
+
     def test_zonal_mean_matches_preaveraged(self) -> None:
         v, dp, _, _ = self._v_dp()
         v_lon = xr.concat([v, v + 2.0], dim=xr.DataArray([0.0, 180.0], dims=[LON_STR]))

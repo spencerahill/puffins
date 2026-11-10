@@ -155,8 +155,16 @@ def col_avg(arr: xr.DataArray, dp: xr.DataArray, dim: str = LEV_STR) -> xr.DataA
     -------
     xarray.DataArray
         Pressure-weighted column-mean value.
+
+    Notes
+    -----
+    The average is over the levels where both ``arr`` and ``dp`` are
+    defined: a level where ``arr`` is NaN, as below ground, is left out of
+    both the integral of ``arr`` and the column's pressure thickness, so
+    ``dp`` need not be NaN at the same levels.
     """
-    return cast(xr.DataArray, int_dp_g(arr, dp, dim) / int_dp_g(1.0, dp, dim))
+    dp_defined = dp.where(arr.notnull())
+    return cast(xr.DataArray, int_dp_g(arr, dp, dim) / int_dp_g(1.0, dp_defined, dim))
 
 
 def subtract_col_avg(
@@ -168,6 +176,10 @@ def subtract_col_avg(
     and neglecting tendencies in column mass, the column integrated meridional
     mass transport should be zero at each latitude; otherwise there would be a
     build up of mass on one side.
+
+    The column average is over the levels where ``arr`` is defined (see
+    `col_avg`), so the result's mass-weighted integral over those levels is
+    zero whether or not ``dp`` is NaN at the levels where ``arr`` is.
 
     Parameters
     ----------

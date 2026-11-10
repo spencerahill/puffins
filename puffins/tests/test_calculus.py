@@ -37,6 +37,7 @@ from puffins.names import (
     LON_STR,
     SFC_AREA_STR,
 )
+from puffins.vert_coords import subtract_col_avg
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1084,6 +1085,33 @@ class TestColIntMeridFlux:
         base = col_int_merid_flux(v, arr, dp)
         reversed_ = col_int_merid_flux(-v, arr, dp)
         np.testing.assert_allclose(reversed_.values, -base.values, rtol=1e-12)
+
+    def test_mass_corrected_flux_needs_no_dp_mask(self) -> None:
+        """With v masked below ground, masking dp as well changes nothing (#82).
+
+        The bottom two of four levels are NaN in v at every other latitude,
+        as below ground, and dp is unmasked. The column mass flux of v after
+        ``subtract_col_avg`` is zero at every latitude, and the flux of
+        ``arr`` equals that computed with dp masked like v. Before #82,
+        ``subtract_col_avg`` summed the unmasked dp, which left a column mass
+        flux behind at the masked latitudes.
+        """
+        v, arr, dp = _make_flux_inputs()
+        v = v.copy()
+        v[::2, -2:] = np.nan
+        assert int(v.isnull().sum()) == 8
+        v_corr = subtract_col_avg(v, dp)
+        uncorrected = col_int_merid_flux(v, xr.ones_like(arr), dp)
+        mass_flux = col_int_merid_flux(v_corr, xr.ones_like(arr), dp)
+        scale = float(np.abs(uncorrected).max())
+        assert scale > 0
+        assert float(np.abs(mass_flux).max()) < 1e-12 * scale
+        dp_masked = dp.where(v.notnull())
+        np.testing.assert_allclose(
+            col_int_merid_flux(v_corr, arr, dp).values,
+            col_int_merid_flux(subtract_col_avg(v, dp_masked), arr, dp_masked).values,
+            rtol=1e-12,
+        )
 
     def test_lat_dim_retained_vert_dim_reduced(self) -> None:
         """Output is a function of latitude only."""
