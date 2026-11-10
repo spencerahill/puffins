@@ -99,14 +99,22 @@ def _lat_along_dim(lat: ArrayLike | None, arr: xr.DataArray, lat_str: str) -> Ar
     """The latitudes to combine with ``arr``.
 
     None gives ``arr``'s own latitude coordinate. A one-dimensional NumPy
-    array is placed along ``arr``'s latitude dimension, in order, so that it
-    multiplies that dimension whatever the order of ``arr``'s dimensions; one
-    of the wrong length raises a ValueError. Anything else is returned as
+    array combined with a DataArray ``arr`` is placed along its ``lat_str``
+    dimension, in order, so that it multiplies that dimension whatever the
+    order of ``arr``'s dimensions; one of the wrong length raises a
+    ValueError, and so does an ``arr`` with no ``lat_str`` dimension. Anything
+    else, including any ``lat`` combined with a scalar ``arr``, is returned as
     given.
     """
     if lat is None:
         return arr[lat_str]
-    if isinstance(lat, np.ndarray) and lat.ndim == 1:
+    if isinstance(lat, np.ndarray) and lat.ndim == 1 and isinstance(arr, xr.DataArray):
+        if lat_str not in arr.dims:
+            raise ValueError(
+                f"lat_str is {lat_str!r}, which is not a dimension of the field,"
+                f" whose dimensions are {arr.dims}; pass lat_str naming its"
+                " latitude dimension, along which a NumPy lat is placed"
+            )
         return xr.DataArray(lat, dims=[lat_str])
     return lat
 
@@ -169,13 +177,16 @@ def rel_vort_from_u(
     For a zonally uniform wind, zeta = -(1/a) du/dphi + (u/a) tan(phi). The
     latitude derivative is a centered difference inside the grid and a
     one-sided difference at its two end rows. This form is used in place of
-    the equivalent -(1/(a cos(phi))) d(u cos(phi))/dphi because, on a grid
-    whose end rows lie half a spacing from the poles, dividing the one-sided
-    difference by cos(phi) gives an error at those rows comparable to the
-    largest vorticity on the grid, at any grid spacing, for a wind that does
-    not vanish toward the poles. At a row at exactly 90 degrees north or
-    south, the result is unreliable in either form, since tan(phi) and
-    1/cos(phi) both reach magnitudes of about 1.6e16 there.
+    the equivalent -(1/(a cos(phi))) d(u cos(phi))/dphi because, at the end
+    rows of a grid that stops short of the poles, dividing that form's
+    one-sided difference by cos(phi) leaves an error about the size of the
+    vorticity at the pole, at any grid spacing: all of it on a grid whose end
+    rows lie half a spacing from the poles, and about 65% of it on a Gaussian
+    grid. A smooth wind has nonzero vorticity at the pole unless it vanishes
+    there faster than cos(phi). At a row at exactly 90 degrees north or south,
+    the result is unreliable in either form, since tan(phi) and 1/cos(phi)
+    evaluate there to huge finite values of either sign: magnitudes of about
+    1.6e16 for float64 latitudes and 2.3e7 for float32.
     """
     lat = uwind[lat_str]
     return cast(
@@ -226,8 +237,9 @@ def ross_num_gen(
 
     The result is (-zeta + omega (du/dlev) / v) / f, where zeta is the
     relative vorticity of `rel_vort_from_u` and du/dlev the derivative of u
-    along the ``lev_str`` coordinate. So with ``omega`` zero and ``vwind``
-    nonzero it equals `ross_num_from_uwind`.
+    along the ``lev_str`` coordinate. So with ``omega`` zero it equals
+    `ross_num_from_uwind` wherever ``vwind`` is nonzero and du/dlev is
+    finite.
 
     ``omega`` is the rate of change of the ``lev_str`` coordinate, in that
     coordinate's units per second: Pa/s for levels in Pa. For levels in hPa,
@@ -240,8 +252,10 @@ def ross_num_gen(
     the meridional flow reverses and at the cell edges, the result is
     unbounded, because the planetary advection of angular momentum, which is
     proportional to v, is the ratio's denominator. Mask such points, for
-    example where abs(v) is small compared with its largest value at that
-    level, before averaging the result.
+    example where abs(v) is small compared with its largest value over the
+    whole field, before averaging the result. A threshold set by each level's
+    own largest abs(v) misses the levels where the flow reverses, since abs(v)
+    is small at every latitude there.
 
     ``lat`` sets the latitudes of the Coriolis parameter alone, as in
     `ross_num_from_uwind`.

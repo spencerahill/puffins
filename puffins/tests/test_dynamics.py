@@ -56,8 +56,9 @@ def _cell_centered_lats(dlat: float) -> xr.DataArray:
 
 
 # Zonal winds u(phi) with their analytic derivatives du/dphi, phi in radians.
-# Neither vanishes toward the poles, where the cos(phi) form of the relative
-# vorticity divides a one-sided difference by a cosine near zero.
+# Both vanish only as fast as cos(phi) toward the poles, so both have nonzero
+# vorticity at the poles, which the cos(phi) form of the relative vorticity
+# gets wrong by about 100% at the end rows of a cell-centered grid.
 _U_PROFILES = {
     "sin2phi": (lambda phi: 20.0 * np.sin(2 * phi), lambda phi: 40.0 * np.cos(2 * phi)),
     "solid_body": (lambda phi: 30.0 * np.cos(phi), lambda phi: -30.0 * np.sin(phi)),
@@ -65,6 +66,11 @@ _U_PROFILES = {
 
 _P0 = 1e5
 _CUSTOM_NAMES = {LAT_STR: "latitude", LEV_STR: "pfull"}
+
+# Latitudes for a NumPy lat that are neither _wind_fields(36)'s coordinate
+# nor symmetric about the equator, so a lat that is label-aligned, reversed
+# or ignored changes the result.
+_LAT_OFF_GRID = np.linspace(-80.0, 85.0, 36)
 
 
 def _wind_fields(
@@ -284,6 +290,69 @@ class TestAbsAngMom:
         with pytest.raises(ValueError, match="conflicting dimension sizes"):
             abs_ang_mom(uwind, lat=np.linspace(-87.5, 87.5, 35))
 
+    def test_numpy_lat_as_long_as_levels_raises(self) -> None:
+        """17 latitudes on 36 latitudes by 17 levels raise.
+
+        Master multiplied them along the levels with no error.
+        """
+        uwind = _wind_fields(36)[0]
+        with pytest.raises(ValueError, match="conflicting dimension sizes"):
+            abs_ang_mom(uwind, lat=np.linspace(-87.5, 87.5, 17))
+
+    def test_numpy_lat_needs_a_lat_str_dim(self) -> None:
+        """A NumPy lat with a field lacking a ``lat_str`` dimension raises.
+
+        Without the check it became a new dimension, giving an outer product
+        over two latitude dimensions with no error.
+        """
+        uwind = _wind_fields(36)[0].rename(_CUSTOM_NAMES)
+        with pytest.raises(ValueError, match="not a dimension of the field"):
+            abs_ang_mom(uwind, lat=uwind["latitude"].values)
+
+    def test_known_value_with_positional_lat_mars(self) -> None:
+        """a cos(lat) (Omega a cos(lat) + u) on a NumPy lat, taken in order.
+
+        The lat is not the field's coordinate, u is nonzero away from the
+        equator, and the radius and rotation rate are Mars's.
+        """
+        uwind = _wind_fields(36, (LEV_STR, LAT_STR))[0]
+        cos = np.cos(np.deg2rad(_LAT_OFF_GRID))
+        expected = RAD_MARS * cos * (ROT_RATE_MARS * RAD_MARS * cos + uwind.values)
+        result = abs_ang_mom(
+            uwind, lat=_LAT_OFF_GRID, radius=RAD_MARS, rot_rate=ROT_RATE_MARS
+        )
+        np.testing.assert_allclose(
+            result.transpose(LEV_STR, LAT_STR).values, expected, rtol=1e-13
+        )
+
+    def test_scalar_lat(self) -> None:
+        """A scalar lat is used at every point: cos(60) = 1/2."""
+        uwind = _wind_fields(36)[0]
+        result = abs_ang_mom(uwind, lat=60.0)
+        expected = RAD_EARTH * 0.5 * (ROT_RATE_EARTH * RAD_EARTH * 0.5 + uwind.values)
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
+
+    def test_two_dimensional_numpy_lat_used_as_given(self) -> None:
+        """A NumPy lat of u's own shape multiplies element by element."""
+        uwind = _wind_fields(36)[0]
+        lat2d = np.broadcast_to(uwind[LAT_STR].values[:, None], uwind.shape).copy()
+        result = abs_ang_mom(uwind, lat=lat2d)
+        np.testing.assert_array_equal(result.values, abs_ang_mom(uwind).values)
+
+    @pytest.mark.parametrize("as_dataarray", [False, True])
+    def test_scalar_wind_with_lat_array(self, as_dataarray: bool) -> None:
+        """abs_ang_mom(0, lat=lats), the planetary angular momentum, as callers use.
+
+        A NumPy lat gives a NumPy array, as on master; a DataArray lat gives
+        a DataArray on that lat's coordinate.
+        """
+        lats = np.linspace(-90.0, 90.0, 19)
+        lat_in = _lat_dataarray(lats) if as_dataarray else lats
+        result = abs_ang_mom(0, lat=lat_in)  # type: ignore[arg-type]
+        assert isinstance(result, xr.DataArray) == as_dataarray
+        expected = ROT_RATE_EARTH * RAD_EARTH**2 * np.cos(np.deg2rad(lats)) ** 2
+        np.testing.assert_allclose(np.asarray(result), expected, rtol=1e-13)
+
 
 # ---------------------------------------------------------------------------
 # TestAbsVortVertComp
@@ -407,8 +476,9 @@ class TestRelVortFromU:
     def test_second_order_convergence_at_every_row(self) -> None:
         """The largest error falls 6.25-fold from a 2.5- to a 1-degree grid.
 
-        That is (2.5 / 1)^2, second order, end rows included. The cos(phi)
-        form's largest error, at its end rows, did not fall at all.
+        That is (2.5 / 1)^2, second order, end rows included, on this grid
+        from pole to pole. The cos(phi) form's largest error, at its end
+        rows, did not fall at all. The maximum is NumPy's, so a NaN row fails.
         """
         u_fn, du_fn = _U_PROFILES["sin2phi"]
         errors = []
@@ -416,8 +486,21 @@ class TestRelVortFromU:
             phi = np.deg2rad(_cell_centered_lats(dlat))
             exact = (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
             result = rel_vort_from_u(u_fn(phi).rename("uwind"))
-            errors.append(np.abs(result - exact).max().item())
+            errors.append(np.max(np.abs(result.values - exact.values)))
         assert errors[0] / errors[1] > 5.0
+
+    def test_descending_latitude_matches_closed_form(self) -> None:
+        """A north-to-south grid, as in ERA5, matches the exact vorticity too."""
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        lat = _cell_centered_lats(1.0).isel({LAT_STR: slice(None, None, -1)})
+        phi = np.deg2rad(lat)
+        exact = (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+        result = rel_vort_from_u(u_fn(phi).rename("uwind"))
+        assert np.array_equal(result[LAT_STR].values, lat.values)
+        scale = np.abs(exact.values).max()
+        np.testing.assert_allclose(
+            result.values, exact.values, rtol=0, atol=5e-4 * scale
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +577,32 @@ class TestRossNumFromUwind:
         uwind = _wind_fields(36)[0]
         with pytest.raises(ValueError, match="conflicting dimension sizes"):
             ross_num_from_uwind(uwind, lat=np.linspace(-87.5, 87.5, 35))
+
+    def test_numpy_lat_as_long_as_levels_raises(self) -> None:
+        """17 latitudes on 36 latitudes by 17 levels raise.
+
+        Master multiplied them along the levels with no error.
+        """
+        uwind = _wind_fields(36)[0]
+        with pytest.raises(ValueError, match="conflicting dimension sizes"):
+            ross_num_from_uwind(uwind, lat=np.linspace(-87.5, 87.5, 17))
+
+    def test_lat_sets_f_alone(self) -> None:
+        """-zeta/f with zeta on u's coordinate and f on a NumPy lat, in order."""
+        uwind = _wind_fields(36, (LEV_STR, LAT_STR))[0]
+        coriolis = 2 * ROT_RATE_EARTH * np.sin(np.deg2rad(_LAT_OFF_GRID))
+        zeta = rel_vort_from_u(uwind).transpose(LEV_STR, LAT_STR).values
+        result = ross_num_from_uwind(uwind, lat=_LAT_OFF_GRID)
+        np.testing.assert_allclose(
+            result.transpose(LEV_STR, LAT_STR).values, -zeta / coriolis, rtol=1e-13
+        )
+
+    def test_scalar_lat(self) -> None:
+        """A scalar lat sets f at every point: f(30N) = Omega."""
+        uwind = _wind_fields(36)[0]
+        result = ross_num_from_uwind(uwind, lat=30.0)
+        expected = -rel_vort_from_u(uwind).values / ROT_RATE_EARTH
+        np.testing.assert_allclose(result.values, expected, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +737,21 @@ class TestRossNumGen:
         """A NumPy lat of another length than the latitude dimension raises."""
         with pytest.raises(ValueError, match="conflicting dimension sizes"):
             ross_num_gen(*_wind_fields(36), lat=np.linspace(-87.5, 87.5, 35))
+
+    def test_lat_sets_f_alone(self) -> None:
+        """(-zeta + omega (du/dp) / v) / f, with f alone on a NumPy lat.
+
+        Master also used the passed lat in the u tan(lat) term of zeta.
+        """
+        uwind, vwind, omega = _wind_fields(36)
+        phi = np.deg2rad(uwind[LAT_STR].values)[:, np.newaxis]
+        du_dp = -20.0 * np.sin(2 * phi) / _P0
+        coriolis = 2 * ROT_RATE_EARTH * np.sin(np.deg2rad(_LAT_OFF_GRID))[:, None]
+        zeta = rel_vort_from_u(uwind).values
+        expected = (-zeta + omega.values * du_dp / vwind.values) / coriolis
+        result = ross_num_gen(uwind, vwind, omega, lat=_LAT_OFF_GRID)
+        scale = np.abs(expected).max()
+        np.testing.assert_allclose(result.values, expected, rtol=0, atol=1e-12 * scale)
 
 
 # ---------------------------------------------------------------------------
