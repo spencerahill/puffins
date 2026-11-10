@@ -354,7 +354,7 @@ def had_cells_strength(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> xr.DataArray:
     """Location and signed magnitude of both Hadley cell centers.
 
@@ -376,24 +376,33 @@ def had_cells_strength(
     30 by default, labeled by its sign; of cells equally strong, the one
     nearer the equator, then the southern one. The other is the strongest
     cell of the opposite sign centered within `max_partner_lat` degrees of
-    the equator, 60 by default, on the first one's ascending side: north of
+    the equator, 50 by default, on the first one's ascending side: north of
     a negative cell, south of a positive one. So the polar cell beyond a
     weak summer Hadley cell is not taken for it, and neither are weaker
     cells between the Hadley cells, as in a double ITCZ, nor a cell centered
-    beyond either bound. `cell_edges_sigma` labels its Hadley cells by the
-    same rule. A cell centered within `max_center_lat` and stronger than
-    both Hadley cells is taken as one; raise either bound for Hadley cells
-    centered farther poleward. A `ValueError` is raised when no cell is
-    centered within `max_center_lat`, or no latitude within
-    `max_partner_lat` lies on the first cell's ascending side.
+    beyond either bound.
 
-    A `UserWarning` is issued when no cell of the opposite sign is centered
-    within `max_partner_lat` on the first cell's ascending side, as when the
-    summer Hadley cell is missing, or when the streamfunction is signed
-    opposite to `merid_streamfunc`'s. That cell's entry is then the most
-    negative or most positive value there, which can be zero or of the wrong
-    sign. A streamfunction of the opposite sign gives wrong cells, usually
-    without the warning.
+    `cell_edges_sigma` labels its Hadley cells by the same rule, applied to
+    different cells: the regions of one sign that pass its filters, each
+    centered where its magnitude is largest. So it can leave a Hadley cell
+    unlabeled where this function finds one.
+
+    A cell centered within `max_center_lat` and stronger than both Hadley
+    cells is taken as one. So lower `max_center_lat` for narrow Hadley cells
+    beside stronger Ferrel cells centered within 30 degrees of the equator.
+    For Hadley cells centered beyond `max_center_lat`, a weaker cell within
+    it is taken as one of them; raise `max_center_lat` for those, and
+    `max_partner_lat` too if they lie beyond it. A `UserWarning` is issued
+    when the streamfunction's strongest value lies beyond `max_center_lat`
+    and is stronger than the first Hadley cell, as it is in that case. A
+    `ValueError` is raised when no cell is centered within `max_center_lat`.
+
+    When no cell of the opposite sign is centered within `max_partner_lat`
+    on the first cell's ascending side, that cell's strength, latitude and
+    level are NaN, with a `UserWarning`. This happens when the summer Hadley
+    cell is missing, and when the streamfunction is signed opposite to
+    `merid_streamfunc`'s. A streamfunction of the opposite sign gives wrong
+    cells, usually without the warning.
 
     With `do_interp_lat`, each center's latitude is interpolated between
     gridpoints. Where that fails, the center is placed at its gridpoint
@@ -410,42 +419,6 @@ def had_cells_strength(
         strmfunc = strmfunc.where(lat > min_lat, drop=True)
     if max_lat is not None:
         strmfunc = strmfunc.where(lat < max_lat, drop=True)
-
-    kwargs_hc_strength: dict[str, Any] = dict(
-        min_plev=min_plev,
-        max_plev=max_plev,
-        do_avg_vert=do_avg_vert,
-        do_interp_lat=do_interp_lat,
-        lat_str=lat_str,
-        lev_str=lev_str,
-    )
-
-    def warn_interp_failed(error: ValueError, cell: xr.DataArray) -> None:
-        warnings.warn(
-            f"Interpolating the latitude of a cell center failed ({error}), "
-            f"so the center is placed at the gridpoint {cell[lat_str].item():.4g}. "
-            "Interpolation fails, for example, when the extremum lies at the "
-            "edge of the latitudes searched or where the streamfunction is flat "
-            "in latitude, or when the streamfunction contains NaN.",
-            stacklevel=_stacklevel_outside_module(),
-        )
-
-    def signed_cell_strength(field: xr.DataArray, sign: int) -> xr.DataArray:
-        """The maximum of `field` if `sign` is 1, or its minimum if -1.
-
-        Raises ValueError when `field` has no values to search.
-        """
-        try:
-            return sign * had_cell_strength(sign * field, **kwargs_hc_strength)
-        except ValueError as err:
-            if not do_interp_lat:
-                raise
-            interp_error = err
-        cell = sign * had_cell_strength(
-            sign * field, **{**kwargs_hc_strength, "do_interp_lat": False}
-        )
-        warn_interp_failed(interp_error, cell)
-        return cell
 
     # Each cell's center is a local extremum, on the levels searched, so a
     # cell centered beyond a bound cannot be taken for one within it through
@@ -482,7 +455,14 @@ def had_cells_strength(
         try:
             return sign * _max_interp_lat(sign * sf_valid, lat_str, index)
         except ValueError as err:
-            warn_interp_failed(err, cell)
+            warnings.warn(
+                f"Interpolating the latitude of a cell center failed ({err}), so "
+                f"the center is placed at the gridpoint {cell[lat_str].item():.4g}. "
+                "Interpolation fails, for example, when the extremum lies at the "
+                "edge of the latitudes searched or where the streamfunction is "
+                "flat in latitude, or when the streamfunction contains NaN.",
+                stacklevel=_stacklevel_outside_module(),
+            )
             return cell
 
     near = is_center & (np.abs(lats_grid) <= max_center_lat)
@@ -496,6 +476,29 @@ def had_cells_strength(
     sign = 1 if values[i_first] > 0 else -1
     first = cell_at(i_first)
     lat_first = float(lats_grid[i_first])
+    if sign > 0:
+        first_name, other_name = "northern", "southern"
+    else:
+        first_name, other_name = "southern", "northern"
+    # The strongest value is a local extremum, so when it is stronger than
+    # the first cell it lies beyond max_center_lat.
+    i_strongest = tuple(
+        int(i) for i in np.unravel_index(np.argmax(np.abs(values)), values.shape)
+    )
+    if abs(values[i_strongest]) > abs(values[i_first]):
+        strongest = sf_valid[i_strongest]
+        warnings.warn(
+            f"The streamfunction's strongest value, {values[i_strongest]:.3g} at "
+            f"latitude {strongest[lat_str].item():.4g} and level "
+            f"{strongest[lev_str].item():.4g}, lies beyond "
+            f"max_center_lat={max_center_lat} and is stronger than the "
+            f"{first_name} Hadley cell identified, {values[i_first]:.3g} at "
+            f"latitude {lat_first:.4g}. If the Hadley cells are centered beyond "
+            "max_center_lat, a weaker cell within it has been taken for one of "
+            "them: raise max_center_lat, and max_partner_lat too if they lie "
+            "beyond it.",
+            stacklevel=_stacklevel_outside_module(),
+        )
     ascending = lats_grid > lat_first if sign < 0 else lats_grid < lat_first
     partners = (
         is_center
@@ -506,32 +509,20 @@ def had_cells_strength(
     if partners.any():
         other = cell_at(strongest_center(partners))
     else:
-        lat = strmfunc[lat_str]
-        side = (np.abs(lat) <= max_partner_lat) & (
-            lat > lat_first if sign < 0 else lat < lat_first
+        # A missing cell is NaN, and so are the edges that depend on it, so
+        # that one element of a series without it leaves the others measured.
+        other = xr.full_like(first, np.nan).assign_coords(
+            {lat_str: np.nan, lev_str: np.nan}
         )
-        if not bool(side.any()):
-            raise ValueError(
-                f"No latitude within max_partner_lat={max_partner_lat} lies on "
-                f"the ascending side of the cell at {lat_first:.4g}, so the "
-                "other Hadley cell cannot be sought."
-            )
-        # The masked latitudes are dropped: kept as NaN, they make the cubic
-        # interpolation under do_interp_lat return NaN at every latitude.
-        other = signed_cell_strength(strmfunc.where(side, drop=True), -sign)
-        if sign > 0:
-            missing, present = "southern", "northern"
-        else:
-            missing, present = "northern", "southern"
         warnings.warn(
-            f"No cell with the sense of circulation of the {missing} Hadley "
+            f"No cell with the sense of circulation of the {other_name} Hadley "
             f"cell, {'negative' if sign > 0 else 'positive'}, is centered within "
             f"max_partner_lat={max_partner_lat} on the ascending side of the "
-            f"{present} Hadley cell, at {lat_first:.4g}. Either the {missing} "
-            "Hadley cell is missing, or the streamfunction is signed opposite "
-            "to merid_streamfunc's, with the northern cell negative. Its entry "
-            f"is the {'most negative' if sign > 0 else 'most positive'} value "
-            f"there, {other.item():.3g}.",
+            f"{first_name} Hadley cell, at {lat_first:.4g}. Either the "
+            f"{other_name} Hadley cell is missing, or the streamfunction is "
+            "signed opposite to merid_streamfunc's, with the northern cell "
+            "negative. Its strength, latitude and level are NaN, and so is each "
+            "Hadley cell edge that depends on it.",
             stacklevel=_stacklevel_outside_module(),
         )
     cell_sh, cell_nh = (first, other) if sign < 0 else (other, first)
@@ -580,14 +571,22 @@ def had_cells_shared_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> xr.DataArray:
     """Latitude of shared inner edge of Hadley cells.
 
     Every dimension besides latitude and level, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
     the result. The Hadley cells are those `had_cells_strength` identifies,
-    with the same `max_center_lat` and `max_partner_lat`.
+    with the same `max_center_lat` and `max_partner_lat`. Where it returns
+    NaN for either cell, as when one is missing, the edge is NaN.
+
+    The edge is the zero crossing, between the two cells' centers, of the
+    streamfunction along the level nearest `fixed_plev`. Without
+    `fixed_plev`, it is that of the streamfunction averaged over the levels
+    from `min_plev` to `max_plev` with `do_avg_vert`, the profile on which
+    the cells are found, and otherwise that along the level nearest the
+    mean of the two cells' levels.
 
     """
     lat = strmfunc[lat_str]
@@ -603,13 +602,17 @@ def had_cells_shared_edge(
         max_center_lat=max_center_lat,
         max_partner_lat=max_partner_lat,
     )
+    if bool(hc_strengths[lat_str].isnull().any()):
+        return xr.DataArray(np.nan, coords={lat_str: np.nan}, name=lat_str)
     lat_sh_max = hc_strengths[lat_str][0]
     lat_nh_max = hc_strengths[lat_str][1]
 
-    if fixed_plev is None:
-        sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
-    else:
+    if fixed_plev is not None:
         sf_at_max = strmfunc.sel({lev_str: fixed_plev}, method="nearest")
+    elif do_avg_vert:
+        sf_at_max = _valid_levels(strmfunc, min_plev, max_plev, True, lev_str)
+    else:
+        sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max), drop=True)
     edge_lat = zero_cross_interp(sf_max2max, lat_str)[lat_str]
     # Drop scalar coords inherited from intermediates (e.g. the level of the
@@ -636,7 +639,7 @@ def had_cell_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> xr.DataArray | float:
     """Latitude of poleward edge of either the NH or SH Hadley cell.
 
@@ -645,7 +648,8 @@ def had_cell_edge(
     the result. Where the edge is placed at a pole, a float is returned for a
     field of latitude and level alone. The Hadley cells are those
     `had_cells_strength` identifies, with the same `max_center_lat` and
-    `max_partner_lat`.
+    `max_partner_lat`. Where it returns NaN for the cell, as when the cell
+    is missing, the edge is NaN.
 
     """
     hc_strengths = had_cells_strength(
@@ -669,11 +673,13 @@ def had_cell_edge(
 
     # Restrict to streamfunction at specified level or average of levels
     cell_max = hc_strengths.sel(cell=label)
+    if np.isnan(cell_max.item()):
+        return xr.DataArray(np.nan, coords={lat_str: np.nan}, name=lat_str)
     lat_of_max = cell_max[lat_str]
     lev_of_max = cell_max[lev_str]
 
     if do_avg_vert:
-        sf_at_max = strmfunc.sel({lev_str: slice(min_plev, max_plev)}).mean(lev_str)
+        sf_at_max = _valid_levels(strmfunc, min_plev, max_plev, True, lev_str)
     else:
         if fixed_plev is None:
             lev_for_edges = float(lev_of_max)
@@ -759,14 +765,15 @@ def had_cells_south_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> xr.DataArray | float:
     """Latitude of southern edge of southern Hadley cell.
 
     Every dimension besides latitude and level, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
     the result. The Hadley cells are those `had_cells_strength` identifies,
-    with the same `max_center_lat` and `max_partner_lat`.
+    with the same `max_center_lat` and `max_partner_lat`. Where it returns
+    NaN for the cell, as when the cell is missing, the edge is NaN.
 
     """
     return had_cell_edge(
@@ -802,14 +809,15 @@ def had_cells_north_edge(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> xr.DataArray | float:
     """Latitude of northern edge of northern Hadley cell.
 
     Every dimension besides latitude and level, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
     the result. The Hadley cells are those `had_cells_strength` identifies,
-    with the same `max_center_lat` and `max_partner_lat`.
+    with the same `max_center_lat` and `max_partner_lat`. Where it returns
+    NaN for the cell, as when the cell is missing, the edge is NaN.
 
     """
     return had_cell_edge(
@@ -844,7 +852,7 @@ def had_cells_edges(
     lat_str: str = LAT_STR,
     lev_str: str = LEV_STR,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
 ) -> list[xr.DataArray | float]:
     """Southern, shared inner, and northern edge of the Hadley cells.
 
@@ -852,7 +860,8 @@ def had_cells_edges(
     ensemble member, is handled separately at each of its values and kept in
     each of the three results. The Hadley cells are those
     `had_cells_strength` identifies, with the same `max_center_lat` and
-    `max_partner_lat`.
+    `max_partner_lat`. Where it returns NaN for one cell, as when one is
+    missing, that cell's outer edge and the shared edge are NaN.
 
     """
     # Kwargs common to all three edge functions. `frac_thresh` and
@@ -1052,7 +1061,7 @@ def cell_edges_sigma(
     center_max_sigma: float = 1,
     cell_min_sigma_depth: float = 0.3,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
     min_frac_strength: float = 0.05,
     max_cells_per_sign: int = 4,
     lat_str: str = LAT_STR,
@@ -1118,22 +1127,29 @@ def cell_edges_sigma(
     `max_center_lat` degrees of the equator, 30 by default; of cells equally
     strong, the one nearer the equator, then the southern one. The other is
     the strongest cell of the opposite sign whose maximum lies within
-    `max_partner_lat` degrees of the equator, 60 by default, on the first
+    `max_partner_lat` degrees of the equator, 50 by default, on the first
     one's ascending side: north of a negative cell, south of a positive one.
     So weaker cells between the Hadley cells, as in a double ITCZ, take no
     Hadley label, and neither does the polar cell beyond a weak summer
-    Hadley cell. `had_cells_strength` identifies the Hadley cells by the
-    same rule. Every other cell is labeled by its position among the cells
+    Hadley cell. Every other cell is labeled by its position among the cells
     returned, as a string counting from "0" in the south.
+
+    `had_cells_strength` identifies the Hadley cells by the same rule,
+    applied to different cells: the local extrema of the streamfunction.
+    So a Hadley cell it finds can be left unlabeled here, as when that cell
+    has been dropped by one of the filters above.
 
     Where no cell of the opposite sign lies within `max_partner_lat` on the
     ascending side, as when the summer Hadley cell is missing or has been
     dropped, only one cell takes a Hadley label, and where no cell lies
     within `max_center_lat`, none does. A cell centered within
     `max_center_lat` and stronger than both Hadley cells takes a Hadley
-    label; raise either bound for Hadley cells centered farther poleward. A
-    streamfunction of the opposite sign gets wrong labels, without a
-    warning.
+    label. So lower `max_center_lat` for narrow Hadley cells beside stronger
+    Ferrel cells centered within 30 degrees of the equator. For Hadley cells
+    centered beyond `max_center_lat`, a weaker cell within it takes a Hadley
+    label; raise `max_center_lat` for those, and `max_partner_lat` too if
+    they lie beyond it. A streamfunction of the opposite sign gets wrong
+    labels, without a warning.
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
@@ -1597,7 +1613,7 @@ def _hadley_ferrel_cells(
     min_frac_strength: float = 0.05,
     max_cells_per_sign: int = 4,
     max_center_lat: float = 30,
-    max_partner_lat: float = 60,
+    max_partner_lat: float = 50,
     lat_str: str = LAT_STR,
     sigma_str: str = SIGMA_STR,
 ) -> xr.DataArray:
