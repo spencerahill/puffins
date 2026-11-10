@@ -2,6 +2,7 @@
 
 import warnings
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
@@ -255,6 +256,78 @@ class TestIntDpG:
         np.testing.assert_allclose(
             int_dp_g(1.0, dp).values, np.array([600.0, 400.0, np.nan]) / GRAV_EARTH
         )
+
+    def test_return_count(self) -> None:
+        """return_count also gives the levels integrated in each column (#72).
+
+        Four columns of three levels: all defined; arr NaN at the middle
+        level, as below ground; arr NaN at every level; and dp NaN at the
+        middle level where arr is defined. A level counts only where
+        arr * dp is defined, so the counts are 3, 2, 0 and 2, and the
+        integrals are those without return_count.
+        """
+        plev = [1e4, 5e4, 9e4]
+        col = ("col", [10, 20, 30, 40], {"long_name": "column"})
+        coords = {LEV_STR: plev, "col": col, "time": 0}
+        dp = xr.DataArray(
+            [[100.0, 200.0, 300.0]] * 3 + [[100.0, np.nan, 300.0]],
+            dims=["col", LEV_STR],
+            coords=coords,
+        )
+        vals = [[1.0, 2.0, 3.0], [1.0, np.nan, 3.0], [np.nan] * 3, [1.0, 2.0, 3.0]]
+        arr = xr.DataArray(
+            vals,
+            dims=["col", LEV_STR],
+            coords=coords,
+            name="arr",
+            attrs={"units": "K"},
+        )
+        integral, count = int_dp_g(arr, dp, return_count=True)
+        # The count keeps the columns' coordinates and their attributes, and
+        # is named for itself, without the field's attributes.
+        expected_count = xr.DataArray(
+            [3, 2, 0, 2],
+            dims=["col"],
+            coords={"col": col, "time": 0},
+            name="num_levels",
+        )
+        xr.testing.assert_identical(count, expected_count)
+        assert count.dtype.kind == "i"
+        np.testing.assert_allclose(
+            integral.values,
+            np.array([1400.0, 1000.0, np.nan, 1000.0]) / GRAV_EARTH,
+        )
+        xr.testing.assert_identical(integral, int_dp_g(arr, dp))
+        alone = int_dp_g(arr, dp, return_count=False)
+        assert isinstance(alone, xr.DataArray)
+        xr.testing.assert_identical(alone, integral)
+        # A scalar arr counts the levels where dp is defined, and the count
+        # is not named for dp.
+        _, count_dp = int_dp_g(1.0, dp.rename("dp"), return_count=True)
+        assert count_dp.values.tolist() == [3, 3, 3, 2]
+        assert count_dp.name == "num_levels"
+        # A 1-D dp, as from dp_from_pfull, broadcast against the columns.
+        _, count_1d = int_dp_g(arr, dp.isel(col=0, drop=True), return_count=True)
+        assert count_1d.values.tolist() == [3, 2, 0, 3]
+        # An infinite value is not NaN, so its level counts, and the
+        # integral is infinite.
+        inf_integral, inf_count = int_dp_g(
+            arr.where(arr != 2.0, np.inf), dp, return_count=True
+        )
+        assert inf_count.values.tolist() == [3, 2, 0, 2]
+        assert np.isinf(inf_integral.values[0])
+        # return_count is keyword-only.
+        positional: tuple[Any, ...] = (LEV_STR, GRAV_EARTH, True)
+        with pytest.raises(TypeError):
+            int_dp_g(arr, dp, *positional)
+        # A vertical dimension of another name.
+        _, count_lev = int_dp_g(
+            arr.rename({LEV_STR: "lev"}),
+            dp.rename({LEV_STR: "lev"}),
+            dim="lev",
+            return_count=True,
+        )
+        assert count_lev.values.tolist() == [3, 2, 0, 2]
 
 
 # ---------------------------------------------------------------------------

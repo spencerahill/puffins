@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import operator
 import warnings
-from typing import cast, overload
+from typing import Literal, cast, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -68,17 +68,46 @@ def to_pascal(arr: ArrayLike, is_dp: bool = False, warn: bool = False) -> ArrayL
     return arr
 
 
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: Literal[False] = ...,
+) -> xr.DataArray: ...
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: Literal[True],
+) -> tuple[xr.DataArray, xr.DataArray]: ...
+@overload
+def int_dp_g(
+    arr: ArrayLike,
+    dp: xr.DataArray,
+    dim: str = ...,
+    grav: float = ...,
+    *,
+    return_count: bool,
+) -> xr.DataArray | tuple[xr.DataArray, xr.DataArray]: ...
 def int_dp_g(
     arr: ArrayLike,
     dp: xr.DataArray,
     dim: str = LEV_STR,
     grav: float = GRAV_EARTH,
-) -> xr.DataArray:
+    *,
+    return_count: bool = False,
+) -> xr.DataArray | tuple[xr.DataArray, xr.DataArray]:
     """Mass-weighted vertical integral: sum(arr * dp) / g.
 
     Parameters
     ----------
-    arr : xarray.DataArray
+    arr : xarray.DataArray, numpy.ndarray or scalar
         Field to integrate.
     dp : xarray.DataArray
         Pressure thickness of each level (Pa).
@@ -86,11 +115,18 @@ def int_dp_g(
         Name of the vertical dimension. Default: 'plev'.
     grav : float, optional
         Gravitational acceleration (m/s^2). Default: Earth.
+    return_count : bool, optional
+        If True, also return the number of levels integrated in each column.
+        Default: False.
 
     Returns
     -------
     xarray.DataArray
         Vertically integrated field.
+    xarray.DataArray
+        Only with `return_count`: the number of levels in each column where
+        ``arr * dp`` is not NaN, which are the levels the integral covers,
+        named "num_levels" and without the field's attributes.
 
     Notes
     -----
@@ -101,9 +137,26 @@ def int_dp_g(
     ground, which contains no mass; when integrating over a layer above the
     surface, set to 0 the columns whose surface pressure is lower than the
     layer's top pressure.
+
+    The integral itself does not say how many levels a column lost, so a NaN
+    that is not below ground, as from a corrupt value or a missing level,
+    looks the same as topography.  The count from `return_count` tells them
+    apart, compared with a count that depends on how the levels below ground
+    are marked.  Where `arr` is NaN at every level below ground, compare it
+    with the number of levels above ground in each column, from the surface
+    pressure.  Where `arr` is NaN below ground only where `dp` is NaN too, or
+    is defined below ground, as when extrapolated there, compare it with the
+    count from ``int_dp_g(1.0, dp, return_count=True)``.  Either way, a
+    smaller count marks a column that lost levels to NaN in `arr`.  The count
+    says how many levels a column lost, and ``(arr * dp).notnull()`` says
+    which.
     """
     weighted = cast(xr.DataArray, arr * dp)
-    return cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
+    integral = cast(xr.DataArray, weighted.sum(dim=dim, min_count=1) / grav)
+    if not return_count:
+        return integral
+    count = weighted.notnull().sum(dim=dim).rename("num_levels")
+    return integral, count.drop_attrs(deep=False)
 
 
 def int_dlogp(
