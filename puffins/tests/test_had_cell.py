@@ -141,6 +141,28 @@ _SH_WINTER_CELLS = [
 # latitude, with its sign reversed, as the sense of circulation reverses.
 _NH_WINTER_CELLS = [(-peak, -center, width) for peak, center, width in _SH_WINTER_CELLS]
 
+# The start of had_cells_strength's warning that the streamfunction's
+# strongest value lies beyond max_center_lat.
+_STRONGER_BEYOND = "The streamfunction's strongest value"
+
+# The northern-winter cells of #134 besides the southern summer and polar
+# cells: a winter Hadley cell of 1.8e11 at 8N, Ferrel cells at 48S and 45N,
+# and a northern polar cell at 73N.
+_WINTER_CELLS_134 = [
+    (1.8e11, 8.0, 26.0),
+    (2e10, -48.0, 12.0),
+    (-4e10, 45.0, 13.0),
+    (1e10, 73.0, 10.0),
+]
+
+
+def _assert_missing(result: xr.DataArray, cell: str) -> None:
+    """Assert that `cell` of a had_cells_strength result is NaN, as a missing cell."""
+    missing = result.sel(cell=cell)
+    assert np.isnan(missing.item())
+    assert np.isnan(missing[LAT_STR].item())
+    assert np.isnan(missing[LEV_STR].item())
+
 
 def _issue_112_streamfunc(i_north: int = 25) -> xr.DataArray:
     """The reproducer of issue #112.
@@ -606,8 +628,9 @@ class TestHadCellsStrength:
         assert nh[LEV_STR].item() == 550.0
 
     def test_stronger_ferrel_cell_not_selected(self) -> None:
-        # A "Ferrel" cell stronger than either Hadley cell must lose to
-        # the two cells nearest the equator.
+        # A "Ferrel" cell stronger than either Hadley cell, centered at 45N,
+        # beyond max_center_lat, must lose to the two cells nearest the
+        # equator, with the warning that a stronger value lies beyond it.
         sf = _two_cell_streamfunc()
         lat = sf[LAT_STR]
         plev = sf[LEV_STR]
@@ -618,7 +641,8 @@ class TestHadCellsStrength:
         )
         vert = np.sin(np.pi * (plev - 100.0) / 900.0)
         sf_with_ferrel = sf - 2e11 * vert * merid_ferrel
-        result = had_cells_strength(sf_with_ferrel)
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf_with_ferrel)
         assert result.sel(cell="had_cell_sh")[LAT_STR].item() == -15.0
         assert result.sel(cell="had_cell_nh")[LAT_STR].item() == 15.0
         assert result.sel(cell="had_cell_sh").item() == pytest.approx(-1e11)
@@ -635,12 +659,16 @@ class TestHadCellsStrength:
         assert sh.item() == pytest.approx(-1e11 * np.sin(np.pi * 11.0 / 30.0))
         assert nh.item() == pytest.approx(1e11 * np.sin(np.pi * 9.0 / 30.0))
 
-    def test_custom_dim_names(self) -> None:
+    @pytest.mark.parametrize("do_interp_lat", [False, True])
+    def test_custom_dim_names(self, do_interp_lat: bool) -> None:
         sf = _two_cell_streamfunc().rename({LAT_STR: "latitude", LEV_STR: "pressure"})
-        result = had_cells_strength(sf, lat_str="latitude", lev_str="pressure")
-        assert result.sel(cell="had_cell_sh")["latitude"].item() == -15.0
-        assert result.sel(cell="had_cell_nh")["latitude"].item() == 15.0
-        assert result.sel(cell="had_cell_nh")["pressure"].item() == 550.0
+        result = had_cells_strength(
+            sf, lat_str="latitude", lev_str="pressure", do_interp_lat=do_interp_lat
+        )
+        sh, nh = result.sel(cell="had_cell_sh"), result.sel(cell="had_cell_nh")
+        assert sh["latitude"].item() == pytest.approx(-15.0, abs=1e-9)
+        assert nh["latitude"].item() == pytest.approx(15.0, abs=1e-9)
+        assert nh["pressure"].item() == 550.0
 
     def test_symmetric_min_max_lat(self) -> None:
         # Symmetric bounds leave exactly two candidates, at mirrored
@@ -663,9 +691,12 @@ class TestHadCellsStrength:
     def test_winter_ferrel_stronger_than_summer_hadley(
         self, cells: list[tuple[float, float, float]], lat_sh: float, lat_nh: float
     ) -> None:
-        # The winter Ferrel cell is a global extremum, and it and the polar
-        # cell beside it are a pair of the Hadley cells' senses. The Hadley
-        # cells are the pair containing the cell nearest the equator.
+        # The winter Ferrel cell, centered at 45 degrees, is stronger than the
+        # summer Hadley cell, and it and the polar cell poleward of it have
+        # the Hadley cells' senses. The winter Hadley cell is the strongest
+        # cell centered within max_center_lat, and the summer Hadley cell,
+        # the only cell of the opposite sign on its ascending side within
+        # max_partner_lat, is its partner.
         sf = _bump_cells_streamfunc(cells)
         peaks = {center: peak for peak, center, _ in cells}
         result = had_cells_strength(sf)
@@ -725,7 +756,7 @@ class TestHadCellsStrength:
 
     def test_one_cell_warns(self) -> None:
         # A lone positive cell is the northern Hadley cell. With no southern
-        # cell, the southern entry is not negative, and a warning is issued.
+        # cell, the southern entry is NaN, and a warning is issued.
         sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0)])
         with pytest.warns(UserWarning, match="sense of circulation"):
             result = had_cells_strength(sf)
@@ -733,15 +764,15 @@ class TestHadCellsStrength:
         assert nh[LAT_STR].item() == 10.0
         assert nh[LEV_STR].item() == 550.0
         assert nh.item() == pytest.approx(1e11)
-        assert result.sel(cell="had_cell_sh").item() >= 0.0
+        _assert_missing(result, "had_cell_sh")
 
     def test_missing_summer_cell(self) -> None:
         # A northern-winter field with no southern Hadley cell, and northern
-        # Ferrel and polar cells close together. Those two are the only pair
-        # of the Hadley cells' senses, but the pair containing the center
-        # nearest the equator is the northern Hadley cell with no partner,
-        # so the northern cell is identified, the southern entry is not
-        # negative, and a warning is issued.
+        # Ferrel and polar cells close together, a negative cell south of a
+        # positive one, as the Hadley cells are. The northern Hadley cell is
+        # the strongest cell centered within max_center_lat, and no negative
+        # cell is centered south of it, so the southern entry is NaN, with a
+        # warning, and the Ferrel and polar cells are not taken.
         sf = _bump_cells_streamfunc(
             [(2e11, 5.0, 25.0), (-0.6e11, 36.0, 6.0), (0.2e11, 48.0, 6.0)]
         )
@@ -750,7 +781,7 @@ class TestHadCellsStrength:
         nh = result.sel(cell="had_cell_nh")
         assert nh[LAT_STR].item() == 5.0
         assert nh.item() == pytest.approx(2e11)
-        assert result.sel(cell="had_cell_sh").item() >= 0.0
+        _assert_missing(result, "had_cell_sh")
 
     @pytest.mark.parametrize(
         ("sf", "expected"),
@@ -793,14 +824,13 @@ class TestHadCellsStrength:
     def test_do_interp_lat(
         self, sf: xr.DataArray, expected: list[tuple[float, float]]
     ) -> None:
-        # With do_interp_lat, each candidate's latitude is interpolated, and
-        # the searches for each extremum's partner must still find the cells
-        # on either side. Each cell is symmetric about its center, so the
-        # interpolated center is the cell's center. In the last field the
-        # southern cell is centered between gridpoints, and is the partner
-        # found south of the global maximum, so its interpolated center
-        # requires the search for that partner to interpolate. Every search
-        # interpolates successfully, so none falls back on its gridpoint.
+        # With do_interp_lat, each cell's latitude is interpolated, and the
+        # cells must be those found without it. Each cell is symmetric about
+        # its center, so the interpolated center is the cell's center. In the
+        # last field the southern cell is centered between gridpoints, at
+        # 25.5S, and is the partner of the northern cell, so its interpolated
+        # center requires the partner's latitude to be interpolated too.
+        # Every interpolation succeeds, so none falls back on its gridpoint.
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "error", message="Interpolating the latitude", category=UserWarning
@@ -852,23 +882,24 @@ class TestHadCellsStrength:
         self, max_lat: float | None
     ) -> None:
         # min_lat excludes the northern-winter field's summer cell at 25S, so
-        # no negative value lies south of the winter cell. With interpolation,
-        # as without it, the southern entry is not negative and the warning
-        # for a missing cell is issued. The southern entry is zero along the
-        # top level, where interpolation fails, so it is placed at its
-        # gridpoint, with the other warning.
+        # no negative cell is centered south of the winter cell. With
+        # interpolation, as without it, the southern entry is NaN, with the
+        # warning for a missing cell and no other: the winter cell's center
+        # is interpolated, and the missing cell's is not sought.
         sf = _bump_cells_streamfunc(_NH_WINTER_CELLS)
-        with pytest.warns(UserWarning) as record:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
             result = had_cells_strength(
                 sf, min_lat=-12.0, max_lat=max_lat, do_interp_lat=True
             )
-        messages = [str(w.message) for w in record]
-        assert any("sense of circulation" in m for m in messages)
-        assert any("Interpolating the latitude" in m for m in messages)
+        assert len(record) == 1
+        assert str(record[0].message).startswith(
+            "No cell with the sense of circulation of the southern Hadley"
+        )
         nh = result.sel(cell="had_cell_nh")
         assert nh[LAT_STR].item() == pytest.approx(5.0, abs=1e-6)
         assert nh.item() == pytest.approx(2e11, rel=1e-3)
-        assert result.sel(cell="had_cell_sh").item() >= 0.0
+        _assert_missing(result, "had_cell_sh")
 
     @pytest.mark.parametrize(
         ("peak", "center", "present", "missing"),
@@ -881,21 +912,19 @@ class TestHadCellsStrength:
     def test_do_interp_lat_one_cell_warns(
         self, peak: float, center: float, present: str, missing: str
     ) -> None:
-        # A lone cell's field is zero along the top level, where the global
-        # extremum of the missing cell's sign lies, so the latitude
-        # derivative there has no zero crossing to interpolate. That
-        # extremum is placed at its gridpoint, and the missing cell is
-        # flagged as it is without interpolation.
+        # Under interpolation, a lone cell's center is interpolated, and the
+        # missing cell is NaN, with the warning it has without interpolation
+        # and no other.
         sf = _bump_cells_streamfunc([(peak, center, 30.0)])
-        with pytest.warns(UserWarning) as record:
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
             result = had_cells_strength(sf, do_interp_lat=True)
-        messages = [str(w.message) for w in record]
-        assert any("sense of circulation" in m for m in messages)
-        assert any("Interpolating the latitude" in m for m in messages)
+        assert len(record) == 1
+        assert str(record[0].message).startswith("No cell with the sense of")
         cell = result.sel(cell=present)
         assert cell[LAT_STR].item() == pytest.approx(center, abs=1e-6)
         assert cell.item() == pytest.approx(peak, rel=1e-3)
-        assert result.sel(cell=missing).item() * peak <= 0.0
+        _assert_missing(result, missing)
 
     @pytest.mark.parametrize("do_avg_vert", [True, False], ids=["avg_vert", "levels"])
     @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
@@ -935,7 +964,7 @@ class TestHadCellsStrength:
         [
             (150.0, {"min_plev": 300.0}, 1),
             (950.0, {"max_plev": 900.0}, 1),
-            (150.0, {"do_avg_vert": True}, 2),
+            (150.0, {"do_avg_vert": True}, 1),
         ],
         ids=["min_plev", "max_plev", "do_avg_vert"],
     )
@@ -945,10 +974,10 @@ class TestHadCellsStrength:
         # A spike of -5e11 at 25S, the summer cell's center and the last
         # latitude inside min_lat, at a level the option excludes or averages
         # over. Under interpolation that cell's center falls back on its
-        # gridpoint, and the fallback search must receive the option too.
-        # Only the searches that find that cell fall back: the search south
-        # of the global maximum, and with do_avg_vert, which makes that cell
-        # the global minimum, the search for the global minimum too.
+        # gridpoint, and the fallback must take the option into account too.
+        # Each cell is measured once, so only the summer cell falls back,
+        # once. With do_avg_vert, the search for the global minimum used to
+        # find that cell a second time.
         sf = _bump_cells_streamfunc(_NH_WINTER_CELLS).copy(deep=True)
         sf.loc[{LAT_STR: -25.0, LEV_STR: plev_spike}] = -5e11
         spike = had_cells_strength(sf, min_lat=-25.5).sel(cell="had_cell_sh")
@@ -964,21 +993,40 @@ class TestHadCellsStrength:
         assert sh[LAT_STR].item() == sh_expected[LAT_STR].item() == -25.0
         assert sh[LEV_STR].item() == sh_expected[LEV_STR].item()
 
-    def test_no_pair_raises(self) -> None:
-        # A field decreasing northward at every level has its maximum at the
-        # southernmost latitude and its minimum at the northernmost, so no
-        # cell lies south of the one or north of the other.
+    def test_no_cell_near_the_equator_raises(self) -> None:
+        # A field decreasing northward at every level has its only local
+        # extrema at the southernmost and northernmost latitudes, so no cell
+        # is centered within max_center_lat.
         two_cell = _two_cell_streamfunc()
         sf = -two_cell[LAT_STR] * xr.ones_like(two_cell)
-        with pytest.raises(ValueError, match="no pair of cells"):
+        with pytest.raises(ValueError, match="No cell is centered within"):
             had_cells_strength(sf)
+
+    def test_no_latitude_on_the_ascending_side(self) -> None:
+        # Trimmed north of 14N, the field's first latitude is the northern
+        # cell's maximum, so nothing lies on its ascending side, to the
+        # south, and the southern entry is NaN, with the warning.
+        with pytest.warns(
+            UserWarning, match="ascending side of the northern Hadley cell, at 15"
+        ):
+            result = had_cells_strength(_two_cell_streamfunc(), min_lat=14.0)
+        assert result.sel(cell="had_cell_nh")[LAT_STR].item() == 15.0
+        _assert_missing(result, "had_cell_sh")
 
     def test_opposite_sign_two_cell_field_warns(self) -> None:
         # A two-cell streamfunction signed opposite to merid_streamfunc's,
-        # with the northern cell negative, has no pair of the expected
-        # senses. A field with Ferrel cells has one, and is not flagged.
-        with pytest.warns(UserWarning, match="sense of circulation"):
-            had_cells_strength(-_two_cell_streamfunc())
+        # with the northern cell negative. The two cells tie, so the first
+        # Hadley cell is the southern one, positive and so labeled northern,
+        # and with no negative cell south of it, the southern entry is NaN,
+        # with the warning. A field with Ferrel cells of the opposite sign
+        # has such a cell, and is not flagged.
+        with pytest.warns(
+            UserWarning,
+            match="southern Hadley cell, negative, .* northern Hadley cell, at -15",
+        ):
+            result = had_cells_strength(-_two_cell_streamfunc())
+        assert result.sel(cell="had_cell_nh").item() == pytest.approx(1e11)
+        _assert_missing(result, "had_cell_sh")
 
     @pytest.mark.parametrize(
         "sf",
@@ -992,18 +1040,13 @@ class TestHadCellsStrength:
     )
     def test_no_warning_when_both_cells_exist(self, sf: xr.DataArray) -> None:
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "error",
-                message="The cells chosen as the Hadley cells",
-                category=UserWarning,
-            )
+            warnings.simplefilter("error", UserWarning)
             had_cells_strength(sf)
 
     def test_lone_southern_cell_warns(self) -> None:
         # The mirror image of test_one_cell_warns. A lone negative cell is
-        # the southern Hadley cell. The global maximum is zero at the
-        # southernmost latitude, so only the pair built on the global minimum
-        # exists, and its northern entry is not positive.
+        # the southern Hadley cell, and with no positive cell north of it,
+        # the northern entry is NaN, with a warning.
         sf = _bump_cells_streamfunc([(-1e11, -10.0, 30.0)])
         with pytest.warns(UserWarning, match="sense of circulation"):
             result = had_cells_strength(sf)
@@ -1011,14 +1054,14 @@ class TestHadCellsStrength:
         assert sh[LAT_STR].item() == -10.0
         assert sh[LEV_STR].item() == 550.0
         assert sh.item() == pytest.approx(-1e11)
-        assert result.sel(cell="had_cell_nh").item() <= 0.0
+        _assert_missing(result, "had_cell_nh")
 
-    def test_pair_measured_by_its_center_nearest_the_equator(self) -> None:
+    def test_stronger_cell_on_the_descending_side_not_paired(self) -> None:
         # A southern-winter field whose southern Hadley cell is centered at
-        # 2S and whose northern Hadley cell lies far north, at 35N. The other
-        # candidate pair, the southern polar and Ferrel cells, has its
-        # northern member nearer the equator (30S) than the Hadley pair's
-        # northern member, but its center nearest the equator is farther.
+        # 2S and whose northern Hadley cell lies far north, at 35N. The
+        # southern Ferrel cell, centered at 30S, is positive and stronger
+        # than the northern Hadley cell, but it lies south of the southern
+        # Hadley cell, on its descending side, so it is not its partner.
         sf = _bump_cells_streamfunc(
             [
                 (-2e11, -2.0, 20.0),
@@ -1068,10 +1111,10 @@ class TestHadCellsStrength:
     ) -> None:
         # Single-gridpoint spikes at 2S (negative) and 2N (positive), at a
         # level the option excludes or averages away, each five times the
-        # Hadley cells' peak. Without the option they are the global extrema.
-        # With it, any of the four extremum searches that did not receive the
-        # option would return a spike, nearer the equator than the Hadley
-        # cells, and the pair containing it would be chosen.
+        # Hadley cells' peak. Without the option they are the global extrema,
+        # and are taken for the Hadley cells. With it, the search for the
+        # cells must exclude or average away the spikes' level, or a spike
+        # would be taken for a Hadley cell again.
         sf = _two_cell_streamfunc().copy(deep=True)
         sf.loc[{LAT_STR: -2.0, LEV_STR: plev_spike}] = -5e11
         sf.loc[{LAT_STR: 2.0, LEV_STR: plev_spike}] = 5e11
@@ -1082,10 +1125,12 @@ class TestHadCellsStrength:
         assert result[LEV_STR].values.tolist() == pytest.approx([level, level])
 
     def test_stronger_ferrel_polar_pair_not_selected(self) -> None:
-        # The northern Ferrel and polar cells (2e11 and 0.5e11) together
-        # outweigh the two Hadley cells (1e11 each), and both pairs have the
-        # expected senses, but the Hadley cells are the pair containing the
-        # center nearest the equator.
+        # The northern Ferrel cell, of -2e11 at 45N, is stronger than the two
+        # Hadley cells of 1e11, and the polar cell north of it, of 0.5e11 at
+        # 72N, is positive, so the two are a negative cell south of a
+        # positive one, as the Hadley cells are. Centered beyond
+        # max_center_lat, the Ferrel cell is not taken for a Hadley cell,
+        # with the warning that a stronger value lies beyond max_center_lat.
         sf = _bump_cells_streamfunc(
             [
                 (-1e11, -15.0, 15.0),
@@ -1094,7 +1139,8 @@ class TestHadCellsStrength:
                 (0.5e11, 72.0, 9.0),
             ]
         )
-        result = had_cells_strength(sf)
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf)
         assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
         assert result.values.tolist() == pytest.approx([-1e11, 1e11])
 
@@ -1107,6 +1153,311 @@ class TestHadCellsStrength:
         assert had_cells_strength(sf)[LAT_STR].values.tolist() == [-15.0, 15.0]
         with pytest.raises(xr.MergeError):
             had_cells_strength(sf, compat="equals")
+
+    @pytest.mark.parametrize(
+        ("southern", "lat_sh", "strength_sh"),
+        [
+            ([(-3e10, -24.0, 10.0), (-5e9, -74.0, 9.0)], -24.0, -3e10),
+            ([(-3e9, -24.0, 10.0), (-1e10, -74.0, 9.0)], -24.0, -3e9),
+            ([(-1e10, -74.0, 9.0)], None, None),
+        ],
+        ids=["summer_cell", "weak_summer_cell", "no_summer_cell"],
+    )
+    def test_polar_cell_not_taken_for_the_summer_cell(
+        self,
+        southern: list[tuple[float, float, float]],
+        lat_sh: float | None,
+        strength_sh: float | None,
+    ) -> None:
+        # The northern-winter fields of #134: a winter Hadley cell of 1.8e11
+        # at 8N, Ferrel cells at 48S and 45N, a northern polar cell at 73N,
+        # and a southern summer Hadley cell at 24S, weaker than the southern
+        # polar cell at 74S in the second field and missing in the third. The
+        # polar cell, centered beyond max_partner_lat, used to be returned as
+        # the summer cell in the second and third. With no summer cell, the
+        # southern entry is NaN, with a warning.
+        sf = _bump_cells_streamfunc(
+            [
+                (1.8e11, 8.0, 26.0),
+                (2e10, -48.0, 12.0),
+                (-4e10, 45.0, 13.0),
+                (1e10, 73.0, 10.0),
+                *southern,
+            ]
+        )
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            result = had_cells_strength(sf)
+        nh = result.sel(cell="had_cell_nh")
+        sh = result.sel(cell="had_cell_sh")
+        assert nh[LAT_STR].item() == 8.0
+        assert nh.item() == pytest.approx(1.8e11)
+        if lat_sh is None:
+            _assert_missing(result, "had_cell_sh")
+            assert len(record) == 1
+            assert str(record[0].message).startswith(
+                "No cell with the sense of circulation of the southern Hadley "
+                "cell, negative, is centered within max_partner_lat=50 on the "
+                "ascending side of the northern Hadley cell, at 8."
+            )
+            assert str(record[0].message).endswith(
+                "Its strength, latitude and level are NaN, and so is each "
+                "Hadley cell edge that depends on it."
+            )
+        else:
+            assert len(record) == 0
+            assert sh.item() == pytest.approx(strength_sh)
+            assert sh[LAT_STR].item() == lat_sh
+
+    def test_max_partner_lat(self) -> None:
+        # Raised to 80, max_partner_lat takes in the southern polar cell of
+        # the #134 field with no summer cell, which is then the southern
+        # cell, as it used to be with the search unbounded.
+        sf = _bump_cells_streamfunc(
+            [
+                (1.8e11, 8.0, 26.0),
+                (2e10, -48.0, 12.0),
+                (-4e10, 45.0, 13.0),
+                (1e10, 73.0, 10.0),
+                (-1e10, -74.0, 9.0),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(sf, max_partner_lat=80.0)
+        assert result[LAT_STR].values.tolist() == [-74.0, 8.0]
+        assert result.values.tolist() == pytest.approx([-1e10, 1.8e11])
+
+    @pytest.mark.parametrize(
+        ("max_center_lat", "lat_sh"), [(None, -15.0), (50.0, 45.0)]
+    )
+    def test_max_center_lat(self, max_center_lat: float | None, lat_sh: float) -> None:
+        # A negative Ferrel cell of 2e11 between 30N and 60N, centered at
+        # 45N, beyond the default max_center_lat, is stronger than the two
+        # Hadley cells of 1e11, so the only warning is that a stronger value
+        # lies beyond max_center_lat. Raised to 50, max_center_lat takes it
+        # in as the first cell, labeled southern by its sign, with no
+        # positive cell north of it to pair with, so the only warning is
+        # for that missing cell.
+        sf = _two_cell_streamfunc()
+        lat, plev = sf[LAT_STR], sf[LEV_STR]
+        ferrel = xr.where(
+            (lat >= 30.0) & (lat <= 60.0), np.sin(np.pi * (lat - 30.0) / 30.0), 0.0
+        )
+        sf = sf - 2e11 * np.sin(np.pi * (plev - 100.0) / 900.0) * ferrel
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            if max_center_lat is None:
+                result = had_cells_strength(sf)
+            else:
+                result = had_cells_strength(sf, max_center_lat=max_center_lat)
+        assert result.sel(cell="had_cell_sh")[LAT_STR].item() == lat_sh
+        assert len(record) == 1
+        if max_center_lat is None:
+            assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+            assert str(record[0].message).startswith(_STRONGER_BEYOND)
+        else:
+            assert result.sel(cell="had_cell_sh").item() == pytest.approx(-2e11)
+            _assert_missing(result, "had_cell_nh")
+            assert "of the northern Hadley cell, positive" in str(record[0].message)
+
+    def test_tail_of_a_cell_beyond_the_bound_not_taken(self) -> None:
+        # A negative cell of 5e11 centered at 40N, beyond max_center_lat,
+        # reaches into it: at 30N it is still a quarter of its peak, 1.25e11,
+        # more than the Hadley cells' 1e11. Each cell is its local extremum,
+        # so that tail is not a cell, and the Hadley cells are found, with
+        # the warning that a stronger value lies beyond max_center_lat.
+        sf = _two_cell_streamfunc() + _bump_cells_streamfunc([(-5e11, 40.0, 15.0)])
+        assert sf.sel({LAT_STR: 30.0, LEV_STR: 550.0}).item() == pytest.approx(-1.25e11)
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1e11])
+
+    @pytest.mark.parametrize("descending", [False, True], ids=["s_to_n", "n_to_s"])
+    def test_tie_goes_to_the_southern_extremum(self, descending: bool) -> None:
+        # Two positive cells of 1e11 at 15S and 15N, equal to the last bit and
+        # equally near the equator. The southern one is taken as the first
+        # cell, the northern Hadley cell by its sign, with no negative cell
+        # south of it, so the southern entry is NaN, with a warning. On a
+        # grid ordered from north to south, the northern cell comes first.
+        sf = _bump_cells_streamfunc([(1e11, -15.0, 15.0), (1e11, 15.0, 15.0)])
+        if descending:
+            sf = sf.isel({LAT_STR: slice(None, None, -1)})
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            result = had_cells_strength(sf)
+        nh = result.sel(cell="had_cell_nh")
+        assert nh[LAT_STR].item() == -15.0
+        assert nh.item() == 1e11
+        _assert_missing(result, "had_cell_sh")
+
+    def test_tie_goes_to_the_extremum_nearer_the_equator(self) -> None:
+        # Two positive cells of 1e11 exactly, at 25S and 20N. The one at 20N,
+        # nearer the equator, is taken as the first cell.
+        sf = _bump_cells_streamfunc([(1e11, -25.0, 15.0), (1e11, 20.0, 15.0)])
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            result = had_cells_strength(sf)
+        assert result.sel(cell="had_cell_nh")[LAT_STR].item() == 20.0
+
+    def test_nan_at_the_first_latitude_searched(self) -> None:
+        # The southern cell peaks at 29S, and min_lat leaves 30S, NaN at every
+        # level, as the first latitude searched. The NaN counts as zero in the
+        # search for local extrema, so the maximum at 29S is still a cell's
+        # center. Unreplaced, the NaN would spread through scipy's minimum
+        # filter from the first latitude to the second, and the southern cell
+        # would be lost.
+        sf = _bump_cells_streamfunc([(-1e11, -29.0, 10.0), (1e11, 15.0, 15.0)])
+        sf = sf.where(sf[LAT_STR] != -30.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(sf, min_lat=-30.5)
+        assert result[LAT_STR].values.tolist() == [-29.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1e11])
+
+    def test_double_itcz(self) -> None:
+        # The field of #133: Hadley cells centered at 19S and 19N, with weak
+        # cells of 0.2 their amplitude at 4S and 4N between them. The weak
+        # positive cell lies on the southern Hadley cell's ascending side but
+        # is weaker than the northern Hadley cell.
+        sf = _sigma_half_sine_cells(
+            [
+                (-30.25, -8.25, -1.0),
+                (-8.25, -0.25, 0.2),
+                (-0.25, 7.75, -0.2),
+                (7.75, 29.75, 1.0),
+            ]
+        )
+        result = had_cells_strength(sf, lev_str=SIGMA_STR)
+        assert result[LAT_STR].values.tolist() == [-19.0, 19.0]
+
+    def test_bounds_take_in_a_cell_centered_on_them(self) -> None:
+        # Both bounds at 15 degrees, the latitude of both Hadley cells'
+        # centers, still take them in.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(
+                _two_cell_streamfunc(), max_center_lat=15.0, max_partner_lat=15.0
+            )
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+
+    @pytest.mark.parametrize("mirror", [False, True], ids=["positive", "negative"])
+    def test_center_compared_only_with_the_values_beside_it(self, mirror: bool) -> None:
+        # A cell's center is no weaker than the values one gridpoint from it.
+        # The northern Hadley cell, of 1.5e11 at 15N, is the stronger, and a
+        # spike of 3e11 at 17N, two gridpoints north of its center and beyond
+        # max_center_lat at 16, does not stop it being a cell. Were the spike
+        # compared with it, the southern Hadley cell would be the first cell,
+        # with the spike its partner. Mirrored, the cells and spike reverse
+        # sign and hemisphere.
+        sf = _two_cell_streamfunc()
+        sf = sf * xr.where(sf[LAT_STR] > 0, 1.5, 1.0)
+        sf.loc[{LAT_STR: 17.0, LEV_STR: 550.0}] = 3e11
+        if mirror:
+            sf = -sf.assign_coords({LAT_STR: -sf[LAT_STR]}).sortby(LAT_STR)
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf, max_center_lat=16.0)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        expected = [-1.5e11, 1e11] if mirror else [-1e11, 1.5e11]
+        assert result.values.tolist() == pytest.approx(expected)
+
+    def test_center_at_the_end_of_the_latitudes_searched(self) -> None:
+        # Cut by max_lat at 15.5, the northern Hadley cell, of 1.5e11, has
+        # its maximum at the last latitude searched, 15N. It is compared only
+        # with the latitudes south of it, not with the first latitude of the
+        # grid, 85S, where a cell of 2e11 lies. Were it compared with that
+        # cell, it would not be a cell, and the southern Hadley cell would
+        # have no partner.
+        sf = _two_cell_streamfunc()
+        sf = sf * xr.where(sf[LAT_STR] > 0, 1.5, 1.0)
+        sf = sf + _bump_cells_streamfunc([(2e11, -85.0, 5.0)])
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf, max_lat=15.5)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1.5e11])
+
+    def test_center_is_an_extremum_in_level_too(self) -> None:
+        # A negative Ferrel cell of 5e11 at 550 hPa, centered at 36N there
+        # and tilting equatorward with depth to 28N at 1000 hPa, where it is
+        # a quarter as strong, 1.25e11, more than the Hadley cells' 1e11.
+        # Along 1000 hPa its extremum, at 28N, lies within max_center_lat,
+        # but the values above it are stronger, so it is not a cell's center,
+        # and the Hadley cells are found.
+        sf = _two_cell_streamfunc()
+        lat, plev = sf[LAT_STR], sf[LEV_STR]
+        x = (lat - (36.0 - 8.0 * (plev - 550.0) / 450.0)) / 8.0
+        amp = 5e11 * (0.25 + 0.75 * np.sin(np.pi * (plev - 100.0) / 900.0))
+        sf = sf - amp * xr.where(np.abs(x) < 1, np.cos(0.5 * np.pi * x) ** 2, 0.0)
+        bottom = sf.sel({LEV_STR: 1000.0})
+        assert bottom.idxmin(LAT_STR).item() == 28.0
+        assert bottom.min().item() == pytest.approx(-1.25e11)
+        with pytest.warns(UserWarning, match=_STRONGER_BEYOND):
+            result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1e11])
+
+    def test_cell_beneath_the_first_cell_not_its_partner(self) -> None:
+        # A shallow negative cell beneath the northern Hadley cell, centered
+        # at the same latitude, 15N, of 0.8e11 at 1000 hPa, stronger than
+        # the southern Hadley cell's 0.5e11. The partner is sought strictly
+        # south of the first cell, so the shallow cell is not taken for it.
+        sf = _bump_cells_streamfunc([(-0.5e11, -15.0, 15.0), (1e11, 15.0, 15.0)])
+        plev = sf[LEV_STR]
+        shallow = xr.where(plev > 850.0, (plev - 850.0) / 150.0, 0.0)
+        sf = sf - 0.8e11 * shallow * _bump(sf[LAT_STR], 15.0, 10.0)
+        assert sf.sel({LAT_STR: 15.0, LEV_STR: 1000.0}).item() == pytest.approx(-0.8e11)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-15.0, 15.0]
+        assert result.values.tolist() == pytest.approx([-0.5e11, 1e11])
+
+    def test_hadley_cells_centered_beyond_max_center_lat(self) -> None:
+        # Hadley cells centered at 35S and 35N, as in a slowly rotating
+        # atmosphere, with weak cells of 5% their strength near the equator.
+        # A weak cell within max_center_lat is taken for one Hadley cell and
+        # paired with the southern one, with the warning that the strongest
+        # value lies beyond max_center_lat. Raised to 40, max_center_lat
+        # takes in both Hadley cells, without a warning. With no weak cells,
+        # no cell is centered within max_center_lat, which raises.
+        hadley = [(-1e11, -35.0, 35.0), (1e11, 35.0, 35.0)]
+        sf = _bump_cells_streamfunc(
+            [*hadley, (0.05e11, -3.0, 4.0), (-0.05e11, 3.0, 4.0)]
+        )
+        with pytest.warns(
+            UserWarning, match=_STRONGER_BEYOND + r", -1e\+11 at latitude -35 "
+        ):
+            result = had_cells_strength(sf)
+        assert result[LAT_STR].values.tolist() == [-35.0, -2.0]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            result = had_cells_strength(sf, max_center_lat=40.0)
+        assert result[LAT_STR].values.tolist() == [-35.0, 35.0]
+        assert result.values.tolist() == pytest.approx([-1e11, 1e11])
+        with pytest.raises(ValueError, match="No cell is centered within"):
+            had_cells_strength(_bump_cells_streamfunc(hadley))
+
+    def test_polar_cell_beyond_the_partner_bound(self) -> None:
+        # A northern-summer field shaped like ERA5's at 500 hPa in June 2007:
+        # a winter Hadley cell of -1.8e11 at 8S, a weak summer Hadley cell of
+        # 5e9 at 21N, a northern Ferrel cell at 40N, and a lobe of the
+        # northern polar cell, of 8e9 at 55N, stronger than the summer cell.
+        # Centered beyond the default max_partner_lat of 50, the lobe is not
+        # taken for the summer cell, as it is with max_partner_lat at 60.
+        sf = _bump_cells_streamfunc(
+            [
+                (-1.8e11, -8.0, 26.0),
+                (5e9, 21.0, 6.0),
+                (-3e10, 40.0, 10.0),
+                (8e9, 55.0, 8.0),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            default = had_cells_strength(sf)
+            raised = had_cells_strength(sf, max_partner_lat=60.0)
+        assert default[LAT_STR].values.tolist() == [-8.0, 21.0]
+        assert default.values.tolist() == pytest.approx([-1.8e11, 5e9])
+        assert raised[LAT_STR].values.tolist() == [-8.0, 55.0]
 
 
 class TestHadCellEdgeCoords:
@@ -1186,6 +1537,47 @@ class TestHadCellEdgeValues:
         north_800 = _edge_arr(had_cell_edge(sf, fixed_plev=800.0, do_interp=True))
         assert north_800.item() == pytest.approx(expected, abs=0.05)
 
+    @pytest.mark.parametrize(
+        ("min_plev", "max_plev", "expected"),
+        [(None, 900.0, -0.1186), (200.0, 800.0, -0.5186)],
+    )
+    def test_shared_edge_on_the_level_mean(
+        self, min_plev: float | None, max_plev: float, expected: float
+    ) -> None:
+        # With do_avg_vert, the cells are found on the streamfunction
+        # averaged over the levels from min_plev to max_plev, and the shared
+        # edge is the zero crossing of that average. Near the equator each
+        # level's profile in the tilted field is sin(a * (lat - s)), with
+        # a = pi / 30 and s the level's shift, so the average is a sine
+        # crossing zero at atan2(sum(v * sin(a * s)), sum(v * cos(a * s))) / a,
+        # with v each level's vertical structure. The level nearest the mean
+        # pressure, 500 in both cases, crosses zero at -1, and the edge used
+        # to be that crossing. With fixed_plev, the edge is that level's
+        # crossing, at 800 hPa 5.
+        sf = _tilted_streamfunc()
+        plevs = np.arange(min_plev or 100.0, max_plev + 1.0, 50.0)
+        shift = (plevs - 550.0) / 50.0
+        vert = np.sin(np.pi * (plevs - 100.0) / 900.0)
+        a = np.pi / 30.0
+        closed_form = (
+            np.arctan2(
+                np.sum(vert * np.sin(a * shift)), np.sum(vert * np.cos(a * shift))
+            )
+            / a
+        )
+        assert closed_form == pytest.approx(expected, abs=1e-4)
+        kwargs: dict[str, Any] = dict(
+            min_plev=min_plev, max_plev=max_plev, do_avg_vert=True
+        )
+        shared = had_cells_shared_edge(sf, **kwargs)
+        assert shared.item() == pytest.approx(closed_form, abs=1e-3)
+        level_500 = had_cells_shared_edge(sf, fixed_plev=500.0)
+        assert level_500.item() == pytest.approx(-1.0, abs=1e-9)
+        edges = had_cells_edges(sf, **kwargs)
+        assert _edge_arr(edges[1]).item() == shared.item()
+        at_800 = had_cells_shared_edge(sf, fixed_plev=800.0, **kwargs)
+        assert at_800.item() == pytest.approx(5.0, abs=1e-9)
+
     def test_cos_factor(self) -> None:
         # Singh 2019 cosine weighting: reconstruct the crossing of
         # [sf / cos(lat)] / [max / cos(lat_max)] = frac_thresh with scipy.
@@ -1208,6 +1600,161 @@ class TestHadCellEdgeValues:
 
 class TestHadCellsEdges:
     """had_cells_edges must route kwargs correctly to all three edge funcs."""
+
+    @pytest.mark.parametrize(
+        "edge_func",
+        [
+            had_cells_south_edge,
+            had_cells_north_edge,
+            had_cells_shared_edge,
+            had_cell_edge,
+            had_cells_edges,
+        ],
+    )
+    def test_max_center_lat_forwarded(self, edge_func: Callable[..., Any]) -> None:
+        # With max_center_lat at 5, no cell of the two-cell field, centered
+        # at 15S and 15N, is centered within it, and had_cells_strength
+        # raises, as it can only if each edge function passes the bound on.
+        with pytest.raises(ValueError, match="max_center_lat=5"):
+            edge_func(_two_cell_streamfunc(), max_center_lat=5.0)
+
+    def test_max_partner_lat_forwarded(self) -> None:
+        # In the #134 field with no summer cell, max_partner_lat raised to 80
+        # makes the southern polar cell the southern cell, as the unbounded
+        # search did, and every edge function measures that cell, at the
+        # edges the search gave: 81.20S for the southern edge and 65.00S for
+        # the shared one. With the default, no southern cell is found, and
+        # its edge is NaN.
+        sf = _bump_cells_streamfunc(
+            [
+                (1.8e11, 8.0, 26.0),
+                (2e10, -48.0, 12.0),
+                (-4e10, 45.0, 13.0),
+                (1e10, 73.0, 10.0),
+                (-1e10, -74.0, 9.0),
+            ]
+        )
+        kwargs: dict[str, Any] = {"max_partner_lat": 80.0}
+        south, shared, north = (
+            _edge_arr(e).item() for e in had_cells_edges(sf, **kwargs)
+        )
+        assert south == pytest.approx(-81.20, abs=0.005)
+        assert shared == pytest.approx(-65.00, abs=0.005)
+        assert north == pytest.approx(28.69, abs=0.005)
+        assert _edge_arr(had_cells_south_edge(sf, **kwargs)).item() == south
+        assert _edge_arr(had_cells_shared_edge(sf, **kwargs)).item() == shared
+        assert (
+            _edge_arr(had_cell_edge(sf, cell="south", edge="south", **kwargs)).item()
+            == south
+        )
+        with pytest.warns(UserWarning, match="southern Hadley cell, negative"):
+            default_south = _edge_arr(had_cells_south_edge(sf)).item()
+        assert np.isnan(default_south)
+        # Mirrored across the equator, with each cell's sign reversed, the
+        # missing summer cell is the northern one, and the northern edge is
+        # the mirrored polar cell's.
+        mirrored = -sf.assign_coords({LAT_STR: -sf[LAT_STR]}).sortby(LAT_STR)
+        north_mirrored = _edge_arr(had_cells_north_edge(mirrored, **kwargs)).item()
+        assert north_mirrored == pytest.approx(-south, abs=1e-9)
+
+    def test_bound_defaults(self) -> None:
+        # Every function that identifies the Hadley cells takes the same
+        # default bounds.
+        for func in (
+            had_cells_strength,
+            had_cells_shared_edge,
+            had_cell_edge,
+            had_cells_south_edge,
+            had_cells_north_edge,
+            had_cells_edges,
+            cell_edges_sigma,
+        ):
+            params = inspect.signature(func).parameters
+            assert params["max_center_lat"].default == 30, func.__name__
+            assert params["max_partner_lat"].default == 50, func.__name__
+
+    def test_edges_of_a_missing_cell_are_nan(self) -> None:
+        # In the #134 field with no summer cell, the southern cell is
+        # missing, so its southern and northern edges and the shared edge
+        # are NaN, each a bare latitude as a measured edge is, and the
+        # northern cell's edges are measured.
+        sf = _bump_cells_streamfunc([*_WINTER_CELLS_134, (-1e10, -74.0, 9.0)])
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            missing = [
+                _edge_arr(had_cells_south_edge(sf)),
+                _edge_arr(had_cells_shared_edge(sf)),
+                _edge_arr(had_cell_edge(sf, cell="south", edge="north")),
+            ]
+            present = [
+                _edge_arr(had_cells_north_edge(sf)),
+                _edge_arr(had_cell_edge(sf, cell="north", edge="south")),
+            ]
+        for edge in missing:
+            assert np.isnan(edge.item())
+            assert list(edge.coords) == [LAT_STR]
+        assert present[0].item() == pytest.approx(28.69, abs=0.005)
+        assert -20.0 < present[1].item() < 8.0
+
+    def test_missing_cell_in_one_element_of_a_series(self) -> None:
+        # Two times of the #134 field, with the summer cell and without it.
+        # The second time's southern cell is NaN, with one warning, and so
+        # are its southern edge and the shared edge, while its northern edge
+        # and every value at the first time are as for each time alone.
+        with_summer = _bump_cells_streamfunc(
+            [*_WINTER_CELLS_134, (-3e10, -24.0, 10.0), (-5e9, -74.0, 9.0)]
+        )
+        without = _bump_cells_streamfunc([*_WINTER_CELLS_134, (-1e10, -74.0, 9.0)])
+        sf = xr.concat([with_summer, without], dim=TIME_STR)
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            strengths = had_cells_strength(sf)
+        assert len(record) == 1
+        assert str(record[0].message).startswith(
+            "No cell with the sense of circulation of the southern Hadley cell"
+        )
+        assert strengths.isel({TIME_STR: 0})[LAT_STR].values.tolist() == [-24.0, 8.0]
+        assert strengths.isel({TIME_STR: 0}).values.tolist() == pytest.approx(
+            [-3e10, 1.8e11]
+        )
+        _assert_missing(strengths.isel({TIME_STR: 1}), "had_cell_sh")
+        with pytest.warns(UserWarning, match="sense of circulation"):
+            south, shared, north = (_edge_arr(e) for e in had_cells_edges(sf))
+            north_alone = _edge_arr(had_cells_north_edge(without)).item()
+        south_0, shared_0, north_0 = (
+            _edge_arr(e).item() for e in had_cells_edges(with_summer)
+        )
+        assert south.values.tolist() == pytest.approx([south_0, np.nan], nan_ok=True)
+        assert shared.values.tolist() == pytest.approx([shared_0, np.nan], nan_ok=True)
+        assert north.values.tolist() == pytest.approx([north_0, north_alone])
+        assert not np.isnan([south_0, shared_0, north_0, north_alone]).any()
+
+    @pytest.mark.parametrize("flip", [False, True], ids=["upward", "downward"])
+    def test_edges_on_the_level_mean(self, flip: bool) -> None:
+        # With do_avg_vert, every edge is that of the streamfunction averaged
+        # over the levels from min_plev to max_plev, 500 to 800 here, so it
+        # equals the edge of that average, taken by hand, as a single level.
+        # In the tilted field, averaging over every level instead moves the
+        # southern edge from 29.12S to 33.32S. The levels can be in either
+        # order: the
+        # outer edges used to be NaN with the pressures decreasing, since
+        # the levels were selected by a slice from min_plev to max_plev.
+        sf = _tilted_streamfunc()
+        by_hand = (
+            sf.sel({LEV_STR: slice(500.0, 800.0)})
+            .mean(LEV_STR)
+            .expand_dims({LEV_STR: [650.0]})
+        )
+        one_level = {
+            k: v
+            for k, v in EDGE_KWARGS.items()
+            if k not in ("min_plev", "max_plev", "do_avg_vert")
+        }
+        expected = [_edge_arr(e).item() for e in had_cells_edges(by_hand, **one_level)]
+        if flip:
+            sf = sf.isel({LEV_STR: slice(None, None, -1)})
+        result = [_edge_arr(e).item() for e in had_cells_edges(sf, **EDGE_KWARGS)]
+        assert result == pytest.approx(expected, abs=1e-9)
+        assert expected[0] == pytest.approx(-29.12, abs=0.005)
 
     def test_returns_three_matching_edges(self) -> None:
         sf = _make_streamfunc(edge_lat=30.0)
@@ -1634,7 +2181,9 @@ class TestCellEdgesSigma:
         ending at 85 or 84.5, five or more spacings from the pole, the edge
         is NaN, and the cell is kept with a warning. The third grid ends at
         89.5S and 84.5N, so each end is judged by its own pole. The southern
-        case runs the search with the latitudes flipped.
+        case runs the search with the latitudes flipped. The cell, centered
+        60 degrees from the equator, beyond max_center_lat, takes no Hadley
+        label.
         """
         lats = np.arange(south_end, north_end + 0.5, 1.0)
         last_lat = abs(south_end if hemisphere < 0 else north_end)
@@ -1644,7 +2193,7 @@ class TestCellEdgesSigma:
         x = hemisphere * lat - _SIGMA_NODE_OFFSET
         merid = hemisphere * xr.where(x > 0, np.sin(np.pi * x / 120.0), 0.0)
         sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
-        label = "nh_hadley" if hemisphere > 0 else "sh_hadley"
+        label = "0"
         poleward = "edge_north" if hemisphere > 0 else "edge_south"
         if last_lat == 89.5:
             with warnings.catch_warnings():
@@ -1787,8 +2336,11 @@ class TestCellEdgesSigma:
             boundary + 12.5
         )
 
+    @pytest.mark.parametrize("max_partner_lat", [None, 80.0])
     @pytest.mark.parametrize("mirror", [False, True], ids=["no_sh_cell", "no_nh_cell"])
-    def test_lone_hadley_cell(self, mirror: bool) -> None:
+    def test_lone_hadley_cell(
+        self, mirror: bool, max_partner_lat: float | None
+    ) -> None:
         """With one Hadley cell missing, only the other gets a Hadley label.
 
         The positive Hadley cell spans the equator, from -22.25 to 29.75,
@@ -1796,7 +2348,10 @@ class TestCellEdgesSigma:
         The mirrored case is the same field reflected across the equator,
         which reverses each cell's sign. In both cases the northern Ferrel
         cell, negative, used to be labeled nh_hadley, and with no southern
-        Hadley cell the positive Hadley cell was labeled sh_hadley.
+        Hadley cell the positive Hadley cell was labeled sh_hadley. The
+        southern polar cell, negative, lies on the Hadley cell's ascending
+        side, but centered at 72.75S, beyond max_partner_lat, so it takes no
+        Hadley label unless max_partner_lat is raised to 80.
         """
         cells_in = [
             (-85.25, -60.25, -0.2),
@@ -1807,34 +2362,36 @@ class TestCellEdgesSigma:
         ]
         if mirror:
             cells_in = _mirror_cells(cells_in)
-        cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
+        kwargs: dict[str, Any] = {}
+        if max_partner_lat is not None:
+            kwargs["max_partner_lat"] = max_partner_lat
+        cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in), **kwargs)
         label = "sh_hadley" if mirror else "nh_hadley"
-        assert list(cells["cell"].values) == ["0", "1", label, "3", "4"]
+        polar = "4" if mirror else "0"
+        if max_partner_lat is not None:
+            polar = "nh_hadley" if mirror else "sh_hadley"
+        expected = (
+            ["0", "1", label, "3", polar] if mirror else [polar, "1", label, "3", "4"]
+        )
+        assert list(cells["cell"].values) == expected
         center = cells.sel(cell=label, lat="center").item()
         assert center == (-4.0 if mirror else 4.0)
-        # The Ferrel cell beside it, of the same sign, has its facing edge
-        # within 10 degrees, so only its sign keeps it from being labeled.
-        i_south, i_north = (2, 3) if mirror else (1, 2)
-        gap = (
-            cells.isel(cell=i_north).sel(lat="edge_south").item()
-            - cells.isel(cell=i_south).sel(lat="edge_north").item()
-        )
-        assert gap < 10.0
+        polar_center = cells.isel(cell=4 if mirror else 0).sel(lat="center").item()
+        assert abs(polar_center) == 73.0
 
     @pytest.mark.parametrize("mirror", [False, True], ids=["nh_nearer", "sh_nearer"])
-    @pytest.mark.parametrize(("node_gap", "paired"), [(7.8, True), (8.3, False)])
-    def test_second_hadley_cell_within_max_lat_gap(
-        self, node_gap: float, paired: bool, mirror: bool
+    @pytest.mark.parametrize("node_gap", [7.8, 8.3, 20.0])
+    def test_second_hadley_cell_paired_at_any_gap(
+        self, node_gap: float, mirror: bool
     ) -> None:
-        """The second Hadley cell is labeled only if it lies near the first.
+        """The second Hadley cell is labeled however far apart the two cells lie.
 
         The positive cell, from 0.25 to 30.25, is nearer the equator, and the
         negative cell ends ``node_gap`` degrees south of it, so their facing
-        edges are about node_gap + 1.9 degrees apart, 9.7 and 10.2 degrees
-        here, either side of the 10 degrees below which the second cell is
-        labeled. The mirrored case puts
-        the negative cell nearer the equator. With the positive cell nearer,
-        the second label used to be given at any distance.
+        edges are about node_gap + 1.9 degrees apart: 9.7, 10.2 and 21.9
+        degrees. The mirrored case puts the negative cell nearer the
+        equator. Facing edges 10 or more degrees apart used to leave the
+        second cell unlabeled.
         """
         cells_in = [(0.25 - node_gap - 30.0, 0.25 - node_gap, -1.0), (0.25, 30.25, 1.0)]
         if mirror:
@@ -1844,13 +2401,8 @@ class TestCellEdgesSigma:
             cells.isel(cell=1).sel(lat="edge_south").item()
             - cells.isel(cell=0).sel(lat="edge_north").item()
         )
-        assert abs(gap - 10.0) < 0.3
-        assert (gap < 10.0) == paired
-        if paired:
-            expected = ["sh_hadley", "nh_hadley"]
-        else:
-            expected = ["sh_hadley", "1"] if mirror else ["0", "nh_hadley"]
-        assert list(cells["cell"].values) == expected
+        assert abs(gap - (node_gap + 1.9)) < 0.3
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
 
     @pytest.mark.parametrize("mirror", [False, True], ids=["first", "last"])
     def test_hadley_cell_at_either_end(self, mirror: bool) -> None:
@@ -1858,11 +2410,9 @@ class TestCellEdgesSigma:
 
         The positive Hadley cell, from -20.25 to 30.25, is the southernmost
         cell, with a negative Ferrel cell north of it, on its descending
-        side. Mirrored, the negative Hadley cell is the northernmost. The
-        partner sought one place past either end of the cells must not wrap
-        around to the cell at the other end, here the Ferrel cell. The
-        positive Hadley cell used to be labeled sh_hadley, and the Ferrel cell
-        nh_hadley.
+        side, where no partner is sought. Mirrored, the negative Hadley cell
+        is the northernmost. The positive Hadley cell used to be labeled
+        sh_hadley, and the Ferrel cell nh_hadley.
         """
         cells_in = [(-20.25, 30.25, 1.0), (30.25, 60.25, -0.3)]
         expected = ["nh_hadley", "1"]
@@ -1871,14 +2421,29 @@ class TestCellEdgesSigma:
         cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
         assert list(cells["cell"].values) == expected
 
-    def test_ferrel_cells_stronger_than_hadley_cells(self) -> None:
-        """The Hadley cells are found by position, whatever their strength.
+    @pytest.mark.parametrize(
+        ("max_center_lat", "expected"),
+        [
+            (None, ["0", "sh_hadley", "nh_hadley", "3"]),
+            (50.0, ["nh_hadley", "1", "2", "3"]),
+        ],
+    )
+    def test_ferrel_cells_stronger_than_hadley_cells(
+        self, max_center_lat: float | None, expected: list[str]
+    ) -> None:
+        """Ferrel cells centered beyond max_center_lat are not taken as Hadley cells.
 
         The southern Ferrel cell, of amplitude 1, is the strongest and the
         northern one, 0.8, the next, with Hadley cells of 0.5 and 0.6
-        between them, so the labels go to the two cells nearest the equator
-        and to neither of the strongest.
+        between them. The Ferrel cells are centered at 45S and 45N, beyond
+        the default max_center_lat, so the first Hadley cell is the stronger
+        of the two Hadley cells. Raised to 50, max_center_lat takes in the
+        southern Ferrel cell, which is then labeled as the northern Hadley
+        cell, by its sign, with no cell of the opposite sign south of it.
         """
+        kwargs: dict[str, Any] = {}
+        if max_center_lat is not None:
+            kwargs["max_center_lat"] = max_center_lat
         cells = cell_edges_sigma(
             _sigma_half_sine_cells(
                 [
@@ -1887,9 +2452,11 @@ class TestCellEdgesSigma:
                     (0.25, 30.25, 0.6),
                     (30.25, 60.25, -0.8),
                 ]
-            )
+            ),
+            **kwargs,
         )
-        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
+        assert list(cells["cell"].values) == expected
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -15.0, 15.0, 45.0]
         np.testing.assert_array_equal(
             np.sign(cells["cell_strength"].values), [1, -1, 1, -1]
         )
@@ -1910,47 +2477,179 @@ class TestCellEdgesSigma:
         assert cells["cell_strength"].ndim == 0
         assert list(cells["cell"].values) == ["0", "nh_hadley"]
 
-    def test_cell_nearest_the_equator_by_its_maximum(self) -> None:
-        """The first Hadley cell is the one whose maximum lies nearest the equator.
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({}, ["sh_hadley", "nh_hadley"]),
+            ({"max_center_lat": 20.0}, ["sh_hadley", "nh_hadley"]),
+            ({"max_center_lat": 9.0}, ["sh_hadley", "nh_hadley"]),
+            ({"max_partner_lat": 25.1}, ["sh_hadley", "nh_hadley"]),
+            ({"max_partner_lat": 25.0}, ["sh_hadley", "nh_hadley"]),
+            ({"max_partner_lat": 24.9}, ["sh_hadley", "1"]),
+        ],
+    )
+    def test_bounds_measured_at_each_cells_maximum(
+        self, kwargs: dict[str, Any], expected: list[str]
+    ) -> None:
+        """Each bound is compared with the latitude of a cell's maximum.
 
         The negative cell is two half-sine cells summed, from -60.25 to 0.25
-        at 0.4 and from -16.25 to 0.25 at 1, so its maximum lies at -9 and
-        the midpoint of its edges at -27.4. The positive cell, from 10.25 to
-        40.25, has its maximum at 25 and its edges' midpoint at 25.25. Their
-        facing edges are 11.5 degrees apart, too far to pair, so only the
-        negative cell is labeled.
+        at 0.4 and from -16.25 to 0.25 at 1, so its maximum lies at -9, of
+        1.17 times the positive cell's, and the midpoint of its edges at
+        -27.4. The positive cell, from 10.25 to 40.25, has its maximum at 25
+        and its edges' midpoint at 25.25. With max_center_lat at 20, the
+        negative cell, its maximum within the bound, is still the first
+        Hadley cell, and a max_partner_lat of 25.1, between 25 and 25.25,
+        still takes in the positive cell, which one of 24.9 leaves out. A
+        bound equal to a cell's maximum, max_center_lat at 9 or
+        max_partner_lat at 25, takes the cell in.
         """
         cells = cell_edges_sigma(
             _sigma_half_sine_cells(
                 [(-60.25, 0.25, -0.4), (-16.25, 0.25, -1.0), (10.25, 40.25, 1.0)]
-            )
+            ),
+            **kwargs,
         )
-        assert list(cells["cell"].values) == ["sh_hadley", "1"]
-        assert cells.sel(cell="sh_hadley", lat="center").item() == -9.0
+        assert list(cells["cell"].values) == expected
+        assert cells.isel(cell=0).sel(lat="center").item() == -9.0
+        assert cells.isel(cell=1).sel(lat="center").item() == 25.0
 
     @pytest.mark.parametrize(
-        ("max_lat_gap", "paired"), [(None, False), (10.5, False), (11.0, True)]
+        ("weak", "nh_amp", "expected"),
+        [
+            (0.2, 1.0, ["sh_hadley", "1", "2", "nh_hadley"]),
+            (0.1, 0.6, ["sh_hadley", "1", "2", "nh_hadley"]),
+            (0.03, 1.0, ["sh_hadley", "nh_hadley"]),
+        ],
     )
-    def test_max_lat_gap(self, max_lat_gap: float | None, paired: bool) -> None:
-        """max_lat_gap sets how far apart the Hadley cells' facing edges may be.
+    def test_double_itcz(self, weak: float, nh_amp: float, expected: list[str]) -> None:
+        """Weak cells between the Hadley cells take no Hadley label (#133).
 
-        Two cells 32 degrees wide each meet at 0.25. At frac_thresh 0.5 each
-        facing edge lies 32 arcsin(0.5) / pi = 16 / 3 degrees from the node
-        the cells share, so the facing edges are 32 / 3 = 10.67 degrees
-        apart: beyond the default limit of 10 and beyond 10.5, within 11.
+        The Hadley cells are negative from -30.25 to -8.25 and positive from
+        7.75 to 29.75, of amplitude 1 and ``nh_amp``, centered at 19S and 19N.
+        Between them, a weak positive cell from -8.25 to -0.25 and a weak
+        negative one from -0.25 to 7.75, of amplitude ``weak``, are centered
+        at 4S and 4N, as in a double ITCZ. At 0.03 the strength filter drops
+        the weak cells. The weak positive cell used to be labeled nh_hadley,
+        nearest the equator, and with the weak cells dropped the Hadley
+        cells' facing edges, 17.4 degrees apart, left the northern one
+        unlabeled.
         """
-        sf = _sigma_half_sine_cells([(-31.75, 0.25, -1.0), (0.25, 32.25, 1.0)])
-        if max_lat_gap is None:
-            cells = cell_edges_sigma(sf, frac_thresh=0.5)
-        else:
-            cells = cell_edges_sigma(sf, frac_thresh=0.5, max_lat_gap=max_lat_gap)
-        gap = (
-            cells.isel(cell=1).sel(lat="edge_south").item()
-            - cells.isel(cell=0).sel(lat="edge_north").item()
+        cells = cell_edges_sigma(
+            _sigma_half_sine_cells(
+                [
+                    (-30.25, -8.25, -1.0),
+                    (-8.25, -0.25, weak),
+                    (-0.25, 7.75, -weak),
+                    (7.75, 29.75, nh_amp),
+                ]
+            )
         )
-        assert gap == pytest.approx(32.0 / 3.0, abs=0.02)
-        expected = ["sh_hadley", "nh_hadley"] if paired else ["sh_hadley", "1"]
         assert list(cells["cell"].values) == expected
+        assert cells.sel(cell="sh_hadley", lat="center").item() == -19.0
+        assert cells.sel(cell="nh_hadley", lat="center").item() == 19.0
+
+    def test_tie_goes_to_the_southern_cell(self) -> None:
+        """Of two cells equally strong and equally near the equator, the southern.
+
+        Two positive half-sine cells, from 30.25S to 0.25S and from 0.25N to
+        30.25N, computed from the magnitude of latitude so that they are
+        equal to the last bit, peak at 15S and 15N. The southern one is
+        taken as the first Hadley cell and labeled nh_hadley by its sign,
+        with no negative cell to pair with.
+        """
+        lats = np.arange(-85.0, 86.0, 1.0)
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+        x = (np.abs(lat) - 0.25) / 30.0
+        merid = xr.where((x > 0) & (x < 1), np.sin(np.pi * x), 0.0)
+        sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
+        cells = cell_edges_sigma(sf)
+        assert cells["cell_strength"].ndim == 0
+        assert list(cells["cell"].values) == ["nh_hadley", "1"]
+        assert cells.sel(cell="nh_hadley", lat="center").item() == -15.0
+
+    def test_no_cell_within_max_center_lat(self) -> None:
+        """With no cell centered within max_center_lat, none takes a Hadley label."""
+        sf = _sigma_half_sine_cells([(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)])
+        cells = cell_edges_sigma(sf, max_center_lat=10.0)
+        assert list(cells["cell"].values) == ["0", "1"]
+        assert cells.sel(lat="center").values.tolist() == [-15.0, 15.0]
+
+    def test_polar_cell_beyond_the_partner_bound(self) -> None:
+        """A cell centered beyond max_partner_lat is not the summer Hadley cell.
+
+        A negative winter Hadley cell from 29.75S to 0.25N, with no summer
+        Hadley cell, a negative northern Ferrel cell from 30.25N to 50.25N,
+        and a positive lobe of the northern polar cell from 50.25N to
+        60.25N, centered at 55N. Beyond the default max_partner_lat of 50,
+        the lobe takes no Hadley label, which it does with the bound at 60.
+        """
+        sf = _sigma_half_sine_cells(
+            [(-29.75, 0.25, -1.0), (30.25, 50.25, -0.3), (50.25, 60.25, 0.2)]
+        )
+        default = cell_edges_sigma(sf)
+        raised = cell_edges_sigma(sf, max_partner_lat=60.0)
+        assert default.sel(lat="center").values.tolist() == [-15.0, 40.0, 55.0]
+        assert list(default["cell"].values) == ["sh_hadley", "1", "2"]
+        assert list(raised["cell"].values) == ["sh_hadley", "1", "nh_hadley"]
+
+    def test_cell_beneath_the_first_cell_not_its_partner(self) -> None:
+        """A cell centered at the first Hadley cell's latitude is not its partner.
+
+        Beneath a negative Hadley cell at sigma 0.1 to 0.55 lies a positive
+        cell at sigma 0.55 to 1, both with their maximum at 15S. The upper
+        cell reaches farther south and the lower one farther north, so
+        neither lies within the other. The lower cell, of 0.7, is stronger
+        than the positive Hadley cell from 0.25N to 30.25N, of 0.5, but the
+        partner is sought strictly north of the first cell.
+        """
+        lats = np.arange(-85.0, 86.0, 1.0)
+        sigmas = np.linspace(0.1, 1.0, 19)
+        lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+        sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+
+        def skewed(south: float, center: float, north: float) -> xr.DataArray:
+            rise = np.sin(0.5 * np.pi * (lat - south) / (center - south))
+            fall = np.cos(0.5 * np.pi * (lat - center) / (north - center))
+            return cast(
+                xr.DataArray,
+                xr.where(
+                    (lat > south) & (lat <= center),
+                    rise,
+                    xr.where((lat > center) & (lat < north), fall, 0.0),
+                ),
+            )
+
+        def layer(bottom: float, top: float) -> xr.DataArray:
+            inside = (sigma > bottom) & (sigma < top)
+            return cast(
+                xr.DataArray,
+                xr.where(
+                    inside, np.sin(np.pi * (sigma - bottom) / (top - bottom)), 0.0
+                ),
+            )
+
+        nh = np.sin(np.pi * (sigma - 0.1) / 0.9) * xr.where(
+            (lat > 0.25) & (lat < 30.25), np.sin(np.pi * (lat - 0.25) / 30.0), 0.0
+        )
+        sf = 1e10 * (
+            -layer(0.1, 0.55) * skewed(-35.0, -15.0, -10.0)
+            + 0.7 * layer(0.55, 1.0) * skewed(-20.0, -15.0, 0.0)
+            + 0.5 * nh
+        )
+        cells = cell_edges_sigma(sf.transpose(SIGMA_STR, LAT_STR))
+        assert cells.sel(lat="center").values.tolist() == [-15.0, -15.0, 15.0]
+        np.testing.assert_array_equal(
+            np.sign(cells["cell_strength"].values), [-1, 1, 1]
+        )
+        assert list(cells["cell"].values) == ["sh_hadley", "1", "nh_hadley"]
+
+    def test_max_lat_gap_removed(self) -> None:
+        removed: dict[str, Any] = {"max_lat_gap": 10.0}
+        with pytest.raises(TypeError, match=r"cell_edges_sigma\(\).*'max_lat_gap'"):
+            cell_edges_sigma(_sigma_streamfunc(), **removed)
 
 
 def _dropped_messages(record: Iterable[warnings.WarningMessage]) -> list[str]:
@@ -2939,8 +3638,10 @@ class TestCellEdgesSigmaDroppedCells:
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always", UserWarning)
             cells = cell_edges_sigma(sf)
-        edge = cells.sel(cell="nh_hadley", lat="edge_north").item()
-        center = cells.sel(cell="nh_hadley", lat="center").item()
+        # Centered beyond max_center_lat, the cell takes no Hadley label.
+        assert cells["cell"].values.tolist() == ["0"]
+        edge = cells.sel(cell="0", lat="edge_north").item()
+        center = cells.sel(cell="0", lat="center").item()
         assert center == pytest.approx(60.0, abs=1e-12)
         if near:
             peak = np.sin(np.pi * 59.75 / 120.0)
@@ -3541,17 +4242,22 @@ class TestEachElement:
 
     @pytest.mark.parametrize("extra_dim", [False, True], ids=["lat_lev", "with_time"])
     def test_warnings_point_at_the_caller(self, extra_dim: bool) -> None:
-        # A lone cell gives both of had_cells_strength's warnings under
-        # do_interp_lat. Each is attributed to this file, the caller, not to
-        # had_cell.py, however many of its frames the decorator adds.
-        sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0)])
+        # A lone positive cell, cut by min_lat so that its maximum lies at the
+        # first latitude searched, beside a stronger negative cell at 50N,
+        # gives each of had_cells_strength's three warnings under
+        # do_interp_lat: the interpolation fails at the edge, the strongest
+        # value lies beyond max_center_lat, and the southern cell is missing.
+        # Each is attributed to this file, the caller, not to had_cell.py,
+        # however many of its frames the decorator adds.
+        sf = _bump_cells_streamfunc([(1e11, 10.0, 30.0), (-2e11, 50.0, 10.0)])
         if extra_dim:
             sf = sf.expand_dims({TIME_STR: [0, 1]})
         with pytest.warns(UserWarning) as record:
-            had_cells_strength(sf, do_interp_lat=True)
+            had_cells_strength(sf, min_lat=10.5, do_interp_lat=True)
         messages = [str(w.message) for w in record]
         assert any("sense of circulation" in m for m in messages)
         assert any("Interpolating the latitude" in m for m in messages)
+        assert any(m.startswith(_STRONGER_BEYOND) for m in messages)
         assert {w.filename for w in record} == {__file__}
 
     def test_cell_edges_sigma_same_cells_keep_labels(self) -> None:
