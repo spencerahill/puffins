@@ -95,6 +95,22 @@ def therm_ross_num(
     )
 
 
+def _lat_along_dim(lat: ArrayLike | None, arr: xr.DataArray, lat_str: str) -> ArrayLike:
+    """The latitudes to combine with ``arr``.
+
+    None gives ``arr``'s own latitude coordinate. A one-dimensional NumPy
+    array is placed along ``arr``'s latitude dimension, in order, so that it
+    multiplies that dimension whatever the order of ``arr``'s dimensions; one
+    of the wrong length raises a ValueError. Anything else is returned as
+    given.
+    """
+    if lat is None:
+        return arr[lat_str]
+    if isinstance(lat, np.ndarray) and lat.ndim == 1:
+        return xr.DataArray(lat, dims=[lat_str])
+    return lat
+
+
 def abs_ang_mom(
     u: xr.DataArray,
     lat: ArrayLike | None = None,
@@ -102,10 +118,12 @@ def abs_ang_mom(
     rot_rate: float = ROT_RATE_EARTH,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
-    """Absolute angular momentum."""
-    if lat is None:
-        lat = u[lat_str]
-    coslat = cosdeg(lat)
+    """Absolute angular momentum.
+
+    ``lat`` defaults to ``u``'s latitude coordinate. A one-dimensional NumPy
+    ``lat`` is taken along ``u``'s latitude dimension, in order.
+    """
+    coslat = cosdeg(_lat_along_dim(lat, u, lat_str))
     return cast(xr.DataArray, radius * coslat * (rot_rate * radius * coslat + u))
 
 
@@ -146,10 +164,23 @@ def rel_vort_from_u(
     radius: float = RAD_EARTH,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
-    """Vertical component of relative vorticity computed from zonal wind."""
+    """Vertical component of relative vorticity computed from zonal wind.
+
+    For a zonally uniform wind, zeta = -(1/a) du/dphi + (u/a) tan(phi). The
+    latitude derivative is a centered difference inside the grid and a
+    one-sided difference at its two end rows. This form is used in place of
+    the equivalent -(1/(a cos(phi))) d(u cos(phi))/dphi because, on a grid
+    whose end rows lie half a spacing from the poles, dividing the one-sided
+    difference by cos(phi) gives an error at those rows comparable to the
+    largest vorticity on the grid, at any grid spacing, for a wind that does
+    not vanish toward the poles. At a row at exactly 90 degrees north or
+    south, the result is unreliable in either form, since tan(phi) and
+    1/cos(phi) both reach magnitudes of about 1.6e16 there.
+    """
     lat = uwind[lat_str]
-    coslat = cosdeg(lat)
-    return cast(xr.DataArray, -lat_deriv(uwind * coslat, lat_str) / (radius * coslat))
+    return cast(
+        xr.DataArray, (-lat_deriv(uwind, lat_str) + uwind * tandeg(lat)) / radius
+    )
 
 
 def ross_num_from_uwind(
@@ -162,14 +193,17 @@ def ross_num_from_uwind(
     """Rossby number computed from zonal wind.
 
     Traditional Rossby number definition in terms of only relative vorticity
-    and the Coriolis parameter, as opposed to the "3D" version introduced by
-    Singh 2019.
+    and the Coriolis parameter, -zeta/f, as opposed to the "3D" version
+    introduced by Singh 2019. The relative vorticity zeta is that of
+    `rel_vort_from_u`, on ``uwind``'s own latitude coordinate.
+
+    ``lat`` sets the latitudes of the Coriolis parameter alone, and defaults
+    to ``uwind``'s latitude coordinate. A one-dimensional NumPy ``lat`` is
+    taken along ``uwind``'s latitude dimension, in order.
 
     """
-    if lat is None:
-        lat = uwind[lat_str]
     rel_vort = rel_vort_from_u(uwind, radius=radius, lat_str=lat_str)
-    coriolis = coriolis_param(lat, rot_rate=rot_rate)
+    coriolis = coriolis_param(_lat_along_dim(lat, uwind, lat_str), rot_rate=rot_rate)
     return cast(xr.DataArray, -rel_vort / coriolis)
 
 
@@ -190,22 +224,35 @@ def ross_num_gen(
     angular momentum to advection of planetary angular momentum.  Zonal
     advection is neglected here b/c assuming zonal-mean quantities.
 
+    The result is (-zeta + omega (du/dlev) / v) / f, where zeta is the
+    relative vorticity of `rel_vort_from_u` and du/dlev the derivative of u
+    along the ``lev_str`` coordinate. So with ``omega`` zero and ``vwind``
+    nonzero it equals `ross_num_from_uwind`.
+
+    ``omega`` is the rate of change of the ``lev_str`` coordinate, in that
+    coordinate's units per second: Pa/s for levels in Pa. For levels in hPa,
+    pass ``omega`` in Pa/s with ``hpa_to_pa=True``, which multiplies du/dlev
+    by 1e-2 to make it per Pa; without it, the vertical term is 100 times too
+    large. On sigma or hybrid levels, pass the vertical velocity of that
+    coordinate, such as d(sigma)/dt, not the pressure velocity.
+
+    Where v vanishes while omega du/dlev does not, as at the levels where
+    the meridional flow reverses and at the cell edges, the result is
+    unbounded, because the planetary advection of angular momentum, which is
+    proportional to v, is the ratio's denominator. Mask such points, for
+    example where abs(v) is small compared with its largest value at that
+    level, before averaging the result.
+
+    ``lat`` sets the latitudes of the Coriolis parameter alone, as in
+    `ross_num_from_uwind`.
+
     """
-    if lat is None:
-        lat = uwind[lat_str]
-    coriolis = coriolis_param(lat, rot_rate=rot_rate)
+    rel_vort = rel_vort_from_u(uwind, radius=radius, lat_str=lat_str)
+    coriolis = coriolis_param(_lat_along_dim(lat, uwind, lat_str), rot_rate=rot_rate)
     du_dp = uwind.differentiate(lev_str)
     if hpa_to_pa:
         du_dp *= 1e-2
-    return cast(
-        xr.DataArray,
-        (
-            lat_deriv(uwind, lat_str) / radius
-            - uwind * tandeg(lat) / radius
-            + omega * du_dp / vwind
-        )
-        / coriolis,
-    )
+    return cast(xr.DataArray, (-rel_vort + omega * du_dp / vwind) / coriolis)
 
 
 @overload
