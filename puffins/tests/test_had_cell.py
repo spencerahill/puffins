@@ -1629,6 +1629,18 @@ def _gaussian_cells_142(
     )
 
 
+def _thin_cells_142(plev_south: float) -> xr.DataArray:
+    """A northern cell at 500 hPa and a southern cell, thin in the vertical.
+
+    The northern cell, of 1 at 10N, and the southern, of -0.8 at 10S, are
+    each broad in latitude and so thin in the vertical that the field is
+    exactly zero on every other level, which a test then sets by hand.
+    """
+    return _gaussian_cells_142(
+        [(1.0, 10.0, 500.0, 30.0, 1.0), (-0.8, -10.0, plev_south, 30.0, 1.0)]
+    )
+
+
 class TestSharedEdgeLevel:
     """The level of the shared edge without fixed_plev or do_avg_vert (#142)."""
 
@@ -1640,9 +1652,13 @@ class TestSharedEdgeLevel:
         # zero, 700 is the nearest, and 500, as near, is not one. The edge is
         # the crossing along 700, which matches the field's analytic root
         # there to within the error of linear interpolation between
-        # gridpoints a degree apart.
+        # gridpoints a degree apart. It is the same with the levels or the
+        # latitudes running the other way, and with the dimensions renamed.
         southern = (-3e10, -15.0, 850.0, 10.0, 100.0)
         sf = _gaussian_cells_142([_NORTHERN_CELL_142, southern])
+        cells = had_cells_strength(sf)
+        assert cells[LAT_STR].values.tolist() == [-15.0, 10.0]
+        assert cells[LEV_STR].values.tolist() == [850.0, 350.0]
         between = sf.sel({LAT_STR: slice(-15.0, 10.0)})
         assert bool((between.sel({LEV_STR: slice(350.0, 650.0)}) > 0).all())
         assert bool((between.sel({LEV_STR: 700.0}) < 0).any())
@@ -1657,8 +1673,34 @@ class TestSharedEdgeLevel:
         assert edge == had_cells_shared_edge(sf, fixed_plev=700.0).item()
         assert edge == pytest.approx(root, abs=0.01)
         assert _edge_arr(had_cells_edges(sf)[1]).item() == edge
-        flipped = sf.isel({LEV_STR: slice(None, None, -1)})
-        assert had_cells_shared_edge(flipped).item() == edge
+        for dim in (LEV_STR, LAT_STR):
+            flipped = sf.isel({dim: slice(None, None, -1)})
+            assert had_cells_shared_edge(flipped).item() == edge, dim
+        renamed = had_cells_shared_edge(
+            sf.rename({LAT_STR: "latitude", LEV_STR: "pressure"}),
+            lat_str="latitude",
+            lev_str="pressure",
+        )
+        assert renamed.item() == edge
+        assert list(renamed.coords) == ["latitude"]
+
+    def test_southern_cell_above_the_northern(self) -> None:
+        # The reproducer mirrored across the equator, with its sign reversed:
+        # the deep cell is now the southern one, centered at 350 hPa, and the
+        # northern cell lies below it, at 850. So the levels from one cell's
+        # to the other's run from the southern cell's down to the northern
+        # cell's, and the edge is the mirror of the reproducer's.
+        sf = _gaussian_cells_142(
+            [_NORTHERN_CELL_142, (-3e10, -15.0, 850.0, 10.0, 100.0)]
+        )
+        mirrored = -sf.assign_coords({LAT_STR: -sf[LAT_STR]}).sortby(LAT_STR)
+        cells = had_cells_strength(mirrored)
+        assert cells[LAT_STR].values.tolist() == [-10.0, 15.0]
+        assert cells[LEV_STR].values.tolist() == [350.0, 850.0]
+        expected = -had_cells_shared_edge(sf).item()
+        assert had_cells_shared_edge(mirrored).item() == pytest.approx(
+            expected, abs=1e-9
+        )
 
     def test_series_with_one_cell_below_the_other(self) -> None:
         # One element with the southern cell at 850 hPa made master raise for
@@ -1695,18 +1737,18 @@ class TestSharedEdgeLevel:
         flipped = sf.isel({LEV_STR: slice(None, None, -1)})
         assert had_cells_shared_edge(flipped).item() == at_450
 
-    def test_no_crossing_between_the_cells_levels(self) -> None:
+    @pytest.mark.parametrize("plev_sine", [600.0, 650.0])
+    def test_no_crossing_between_the_cells_levels(self, plev_sine: float) -> None:
         # Cells one level apart, thin in the vertical and broad in latitude,
         # so that between the centers the streamfunction is positive along
         # the northern cell's level, 500, and negative along the southern
-        # cell's, 550. A sine along 650 hPa crosses zero at the equator, but
-        # 650 lies beyond the levels from one cell's to the other's, so no
-        # level is searched along which it crosses, and the call raises.
-        sf = _gaussian_cells_142(
-            [(1.0, 10.0, 500.0, 30.0, 1.0), (-0.8, -10.0, 550.0, 30.0, 1.0)]
-        )
+        # cell's, 550. A sine along 600 or 650 hPa crosses zero at the
+        # equator, but each lies beyond the levels from one cell's to the
+        # other's, so no level is searched along which it crosses, and the
+        # call raises.
+        sf = _thin_cells_142(550.0)
         lat = sf[LAT_STR]
-        sf.loc[{LEV_STR: 650.0}] = xr.where(
+        sf.loc[{LEV_STR: plev_sine}] = xr.where(
             np.abs(lat) <= 30.0, 0.1 * np.sin(np.pi * lat / 30.0), 0.0
         )
         cells = had_cells_strength(sf)
@@ -1714,16 +1756,22 @@ class TestSharedEdgeLevel:
         assert cells[LEV_STR].values.tolist() == [550.0, 500.0]
         with pytest.raises(
             ValueError,
-            match="none of the levels from the southern cell's, 550, to the "
-            "northern cell's, 500",
+            match="at latitudes -10 and 10, along none of the levels from the "
+            "southern cell's, 550, to the northern cell's, 500",
         ):
             had_cells_shared_edge(sf)
-        at_650 = had_cells_shared_edge(sf, fixed_plev=650.0).item()
-        assert at_650 == pytest.approx(0.0, abs=1e-9)
+        at_sine = had_cells_shared_edge(sf, fixed_plev=plev_sine).item()
+        assert at_sine == pytest.approx(0.0, abs=1e-9)
 
     @pytest.mark.parametrize(
         ("profile", "expected"),
-        [("falling", 0.5), ("first_interval", -9.5), ("nan", np.nan)],
+        [
+            ("falling", 0.5),
+            ("first_interval", -9.5),
+            ("last_interval", 9.5),
+            ("zero_at_gridpoint", 2.0),
+            ("nan", np.nan),
+        ],
     )
     def test_crossings_counted_as_master_counts_them(
         self, profile: str, expected: float
@@ -1733,17 +1781,18 @@ class TestSharedEdgeLevel:
         # 600, so the edge can be taken only along 550. Along 550 is set a
         # profile that master's zero crossing counts as crossing between the
         # centers: falling from positive to negative, through zero at 0.5N;
-        # changing sign only between the southern center, at 10S, and 9S; or
-        # NaN at the equator, which counts as a change. Master took the edge
-        # along 550 in each, and so does the search: at 0.5N, at 9.5S, and
-        # NaN.
-        sf = _gaussian_cells_142(
-            [(1.0, 10.0, 500.0, 30.0, 1.0), (-0.8, -10.0, 600.0, 30.0, 1.0)]
-        )
+        # changing sign only between the southern center, at 10S, and 9S, or
+        # only between 9N and the northern center, at 10N; passing through an
+        # exact zero at the gridpoint 2N; or NaN at the equator, which counts
+        # as a change. Master took the edge along 550 in each, and so does
+        # the search: at 0.5N, 9.5S, 9.5N, 2N, and NaN.
+        sf = _thin_cells_142(600.0)
         lat = sf[LAT_STR]
         rows = {
             "falling": -0.1 * np.sin(np.pi * (lat - 0.5) / 30.0),
             "first_interval": xr.where(lat > -10.0, 0.05, -0.05),
+            "last_interval": xr.where(lat < 10.0, -0.05, 0.05),
+            "zero_at_gridpoint": 0.1 * np.sin(np.pi * (lat - 2.0) / 30.0),
             "nan": xr.where(lat == 0.0, np.nan, 0.05),
         }
         sf.loc[{LEV_STR: 550.0}] = xr.where(np.abs(lat) <= 30.0, rows[profile], 0.0)
@@ -1752,6 +1801,32 @@ class TestSharedEdgeLevel:
         assert cells[LEV_STR].values.tolist() == [600.0, 500.0]
         edge = had_cells_shared_edge(sf).item()
         np.testing.assert_allclose(edge, expected, rtol=0, atol=1e-9)
+
+    @pytest.mark.parametrize("side", ["north", "south"])
+    def test_sign_change_beyond_a_center_is_not_counted(self, side: str) -> None:
+        # Thin cells at 500 and 700 hPa, whose mean is 600. Along 600 the
+        # streamfunction changes sign only between a center and the latitude
+        # just beyond it, outside the latitudes between the centers, so 600
+        # is passed over for 550, as near as 650 and the only one of the two
+        # along which it crosses zero between the centers: a sine through
+        # zero at 3.5N, halfway between gridpoints, so that linear
+        # interpolation gives 3.5N exactly. Master took the edge along 600
+        # and raised.
+        sf = _thin_cells_142(700.0)
+        lat = sf[LAT_STR]
+        beyond = {
+            "north": xr.where(lat <= 10.0, 0.05, -0.05),
+            "south": xr.where(lat >= -10.0, 0.05, -0.05),
+        }
+        sf.loc[{LEV_STR: 550.0}] = xr.where(
+            np.abs(lat) <= 30.0, 0.1 * np.sin(np.pi * (lat - 3.5) / 30.0), 0.0
+        )
+        sf.loc[{LEV_STR: 600.0}] = xr.where(np.abs(lat) <= 30.0, beyond[side], 0.0)
+        cells = had_cells_strength(sf)
+        assert cells[LAT_STR].values.tolist() == [-10.0, 10.0]
+        assert cells[LEV_STR].values.tolist() == [700.0, 500.0]
+        edge = had_cells_shared_edge(sf).item()
+        np.testing.assert_allclose(edge, 3.5, rtol=0, atol=1e-9)
 
 
 class TestHadCellsEdges:

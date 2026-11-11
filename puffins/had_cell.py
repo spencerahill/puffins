@@ -574,10 +574,11 @@ def _streamfunc_at_crossing_lev(
         raise ValueError(
             "The streamfunction crosses zero between the Hadley cells' centers, "
             f"at latitudes {lat_sh:.4g} and {lat_nh:.4g}, along none of the "
-            f"levels from the southern cell's, {lev_sh:.4g}, to the northern "
-            f"cell's, {lev_nh:.4g}, so the shared edge cannot be found on them."
+            f"levels from the southern cell's, {lev_sh:.6g}, to the northern "
+            f"cell's, {lev_nh:.6g}, so the shared edge cannot be found on them."
         )
-    # Of two levels equally near the mean, xarray takes the larger.
+    # Of two levels exactly equally near the mean, as computed in floating
+    # point, xarray takes the larger.
     lev_used = levs.sel({lev_str: 0.5 * (lev_sh + lev_nh)}, method="nearest")
     return cast(xr.DataArray, strmfunc.sel({lev_str: lev_used}))
 
@@ -611,8 +612,9 @@ def had_cells_shared_edge(
     the cells are found. Otherwise it is that along the level nearest the
     mean of the two cells' levels, among the levels from one cell's to the
     other's, along which the streamfunction crosses zero between the
-    centers; of two such levels equally near the mean, the one of larger
-    value, which in pressure is the lower in the atmosphere. Where one cell
+    centers; of two such levels exactly equally near the mean, as computed
+    in floating point, the one of larger value, which in pressure is the
+    lower in the atmosphere. Where one cell
     lies above the other, the streamfunction can keep one sign between the
     centers along the level nearest the mean, and such levels are passed
     over. A NaN between the centers counts as a crossing, as it does when
