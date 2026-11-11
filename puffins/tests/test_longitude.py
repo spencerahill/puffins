@@ -9,6 +9,20 @@ import xarray as xr
 from puffins.longitude import Longitude, lon_to_0360, lon_to_pm180
 
 
+def _wrap_points_and_neighbors(dtype: Any) -> np.ndarray:
+    """Each multiple of 180 in [-1080, 1080] and its two nearest floats each side.
+
+    The two below 0 are negative values for which ``lon + 360`` rounds to
+    exactly 360 (issue #83).
+    """
+    mults = np.arange(-1080, 1081, 180).astype(dtype)
+    down1 = np.nextafter(mults, dtype(-np.inf))
+    down2 = np.nextafter(down1, dtype(-np.inf))
+    up1 = np.nextafter(mults, dtype(np.inf))
+    up2 = np.nextafter(up1, dtype(np.inf))
+    return np.concatenate([down2, down1, mults, up1, up2])
+
+
 class TestLonTo0360:
     """Tests for lon_to_0360."""
 
@@ -38,6 +52,59 @@ class TestLonTo0360:
         da = xr.DataArray([0, 90, 360, -90], dims=["lon"])
         result = lon_to_0360(da)
         xr.testing.assert_equal(result, xr.DataArray([0, 90, 0, 270], dims=["lon"]))
+
+    # Negative longitudes for which ``lon + 360`` rounds to exactly 360 in
+    # float64: -2**-45 is the largest in magnitude and -5e-324 the smallest
+    # (issue #83).
+    @pytest.mark.parametrize("lon", [-(2.0**-45), -1e-14, -5e-324])
+    def test_tiny_negative_wraps_to_zero(self, lon: float) -> None:
+        """A negative lon that rounds onto 360 comes back as 0, a float."""
+        result = lon_to_0360(lon)
+        assert type(result) is float
+        assert result == 0
+
+    def test_past_tiny_negative_band_stays_below_360(self) -> None:
+        """The next float beyond -2**-45 gives the float just below 360."""
+        lon = -np.nextafter(2.0**-45, 1.0)
+        assert lon_to_0360(lon) == np.nextafter(360.0, 0.0)
+
+    def test_tiny_negative_float32_array(self) -> None:
+        """In float32 the band reaches -2**-16, so -1e-6 also comes back as 0."""
+        f32 = np.float32
+        past_band = -np.nextafter(f32(2.0**-16), f32(1))
+        lons = np.array([-(2.0**-16), -1e-6, past_band], dtype=f32)
+        result = lon_to_0360(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, [0, 0, np.nextafter(f32(360), f32(0))])
+
+    def test_tiny_negative_numpy_scalar_keeps_type(self) -> None:
+        result = lon_to_0360(np.float32(-1e-6))
+        assert type(result) is np.float32
+        assert result == 0
+
+    def test_tiny_negative_dataarray_keeps_coords_and_name(self) -> None:
+        arr = xr.DataArray(
+            [-1e-14, -90.0], dims=["x"], coords={"x": [5.0, 6.0]}, name="lons"
+        )
+        result = lon_to_0360(arr)
+        assert isinstance(result, xr.DataArray)
+        assert result.name == "lons"
+        np.testing.assert_array_equal(result["x"].values, [5.0, 6.0])
+        np.testing.assert_array_equal(result.values, [0.0, 270.0])
+
+    def test_values_in_range_returned_exactly(self) -> None:
+        """Values already in [0, 360) come back bit for bit."""
+        lons = np.array([0.0, 0.1, 179.9, 359.9, np.nextafter(360.0, 0.0)])
+        np.testing.assert_array_equal(lon_to_0360(lons), lons)
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    def test_in_range_at_wrap_points(self, dtype: Any) -> None:
+        lons = _wrap_points_and_neighbors(dtype)
+        result = lon_to_0360(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == dtype
+        assert np.all((result >= 0) & (result < 360))
 
 
 class TestLonToPm180:
@@ -119,6 +186,20 @@ class TestLonToPm180:
         assert type(result) is type(value)
         assert result == -170
 
+    def test_tiny_negative_gives_zero(self) -> None:
+        """A negative lon that rounds onto 360 gives 0, not 360 (issue #83)."""
+        result = lon_to_pm180(-1e-14)
+        assert type(result) is float
+        assert result == 0
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    def test_in_range_at_wrap_points(self, dtype: Any) -> None:
+        lons = _wrap_points_and_neighbors(dtype)
+        result = lon_to_pm180(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == dtype
+        assert np.all((result >= -180) & (result < 180))
+
 
 class TestLongitudeInit:
     """Tests for Longitude.__init__."""
@@ -147,6 +228,12 @@ class TestLongitudeInit:
         obj = Longitude(value)
         assert obj.longitude == lon
         assert obj.hemisphere == hem
+
+    def test_tiny_negative_is_zero_east(self) -> None:
+        """-1e-14 gives 0E, not 360W, outside 0 to 180 (issue #83)."""
+        obj = Longitude(-1e-14)
+        assert obj.longitude == 0
+        assert obj.hemisphere == "E"
 
     def test_from_string_east(self) -> None:
         lon = Longitude("45e")

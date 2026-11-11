@@ -33,7 +33,13 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
 
     """
     quotient = lon // 360
-    return lon - quotient * 360
+    lon0360 = lon - quotient * 360
+    # For a negative ``lon`` of magnitude at most half the floating-point
+    # spacing at 360 (2**-45, about 2.8e-14, in float64 and 2**-16, about
+    # 1.5e-5, in float32), ``lon + 360`` rounds to exactly 360.  Reducing once
+    # more maps that 360 to 0, and returns every value already in [0, 360)
+    # unchanged and in its own type (issue #83).
+    return lon0360 - (lon0360 // 360) * 360
 
 
 def _lon_in_west_hem(lon: ArrayLike) -> Any:
