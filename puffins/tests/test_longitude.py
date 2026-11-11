@@ -9,6 +9,9 @@ import xarray as xr
 
 from puffins.longitude import Longitude, lon_to_0360, lon_to_pm180
 
+# The float64 just below 180.
+_BELOW_180 = float(np.nextafter(180.0, 0.0))
+
 
 def _wrap_points_and_neighbors(dtype: Any) -> np.ndarray:
     """Each multiple of 180 in [-1080, 1080] and its two nearest floats each side.
@@ -55,6 +58,13 @@ class TestLonTo0360:
         result = lon_to_0360(-90)
         assert type(result) is int
         assert result == 270
+
+    @pytest.mark.parametrize("dtype", [np.uint16, np.uint32, np.uint64])
+    def test_unsigned_array(self, dtype: Any) -> None:
+        result = lon_to_0360(np.array([0, 180, 359, 360, 720], dtype=dtype))
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == dtype
+        np.testing.assert_array_equal(result, [0, 180, 359, 0, 0])
 
     def test_large_positive(self) -> None:
         assert lon_to_0360(720) == 0
@@ -306,6 +316,12 @@ class TestLongitudeInit:
         assert obj.longitude == 0
         assert obj.hemisphere == "E"
 
+    def test_negative_just_past_band_stays_west(self) -> None:
+        """-3e-14 rounds to the float below 360, so 2**-44 degrees west."""
+        obj = Longitude(-3e-14)
+        assert obj.hemisphere == "W"
+        assert obj.longitude == 2.0**-44
+
     @pytest.mark.parametrize("value", ["0w", "0W", "-0w", "-0e", "0e", "0.0w"])
     def test_string_prime_meridian_is_zero_east(self, value: str) -> None:
         """Every string for 0 gives 0.0E, as Longitude(0) does."""
@@ -323,7 +339,13 @@ class TestLongitudeInit:
 
     @pytest.mark.parametrize(
         ("value", "lon", "hem"),
-        [("179.9e", 179.9, "E"), ("0.1w", 0.1, "W"), ("1e-14w", 1e-14, "W")],
+        [
+            ("179.9e", 179.9, "E"),
+            (f"{_BELOW_180!r}e", _BELOW_180, "E"),
+            ("0.1w", 0.1, "W"),
+            ("1e-14w", 1e-14, "W"),
+            ("5e-324w", 5e-324, "W"),
+        ],
     )
     def test_string_beside_meridians_keeps_hemisphere(
         self, value: str, lon: float, hem: str
@@ -359,6 +381,12 @@ class TestLongitudeInit:
     def test_string_out_of_range(self) -> None:
         with pytest.raises(ValueError, match="within 0 and"):
             Longitude("200e")
+
+    @pytest.mark.parametrize("value", ["-1e-14w", "-10e", "-180w"])
+    def test_negative_string_rejected(self, value: str) -> None:
+        """Only a negative zero is accepted with a hemisphere letter."""
+        with pytest.raises(ValueError, match="within 0 and"):
+            Longitude(value)
 
     def test_invalid_type(self) -> None:
         with pytest.raises(ValueError, match="scalar or a string"):
@@ -430,6 +458,11 @@ class TestLongitudeComparisons:
         """180E is stored as 180W, so it compares as Longitude(180) does."""
         assert Longitude(180) < Longitude(170)
         assert Longitude("180e") < Longitude("170e")
+        assert not Longitude("180e") > Longitude("170e")
+        assert not Longitude("170e") < Longitude("180e")
+        assert Longitude("170w") > Longitude("180e")
+        assert Longitude("180e") <= Longitude("170e")
+        assert not Longitude("180e") >= Longitude("170e")
 
 
 class TestLongitudeArithmetic:
@@ -485,6 +518,11 @@ class TestLongitudeTo0360:
         assert Longitude("10w").to_0360() == 350
         assert Longitude("180w").to_0360() == 180
         assert Longitude("0.1w").to_0360() == 360 - 0.1
+
+    def test_west_just_past_band(self) -> None:
+        """Past the band, a western longitude gives a value just below 360."""
+        assert Longitude("3e-14w").to_0360() == np.nextafter(360.0, 0.0)
+        assert Longitude("1e-11w").to_0360() == 360 - 1e-11
 
 
 class TestLongitudeToPm180:
