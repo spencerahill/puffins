@@ -1598,6 +1598,162 @@ class TestHadCellEdgeValues:
         assert weighted.item() > plain.item()
 
 
+_LATS_142 = np.arange(-90.0, 90.1, 1.0)
+_PLEVS_142 = np.arange(100.0, 1000.1, 50.0)
+# The deep northern cell of issue #142's reproducer: strength, center
+# latitude and level, and e-folding half-widths in latitude and level.
+_NORTHERN_CELL_142 = (1e11, 10.0, 350.0, 15.0, 250.0)
+
+
+def _gaussian(
+    lat: Any, plev: Any, cell: tuple[float, float, float, float, float]
+) -> Any:
+    """One Gaussian cell of `_gaussian_cells_142`, at the given points."""
+    strength, lat_center, plev_center, lat_width, plev_width = cell
+    return strength * np.exp(
+        -(((lat - lat_center) / lat_width) ** 2)
+        - ((plev - plev_center) / plev_width) ** 2
+    )
+
+
+def _gaussian_cells_142(
+    cells: list[tuple[float, float, float, float, float]],
+) -> xr.DataArray:
+    """Sum of Gaussian cells in latitude and level, as in issue #142."""
+    lat, plev = np.meshgrid(_LATS_142, _PLEVS_142)
+    return xr.DataArray(
+        np.sum([_gaussian(lat, plev, cell) for cell in cells], axis=0),
+        dims=(LEV_STR, LAT_STR),
+        coords={LEV_STR: _PLEVS_142, LAT_STR: _LATS_142},
+        name="streamfunc",
+    )
+
+
+class TestSharedEdgeLevel:
+    """The level of the shared edge without fixed_plev or do_avg_vert (#142)."""
+
+    def test_one_cell_below_the_other(self) -> None:
+        # The reproducer of #142, with the southern cell of -3e10 at 15S and
+        # 850 hPa. Between the centers the streamfunction is positive along
+        # every level from 350 to 650, the level nearest the mean, 600,
+        # among them, so master raised. Of the levels along which it crosses
+        # zero, 700 is the nearest, and 500, as near, is not one. The edge is
+        # the crossing along 700, which matches the field's analytic root
+        # there to within the error of linear interpolation between
+        # gridpoints a degree apart.
+        southern = (-3e10, -15.0, 850.0, 10.0, 100.0)
+        sf = _gaussian_cells_142([_NORTHERN_CELL_142, southern])
+        between = sf.sel({LAT_STR: slice(-15.0, 10.0)})
+        assert bool((between.sel({LEV_STR: slice(350.0, 650.0)}) > 0).all())
+        assert bool((between.sel({LEV_STR: 700.0}) < 0).any())
+        root = brentq(
+            lambda x: (
+                _gaussian(x, 700.0, _NORTHERN_CELL_142) + _gaussian(x, 700.0, southern)
+            ),
+            -15.0,
+            10.0,
+        )
+        edge = had_cells_shared_edge(sf).item()
+        assert edge == had_cells_shared_edge(sf, fixed_plev=700.0).item()
+        assert edge == pytest.approx(root, abs=0.01)
+        assert _edge_arr(had_cells_edges(sf)[1]).item() == edge
+        flipped = sf.isel({LEV_STR: slice(None, None, -1)})
+        assert had_cells_shared_edge(flipped).item() == edge
+
+    def test_series_with_one_cell_below_the_other(self) -> None:
+        # One element with the southern cell at 850 hPa made master raise for
+        # the whole series. Each element now gets its edge: with both cells
+        # at 350 hPa, the crossing along 350, and otherwise along 700.
+        series = xr.concat(
+            [
+                _gaussian_cells_142(
+                    [_NORTHERN_CELL_142, (-3e10, -15.0, plev, 10.0, 100.0)]
+                )
+                for plev in (350.0, 850.0)
+            ],
+            dim=TIME_STR,
+        )
+        expected = [
+            had_cells_shared_edge(series.isel({TIME_STR: i}), fixed_plev=plev).item()
+            for i, plev in enumerate((350.0, 700.0))
+        ]
+        assert had_cells_shared_edge(series).values.tolist() == expected
+
+    def test_two_levels_equally_near_the_mean(self) -> None:
+        # Cells at 350 and 500 hPa, whose mean, 425, is equally near 400 and
+        # 450. The streamfunction crosses zero between the centers along
+        # both, more than a degree apart, and the edge is taken along 450,
+        # the larger value, as on master, whichever way the levels run.
+        sf = _gaussian_cells_142(
+            [_NORTHERN_CELL_142, (-6e10, -15.0, 500.0, 12.0, 200.0)]
+        )
+        assert had_cells_strength(sf)[LEV_STR].values.tolist() == [500.0, 350.0]
+        at_400 = had_cells_shared_edge(sf, fixed_plev=400.0).item()
+        at_450 = had_cells_shared_edge(sf, fixed_plev=450.0).item()
+        assert abs(at_400 - at_450) > 1.0
+        assert had_cells_shared_edge(sf).item() == at_450
+        flipped = sf.isel({LEV_STR: slice(None, None, -1)})
+        assert had_cells_shared_edge(flipped).item() == at_450
+
+    def test_no_crossing_between_the_cells_levels(self) -> None:
+        # Cells one level apart, thin in the vertical and broad in latitude,
+        # so that between the centers the streamfunction is positive along
+        # the northern cell's level, 500, and negative along the southern
+        # cell's, 550. A sine along 650 hPa crosses zero at the equator, but
+        # 650 lies beyond the levels from one cell's to the other's, so no
+        # level is searched along which it crosses, and the call raises.
+        sf = _gaussian_cells_142(
+            [(1.0, 10.0, 500.0, 30.0, 1.0), (-0.8, -10.0, 550.0, 30.0, 1.0)]
+        )
+        lat = sf[LAT_STR]
+        sf.loc[{LEV_STR: 650.0}] = xr.where(
+            np.abs(lat) <= 30.0, 0.1 * np.sin(np.pi * lat / 30.0), 0.0
+        )
+        cells = had_cells_strength(sf)
+        assert cells[LAT_STR].values.tolist() == [-10.0, 10.0]
+        assert cells[LEV_STR].values.tolist() == [550.0, 500.0]
+        with pytest.raises(
+            ValueError,
+            match="none of the levels from the southern cell's, 550, to the "
+            "northern cell's, 500",
+        ):
+            had_cells_shared_edge(sf)
+        at_650 = had_cells_shared_edge(sf, fixed_plev=650.0).item()
+        assert at_650 == pytest.approx(0.0, abs=1e-9)
+
+    @pytest.mark.parametrize(
+        ("profile", "expected"),
+        [("falling", 0.5), ("first_interval", -9.5), ("nan", np.nan)],
+    )
+    def test_crossings_counted_as_master_counts_them(
+        self, profile: str, expected: float
+    ) -> None:
+        # Thin cells at 500 and 600 hPa, whose mean is 550: between the
+        # centers the streamfunction is positive along 500 and negative along
+        # 600, so the edge can be taken only along 550. Along 550 is set a
+        # profile that master's zero crossing counts as crossing between the
+        # centers: falling from positive to negative, through zero at 0.5N;
+        # changing sign only between the southern center, at 10S, and 9S; or
+        # NaN at the equator, which counts as a change. Master took the edge
+        # along 550 in each, and so does the search: at 0.5N, at 9.5S, and
+        # NaN.
+        sf = _gaussian_cells_142(
+            [(1.0, 10.0, 500.0, 30.0, 1.0), (-0.8, -10.0, 600.0, 30.0, 1.0)]
+        )
+        lat = sf[LAT_STR]
+        rows = {
+            "falling": -0.1 * np.sin(np.pi * (lat - 0.5) / 30.0),
+            "first_interval": xr.where(lat > -10.0, 0.05, -0.05),
+            "nan": xr.where(lat == 0.0, np.nan, 0.05),
+        }
+        sf.loc[{LEV_STR: 550.0}] = xr.where(np.abs(lat) <= 30.0, rows[profile], 0.0)
+        cells = had_cells_strength(sf)
+        assert cells[LAT_STR].values.tolist() == [-10.0, 10.0]
+        assert cells[LEV_STR].values.tolist() == [600.0, 500.0]
+        edge = had_cells_shared_edge(sf).item()
+        np.testing.assert_allclose(edge, expected, rtol=0, atol=1e-9)
+
+
 class TestHadCellsEdges:
     """had_cells_edges must route kwargs correctly to all three edge funcs."""
 
