@@ -1,5 +1,6 @@
 """Tests for longitude module."""
 
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,18 @@ def _wrap_points_and_neighbors(dtype: Any) -> np.ndarray:
     return np.concatenate([down2, down1, mults, up1, up2])
 
 
+def _exact_0360(lons: np.ndarray) -> np.ndarray:
+    """``lons`` modulo 360 from exact rational arithmetic, in ``lons``'s dtype.
+
+    Each remainder is computed exactly, rounded to float64 and then to the
+    dtype, and a remainder that rounds to 360 is sent to 0.  It shares no
+    floor division with the code under test.
+    """
+    ref = np.array([float(Fraction(float(x)) % 360) for x in lons]).astype(lons.dtype)
+    ref[ref == 360] = 0
+    return ref
+
+
 class TestLonTo0360:
     """Tests for lon_to_0360."""
 
@@ -37,6 +50,11 @@ class TestLonTo0360:
 
     def test_negative(self) -> None:
         assert lon_to_0360(-90) == 270
+
+    def test_int_stays_int(self) -> None:
+        result = lon_to_0360(-90)
+        assert type(result) is int
+        assert result == 270
 
     def test_large_positive(self) -> None:
         assert lon_to_0360(720) == 0
@@ -78,33 +96,63 @@ class TestLonTo0360:
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result, [0, 0, np.nextafter(f32(360), f32(0))])
 
+    @pytest.mark.parametrize(
+        "dtype", [np.float16, np.float32, np.float64, np.longdouble]
+    )
+    def test_band_edge_in_each_float_dtype(self, dtype: Any) -> None:
+        """The band's edge, minus half the float spacing at 360, gives 0.
+
+        One float beyond the edge gives the float just below 360.  The edge
+        is -0.125 in float16, and in longdouble it depends on the platform's
+        precision.
+        """
+        edge = -np.spacing(dtype(360)) / 2
+        beyond = np.nextafter(edge, dtype(-np.inf))
+        result = lon_to_0360(np.array([edge, beyond], dtype=dtype))
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == dtype
+        expected = np.array([0, np.nextafter(dtype(360), dtype(0))], dtype=dtype)
+        np.testing.assert_array_equal(result, expected)
+
     def test_tiny_negative_numpy_scalar_keeps_type(self) -> None:
         result = lon_to_0360(np.float32(-1e-6))
         assert type(result) is np.float32
         assert result == 0
 
-    def test_tiny_negative_dataarray_keeps_coords_and_name(self) -> None:
+    def test_tiny_negative_dataarray_keeps_coords_name_and_attrs(self) -> None:
         arr = xr.DataArray(
-            [-1e-14, -90.0], dims=["x"], coords={"x": [5.0, 6.0]}, name="lons"
+            [-1e-14, -90.0],
+            dims=["x"],
+            coords={"x": [5.0, 6.0]},
+            name="lons",
+            attrs={"units": "degrees_east"},
         )
         result = lon_to_0360(arr)
         assert isinstance(result, xr.DataArray)
         assert result.name == "lons"
+        assert result.attrs == {"units": "degrees_east"}
         np.testing.assert_array_equal(result["x"].values, [5.0, 6.0])
         np.testing.assert_array_equal(result.values, [0.0, 270.0])
 
-    def test_values_in_range_returned_exactly(self) -> None:
+    @pytest.mark.parametrize(
+        ("dtype", "uint"), [(np.float32, np.uint32), (np.float64, np.uint64)]
+    )
+    def test_values_in_range_returned_exactly(self, dtype: Any, uint: Any) -> None:
         """Values already in [0, 360) come back bit for bit."""
-        lons = np.array([0.0, 0.1, 179.9, 359.9, np.nextafter(360.0, 0.0)])
-        np.testing.assert_array_equal(lon_to_0360(lons), lons)
+        lons = np.array([0.0, 0.1, 179.9, 359.9], dtype=dtype)
+        lons = np.append(lons, np.nextafter(dtype(360), dtype(0)))
+        result = lon_to_0360(lons)
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_array_equal(result.view(uint), lons.view(uint))
 
     @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-    def test_in_range_at_wrap_points(self, dtype: Any) -> None:
+    def test_wrap_points_in_range_and_exact(self, dtype: Any) -> None:
         lons = _wrap_points_and_neighbors(dtype)
         result = lon_to_0360(lons)
         assert isinstance(result, np.ndarray)
         assert result.dtype == dtype
         assert np.all((result >= 0) & (result < 360))
+        np.testing.assert_array_equal(result, _exact_0360(lons))
 
 
 class TestLonToPm180:
@@ -193,12 +241,16 @@ class TestLonToPm180:
         assert result == 0
 
     @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-    def test_in_range_at_wrap_points(self, dtype: Any) -> None:
+    def test_wrap_points_in_range_and_exact(self, dtype: Any) -> None:
+        """At the wrap points, the exact remainder in [0, 360) minus 360 if 180 up."""
         lons = _wrap_points_and_neighbors(dtype)
         result = lon_to_pm180(lons)
         assert isinstance(result, np.ndarray)
         assert result.dtype == dtype
         assert np.all((result >= -180) & (result < 180))
+        ref = _exact_0360(lons)
+        expected = np.where(ref >= 180, ref - 360, ref).astype(dtype)
+        np.testing.assert_array_equal(result, expected)
 
 
 class TestLongitudeInit:
