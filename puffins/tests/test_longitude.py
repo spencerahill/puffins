@@ -154,6 +154,25 @@ class TestLonTo0360:
         assert np.all((result >= 0) & (result < 360))
         np.testing.assert_array_equal(result, _exact_0360(lons))
 
+    @pytest.mark.parametrize(
+        "lon",
+        [
+            np.float32(134218448.0),
+            np.float32(1.01331035e17),
+            np.float64(2.0**60),
+            np.float64(-3.818876831979843e34),
+        ],
+    )
+    def test_huge_magnitude_gives_exact_remainder(self, lon: Any) -> None:
+        """Far past any physical longitude, the result is the exact remainder.
+
+        ``lon - (lon // 360) * 360`` gives 16 for the first value, whose
+        remainder is 8, and values outside [0, 360) for the second and fourth.
+        """
+        result = lon_to_0360(lon)
+        assert type(result) is type(lon)
+        assert result == _exact_0360(np.array([lon]))[0]
+
 
 class TestLonToPm180:
     """Tests for lon_to_pm180."""
@@ -287,6 +306,33 @@ class TestLongitudeInit:
         assert obj.longitude == 0
         assert obj.hemisphere == "E"
 
+    @pytest.mark.parametrize("value", ["0w", "0W", "-0w", "-0e", "0e", "0.0w"])
+    def test_string_prime_meridian_is_zero_east(self, value: str) -> None:
+        """Every string for 0 gives 0.0E, as Longitude(0) does."""
+        obj = Longitude(value)
+        assert repr(obj) == "Longitude('0.0E')"
+        assert obj == Longitude(0)
+
+    @pytest.mark.parametrize("value", ["180e", "180E", "180w", "180.0e"])
+    def test_string_antimeridian_is_180_west(self, value: str) -> None:
+        """Every string for 180 gives 180.0W, as Longitude(180) does."""
+        obj = Longitude(value)
+        assert repr(obj) == "Longitude('180.0W')"
+        assert obj == Longitude(180)
+        assert obj == Longitude(-180)
+
+    @pytest.mark.parametrize(
+        ("value", "lon", "hem"),
+        [("179.9e", 179.9, "E"), ("0.1w", 0.1, "W"), ("1e-14w", 1e-14, "W")],
+    )
+    def test_string_beside_meridians_keeps_hemisphere(
+        self, value: str, lon: float, hem: str
+    ) -> None:
+        """Only exactly 0 and exactly 180 move hemisphere."""
+        obj = Longitude(value)
+        assert obj.longitude == lon
+        assert obj.hemisphere == hem
+
     def test_from_string_east(self) -> None:
         lon = Longitude("45e")
         assert lon.longitude == 45
@@ -376,6 +422,15 @@ class TestLongitudeComparisons:
     def test_ge_greater(self) -> None:
         assert Longitude(90) >= Longitude(45)
 
+    def test_same_meridian_equal_whichever_hemisphere_letter(self) -> None:
+        assert Longitude("0w") == Longitude("0e")
+        assert Longitude("180e") == Longitude("180w")
+
+    def test_antimeridian_string_compares_as_west(self) -> None:
+        """180E is stored as 180W, so it compares as Longitude(180) does."""
+        assert Longitude(180) < Longitude(170)
+        assert Longitude("180e") < Longitude("170e")
+
 
 class TestLongitudeArithmetic:
     """Tests for Longitude arithmetic operators."""
@@ -419,6 +474,18 @@ class TestLongitudeTo0360:
     def test_zero(self) -> None:
         assert Longitude(0).to_0360() == 0
 
+    @pytest.mark.parametrize("value", ["0w", "1e-14w"])
+    def test_west_at_or_near_zero_gives_zero(self, value: str) -> None:
+        """0 comes back, never 360, which is outside [0, 360)."""
+        result = Longitude(value).to_0360()
+        assert type(result) is float
+        assert result == 0
+
+    def test_west_strings(self) -> None:
+        assert Longitude("10w").to_0360() == 350
+        assert Longitude("180w").to_0360() == 180
+        assert Longitude("0.1w").to_0360() == 360 - 0.1
+
 
 class TestLongitudeToPm180:
     """Tests for Longitude.to_pm180."""
@@ -431,3 +498,23 @@ class TestLongitudeToPm180:
 
     def test_zero(self) -> None:
         assert Longitude(0).to_pm180() == 0
+
+    def test_antimeridian_string(self) -> None:
+        """Longitude('180e') gives -180, inside [-180, 180)."""
+        assert Longitude("180e").to_pm180() == -180
+
+
+@pytest.mark.parametrize(
+    "value",
+    [f"{v!r}{hem}" for hem in ("e", "w") for v in (0.0, 1e-14, 0.1, 90.0, 180.0)]
+    + [-3e-14, -1e-14, 0.0, 180.0, -180.0, 360.0, 540.0, -0.1],
+)
+def test_longitude_conversions_in_range(value: float | str) -> None:
+    """to_0360 is in [0, 360) and to_pm180 in [-180, 180), from string or number."""
+    obj = Longitude(value)
+    assert 0 <= obj.to_0360() < 360
+    assert -180 <= obj.to_pm180() < 180
+    if obj.hemisphere == "E":
+        assert 0 <= obj.longitude < 180
+    else:
+        assert 0 < obj.longitude <= 180
