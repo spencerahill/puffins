@@ -548,15 +548,39 @@ def had_cells_strength(
     return ds_strengths["cell_strength"]
 
 
-def _streamfunc_at_avg_lev_max(
-    strmfunc: xr.DataArray, hc_strengths: xr.DataArray, lev_str: str = LEV_STR
+def _streamfunc_at_crossing_lev(
+    strmfunc: xr.DataArray,
+    hc_strengths: xr.DataArray,
+    lat_str: str = LAT_STR,
+    lev_str: str = LEV_STR,
 ) -> xr.DataArray:
-    """Streamfunction at the average level of the two Hadley cell centers."""
-    lev_sh_max = hc_strengths[lev_str][0]
-    lev_nh_max = hc_strengths[lev_str][1]
+    """Streamfunction along the level on which the shared edge is taken.
+
+    That level is the one nearest the mean of the two cells' levels, among
+    the levels from one cell's to the other's, along which the streamfunction
+    crosses zero between the cells' centers.
+    """
+    lat_sh, lat_nh = (float(x) for x in hc_strengths[lat_str].values)
+    lev_sh, lev_nh = (float(x) for x in hc_strengths[lev_str].values)
+    lat = strmfunc[lat_str]
     lev = strmfunc[lev_str]
-    lev_avg = lev.sel({lev_str: 0.5 * (lev_sh_max + lev_nh_max)}, method="nearest")
-    return cast(xr.DataArray, strmfunc.sel({lev_str: lev_avg}))
+    between = strmfunc.where((lat >= lat_sh) & (lat <= lat_nh), drop=True)
+    # A crossing as zero_cross_interp finds one: a change of sign between
+    # neighboring latitudes, with NaN counting as a change.
+    crosses = (cast(xr.DataArray, np.sign(between)).diff(lat_str) != 0).any(lat_str)
+    in_range = (lev >= min(lev_sh, lev_nh)) & (lev <= max(lev_sh, lev_nh))
+    levs = lev.where(crosses & in_range, drop=True)
+    if levs.size == 0:
+        raise ValueError(
+            "The streamfunction crosses zero between the Hadley cells' centers, "
+            f"at latitudes {lat_sh:.4g} and {lat_nh:.4g}, along none of the "
+            f"levels from the southern cell's, {lev_sh:.6g}, to the northern "
+            f"cell's, {lev_nh:.6g}, so the shared edge cannot be found on them."
+        )
+    # Of two levels exactly equally near the mean, as computed in floating
+    # point, xarray takes the larger.
+    lev_used = levs.sel({lev_str: 0.5 * (lev_sh + lev_nh)}, method="nearest")
+    return cast(xr.DataArray, strmfunc.sel({lev_str: lev_used}))
 
 
 @_each_element("lat_str", "lev_str")
@@ -585,8 +609,17 @@ def had_cells_shared_edge(
     streamfunction along the level nearest `fixed_plev`. Without
     `fixed_plev`, it is that of the streamfunction averaged over the levels
     from `min_plev` to `max_plev` with `do_avg_vert`, the profile on which
-    the cells are found, and otherwise that along the level nearest the
-    mean of the two cells' levels.
+    the cells are found. Otherwise it is that along the level nearest the
+    mean of the two cells' levels, among the levels from one cell's to the
+    other's, along which the streamfunction crosses zero between the
+    centers; of two such levels exactly equally near the mean, as computed
+    in floating point, the one of larger value, which in pressure is the
+    lower in the atmosphere. Where one cell
+    lies above the other, the streamfunction can keep one sign between the
+    centers along the level nearest the mean, and such levels are passed
+    over. A NaN between the centers counts as a crossing, as it does when
+    the crossing is interpolated, so the edge along such a level can be NaN.
+    A `ValueError` is raised when it crosses zero along none of them.
 
     """
     lat = strmfunc[lat_str]
@@ -612,7 +645,9 @@ def had_cells_shared_edge(
     elif do_avg_vert:
         sf_at_max = _valid_levels(strmfunc, min_plev, max_plev, True, lev_str)
     else:
-        sf_at_max = _streamfunc_at_avg_lev_max(strmfunc, hc_strengths, lev_str)
+        sf_at_max = _streamfunc_at_crossing_lev(
+            strmfunc, hc_strengths, lat_str, lev_str
+        )
     sf_max2max = sf_at_max.where((lat >= lat_sh_max) & (lat <= lat_nh_max), drop=True)
     edge_lat = zero_cross_interp(sf_max2max, lat_str)[lat_str]
     # Drop scalar coords inherited from intermediates (e.g. the level of the
