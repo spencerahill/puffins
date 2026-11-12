@@ -112,9 +112,9 @@ class Longitude:
 
     The prime meridian counts as eastern and the antimeridian as western,
     whether given as a number or as a string: ``Longitude('0w')`` equals
-    ``Longitude(0)``, 0
-    degrees east, and ``Longitude('180e')`` equals ``Longitude(180)``, 180
-    degrees west, so ``Longitude('180e') < Longitude('170e')``.
+    ``Longitude(0)``, 0 degrees east, and ``Longitude('180e')`` equals
+    ``Longitude(180)``, 180 degrees west, so
+    ``Longitude('180e') < Longitude('170e')``.
 
     In addition to other Longitude objects, the operators can be used to
     compare a Longitude object to anything that can be casted to a Longitude
