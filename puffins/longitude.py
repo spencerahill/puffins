@@ -32,8 +32,15 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
         with each element a scalar in the range [0, 360).
 
     """
-    quotient = lon // 360
-    return lon - quotient * 360
+    # A single ``lon % 360`` returns exactly 360 for a negative ``lon`` of
+    # magnitude at most half the floating-point spacing at 360 (2**-45, about
+    # 2.8e-14, in float64 and 2**-16, about 1.5e-5, in float32), because
+    # ``lon + 360`` rounds to 360 there.  The second ``% 360`` maps that 360 to
+    # 0 and returns every value already in [0, 360) unchanged and in its own
+    # type (issue #83).  ``%`` also stays exact at magnitudes, from about 1.3e8
+    # in float32 and 7.2e16 in float64, where ``lon - (lon // 360) * 360`` does
+    # not.
+    return lon % 360 % 360
 
 
 def _lon_in_west_hem(lon: ArrayLike) -> Any:
@@ -103,6 +110,12 @@ class Longitude:
     Hemisphere.  The ``>`` operator is defined analogously.  ``==``, ``>=``,
     and ``<=`` are also all defined.
 
+    The prime meridian counts as eastern and the antimeridian as western,
+    whether given as a number or as a string: ``Longitude('0w')`` equals
+    ``Longitude(0)``, 0 degrees east, and ``Longitude('180e')`` equals
+    ``Longitude(180)``, 180 degrees west, so
+    ``Longitude('180e') < Longitude('170e')``.
+
     In addition to other Longitude objects, the operators can be used to
     compare a Longitude object to anything that can be casted to a Longitude
     object, or to any sequence (e.g. a list or xarray.DataArray) whose elements
@@ -127,6 +140,10 @@ class Longitude:
             range 0-180 followed by a single letter 'e' or 'w' (case
             insensitive).  For example, ``Longitude('10w')`` would yield a
             ``Longitude`` object corresponding to 10 degrees west longitude.
+            The prime meridian and the antimeridian are stored in the
+            representation a scalar gives them, so that each meridian has one:
+            ``Longitude('0w')`` is 0 degrees east and ``Longitude('180e')`` is
+            180 degrees west.
         """
         try:
             val_as_float = float(value)
@@ -146,8 +163,16 @@ class Longitude:
                     "within 0 and +180.  Value given: "
                     f"{lon_value}"
                 )
+            hemisphere = value[-1].upper()
+            # The scalar path puts 0 in the east and 180 in the west, matching
+            # lon_to_pm180's range of [-180, 180).  Store strings the same way,
+            # and a negative zero as 0.0.
+            if lon_value == 0:
+                lon_value, hemisphere = 0.0, "E"
+            elif lon_value == 180:
+                hemisphere = "W"
             self._longitude = lon_value
-            self._hemisphere = value[-1].upper()
+            self._hemisphere = hemisphere
         else:
             lon_pm180 = float(lon_to_pm180(val_as_float))
             if _lon_in_west_hem(val_as_float):
@@ -161,8 +186,9 @@ class Longitude:
     def longitude(self) -> float:
         """(scalar) The unsigned numerical value of the longitude.
 
-        Always in the range 0 to 180.  Must be combined with the ``hemisphere``
-        attribute to specify the exact latitude.
+        In the range [0, 180) in the Eastern Hemisphere and (0, 180] in the
+        Western, so 0 is always east and 180 always west.  Must be combined with
+        the ``hemisphere`` attribute to specify the exact longitude.
 
         """
         return self._longitude
@@ -248,7 +274,9 @@ class Longitude:
     def to_0360(self) -> float:
         """Convert longitude to its numerical value within [0, 360)."""
         if self.hemisphere == "W":
-            return -1 * self.longitude + 360
+            # Through lon_to_0360, so that a western longitude too small for
+            # 360 minus it to differ from 360 gives 0, never 360.
+            return cast(float, lon_to_0360(-self.longitude))
         else:
             return self.longitude
 
