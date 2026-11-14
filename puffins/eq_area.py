@@ -743,13 +743,15 @@ def _checked_root_solve(
     x = np.asarray(sol.x, dtype=float)
     resid = np.abs(np.asarray(sol.fun, dtype=float))
     width_floor = np.sin(np.deg2rad(min_cell_width))
-    widths_sin = np.maximum(np.abs(x[[0, 2]] - x[1]), width_floor)
     # Integrals compared with resid_tol times the width rather than divided
     # by it, so that a zero width, allowed when min_cell_width is 0, passes
-    # a zero integral.  Written so that a NaN root or residual also raises.
-    within_tol = np.concatenate(
-        [resid[:2] <= resid_tol, resid[2:] <= resid_tol * widths_sin]
-    )
+    # a zero integral.  Written so that a NaN root or residual also raises;
+    # errstate because some NumPy builds warn on comparing NaN.
+    with np.errstate(invalid="ignore"):
+        widths_sin = np.maximum(np.abs(x[[0, 2]] - x[1]), width_floor)
+        within_tol = np.concatenate(
+            [resid[:2] <= resid_tol, resid[2:] <= resid_tol * widths_sin]
+        )
     if not (np.isfinite(x).all() and within_tol.all()):
         raise RuntimeError(
             "equal-area solver did not converge: scipy reported success, but "
