@@ -657,12 +657,24 @@ class CellEdgeError(RuntimeError):
     Raised by the numerical equal-area solvers when the four equations are
     solved to within the residual tolerance, but an edge lies at or beyond
     a pole, the shared edge does not lie between the two poleward edges, or
-    a cell is narrower than the minimum width.  Narrower cells include the
-    no-circulation state, with all three edges at one latitude and the
-    inner-edge temperature equal to the RCE temperature there, which solves
-    the equations exactly at any latitude.  They also include a vanished
-    cell, which in continuation in the heating maximum can mark the end of
-    the two-cell solution.
+    a cell is narrower than the minimum width and a re-solve does not
+    confirm it (see the solvers' ``min_cell_width``).
+
+    Two roots of this kind solve the equations exactly.  In the
+    no-circulation state, all three edges lie at one latitude and the
+    inner-edge temperature equals the RCE temperature there.  In a vanished
+    cell, one poleward edge lies at the shared edge, the inner-edge
+    temperature again equals the RCE temperature there, and the other cell
+    satisfies its two equations alone.  The vanished-cell root solves the
+    equations at any heating maximum, beside the two-cell root while that
+    exists, so this error means that the solver found that root from the
+    guess given, not that there is no two-cell root.  In continuation in
+    the heating maximum, a guess extrapolated from the last two roots
+    recovers the two-cell root where there is one.  At a thermal Rossby
+    number of 0.05, in the four models with a two-cell continuation
+    measured (puffins PR #156), the two-cell solution ends where the summer
+    cell's width goes to zero continuously, as the shared edge reaches the
+    heating maximum.
 
     It subclasses RuntimeError, which the solvers raise for a numerical
     failure, so ``except RuntimeError`` catches both, and continuation code
@@ -682,6 +694,93 @@ class CellEdgeError(RuntimeError):
 # Defaults of the solvers' resid_tol (K) and min_cell_width (degrees).
 _RESID_TOL = 1e-3
 _MIN_CELL_WIDTH = 0.5
+# A root with one cell narrower than min_cell_width is re-solved from itself
+# with this xtol, and kept if no edge moves by more than this fraction of
+# that cell's width and the cell stays at least this many degrees wide.
+# _checked_root_solve's docstring gives the measurements behind them.
+_RESOLVE_XTOL = 1e-14
+_RESOLVE_MAX_SHIFT = 0.1
+_RESOLVE_MIN_WIDTH = 1e-3
+
+
+def _residuals_within_tol(
+    x: np.ndarray, fun: np.ndarray, resid_tol: float, min_cell_width: float
+) -> tuple[bool, np.ndarray, np.ndarray]:
+    """The residual check of ``_checked_root_solve``.
+
+    Returns whether the root is finite and every scaled residual is within
+    ``resid_tol``, the absolute residuals, and the two cells' widths in
+    sin(latitude) as floored.  The floor of each is the width in
+    sin(latitude) of a cell ``min_cell_width`` degrees wide that starts at
+    the shared edge and extends toward that cell.
+    """
+    resid = np.abs(np.asarray(fun, dtype=float))
+    # A NaN root or residual must fail, and some NumPy builds warn on
+    # comparing NaN.
+    with np.errstate(invalid="ignore"):
+        sinlat_1 = np.clip(x[1], -1.0, 1.0)
+        lat_1 = np.rad2deg(np.arcsin(sinlat_1))
+        toward_cell = np.sign(x[[0, 2]] - x[1])
+        floor = np.abs(
+            np.sin(np.deg2rad(lat_1 + toward_cell * min_cell_width)) - sinlat_1
+        )
+        widths_sin = np.maximum(np.abs(x[[0, 2]] - x[1]), floor)
+        # Compared with resid_tol times the width rather than divided by
+        # it, so that a zero width, allowed when min_cell_width is 0,
+        # passes a zero integral.
+        within = bool(
+            np.all(resid[:2] <= resid_tol)
+            and np.all(resid[2:] <= resid_tol * widths_sin)
+        )
+    return bool(np.isfinite(x).all()) and within, resid, widths_sin
+
+
+def _cell_widths(x: np.ndarray, orientation: float) -> np.ndarray:
+    """Widths (degrees) of the two cells, positive in the guess's order."""
+    return cast(np.ndarray, orientation * np.diff(np.rad2deg(np.arcsin(x[:3]))))
+
+
+def _confirm_narrow_cell(
+    func: Callable[..., np.ndarray],
+    x: np.ndarray,
+    args: tuple,
+    orientation: float,
+    resid_tol: float,
+    min_cell_width: float,
+    message: str,
+) -> np.ndarray:
+    """Re-solve a root with one narrow cell; return the re-solved root if it
+    confirms that cell, else raise CellEdgeError with ``message``."""
+    narrowest = float(_cell_widths(x, orientation).min())
+    try:
+        sol = scipy.optimize.root(func, x, args=args, options={"xtol": _RESOLVE_XTOL})
+    except (ValueError, ArithmeticError) as err:
+        raise CellEdgeError(
+            f"{message}; re-solving it raised {type(err).__name__}: {err}", x
+        ) from err
+    x_new = np.asarray(sol.x, dtype=float)
+    within_tol, _, _ = _residuals_within_tol(x_new, sol.fun, resid_tol, min_cell_width)
+    if not (within_tol and np.all(np.abs(x_new[:3]) < 1)):
+        raise CellEdgeError(
+            f"{message}; re-solving it gave {x_new}, which fails the residual "
+            "or pole check",
+            x,
+        )
+    widths_new = _cell_widths(x_new, orientation)
+    lat, lat_new = (np.rad2deg(np.arcsin(v[:3])) for v in (x, x_new))
+    shift = float(np.max(np.abs(lat_new - lat)))
+    if (
+        shift <= _RESOLVE_MAX_SHIFT * narrowest
+        and widths_new.min() >= _RESOLVE_MIN_WIDTH
+        and widths_new.max() >= min_cell_width
+    ):
+        return x_new
+    raise CellEdgeError(
+        f"{message}; re-solving it with xtol {_RESOLVE_XTOL:g} moved its edges "
+        f"by up to {shift:.3g} degrees, to {lat_new} degrees, which does not "
+        f"confirm a cell {narrowest:.3g} degrees wide",
+        x_new,
+    )
 
 
 def _checked_root_solve(
@@ -707,30 +806,70 @@ def _checked_root_solve(
     checked against ``resid_tol``.  Dividing an integral residual by its
     cell's width in sin(latitude) gives the area-weighted mean over the cell
     of the temperature difference, in K, which is also the error in T_1
-    that the integral alone implies.  The width is floored at
-    sin(min_cell_width), the width in sin(latitude) of a cell that narrow
-    beside the equator.  Without the floor, the division amplifies the
-    rounding error of a converged root with a vanished cell, which then
-    fails the residual check where it should fail the edge check.
+    that the integral alone implies.  The width is floored at that of a
+    cell ``min_cell_width`` wide at the shared edge, extending toward the
+    cell.  Without the floor, the division amplifies the rounding error of
+    a converged root with a vanished cell, which then fails the residual
+    check where it should fail the edge check.  The floor is taken at the
+    shared edge, not the equator, because a cell's width in sin(latitude)
+    shrinks as cos(latitude) toward the pole.
+
+    The edges must bound two cells in the order of the initial guess:
+    increasing latitude if init_guess[2] >= init_guess[0], decreasing
+    otherwise.  The equations are symmetric under exchanging the two
+    poleward edges, so either order solves the same model.
+
+    A root with one cell narrower than ``min_cell_width`` is not rejected
+    outright, because at small thermal Rossby numbers the two-cell solution
+    narrows continuously to zero width at the end of the branch, through
+    genuine roots with arbitrarily narrow cells.  It is re-solved from
+    itself with xtol ``_RESOLVE_XTOL``, and the re-solved root is returned
+    if it passes the residual and pole checks, its other cell is still at
+    least ``min_cell_width`` wide, its narrow cell at least
+    ``_RESOLVE_MIN_WIDTH`` degrees wide, and no edge moved by more than
+    ``_RESOLVE_MAX_SHIFT`` times the narrow cell's width.  scipy's success
+    flag for the re-solve is not used: at 55 of the 135 genuine two-cell
+    roots below, it reported an xtol it cannot reach or a lack of progress.
+
+    The thresholds come from measurement (puffins PR #156).  Over 135
+    two-cell roots with a cell narrower than 0.5 degrees, found by
+    continuation in the heating maximum for the LH88 and CQE models and
+    both fixed-tropopause-temperature models, the re-solve moved no edge by
+    more than 0.003 of the narrow cell's width for cells at least 0.1 degrees
+    wide, and by up to 0.25 of it for cells 0.001 to 0.01 degrees wide.  In
+    the sweep of puffins issue #120 and a second sweep of LH88, a root that
+    only approximates a vanished cell collapsed toward it under the
+    re-solve, moving its edges by 0.23 or more of the cell's width, for all
+    18 such roots with cells 1e-4 to 0.01 degrees wide.  The vanished-cell
+    root itself is exact, so the re-solve leaves it in place; the widest
+    such root in those sweeps was 5.6e-6 degrees wide, far below the
+    ``_RESOLVE_MIN_WIDTH`` floor.  Of the 202 roots in those sweeps with
+    both cells narrower than ``min_cell_width``, which is the
+    no-circulation state, the re-solve left 42 in place, 21 of them wider
+    than the floor and up to 0.01 degrees wide, so such a root is not
+    re-solved.  With these thresholds the re-solve keeps 107 of the 135
+    two-cell roots; the 28 it rejects all lie within 0.26 degrees of
+    heating maximum of the last branch point the continuation found.
 
     Raises RuntimeError if evaluating the residuals raises ValueError or
     ArithmeticError (as scipy's brentq does on meeting a NaN), if scipy
     reports non-convergence, or if the root is not finite or any scaled
     residual exceeds ``resid_tol``.  Raises CellEdgeError, a RuntimeError
-    subclass, if the root's edges do not bound two cells, each at least
-    ``min_cell_width`` degrees wide, in the order of the initial guess:
-    increasing latitude if init_guess[2] >= init_guess[0], decreasing
-    otherwise.  The equations are symmetric under exchanging the two
-    poleward edges, so either order solves the same model.
+    subclass, if an edge lies at or beyond a pole, the edges are not in the
+    order of the initial guess, or a cell is narrower than
+    ``min_cell_width`` and the re-solve does not confirm it.
     """
-    if np.shape(init_guess) != (4,):
+    guess = np.asarray(init_guess, dtype=float).ravel()
+    if guess.size != 4:
         raise ValueError(
-            f"init_guess must have length 4; got shape {np.shape(init_guess)}"
+            f"init_guess must have 4 elements; got shape {np.shape(init_guess)}"
         )
-    if not resid_tol > 0:
-        raise ValueError(f"resid_tol must be positive; got {resid_tol}")
-    if not min_cell_width >= 0:
-        raise ValueError(f"min_cell_width must be non-negative; got {min_cell_width}")
+    if not 0 < resid_tol < np.inf:
+        raise ValueError(f"resid_tol must be positive and finite; got {resid_tol}")
+    if not 0 <= min_cell_width < np.inf:
+        raise ValueError(
+            f"min_cell_width must be non-negative and finite; got {min_cell_width}"
+        )
     try:
         sol = scipy.optimize.root(func, init_guess, args=args)
     except (ValueError, ArithmeticError) as err:
@@ -741,18 +880,10 @@ def _checked_root_solve(
     if not sol.success:
         raise RuntimeError(f"equal-area solver did not converge: {sol.message}")
     x = np.asarray(sol.x, dtype=float)
-    resid = np.abs(np.asarray(sol.fun, dtype=float))
-    width_floor = np.sin(np.deg2rad(min_cell_width))
-    # Integrals compared with resid_tol times the width rather than divided
-    # by it, so that a zero width, allowed when min_cell_width is 0, passes
-    # a zero integral.  Written so that a NaN root or residual also raises;
-    # errstate because some NumPy builds warn on comparing NaN.
-    with np.errstate(invalid="ignore"):
-        widths_sin = np.maximum(np.abs(x[[0, 2]] - x[1]), width_floor)
-        within_tol = np.concatenate(
-            [resid[:2] <= resid_tol, resid[2:] <= resid_tol * widths_sin]
-        )
-    if not (np.isfinite(x).all() and within_tol.all()):
+    within_tol, resid, widths_sin = _residuals_within_tol(
+        x, sol.fun, resid_tol, min_cell_width
+    )
+    if not within_tol:
         raise RuntimeError(
             "equal-area solver did not converge: scipy reported success, but "
             f"a residual exceeds resid_tol = {resid_tol:g} K at the root {x}: "
@@ -764,18 +895,21 @@ def _checked_root_solve(
             f"equal-area root has an edge at or beyond a pole: sin(lat) = {x[:3]}",
             x,
         )
-    lat = np.rad2deg(np.arcsin(x[:3]))
-    orientation = 1.0 if init_guess[2] >= init_guess[0] else -1.0
-    widths = orientation * np.diff(lat)
-    if not np.all(widths >= min_cell_width):
-        order = "increasing" if orientation > 0 else "decreasing"
-        raise CellEdgeError(
-            "equal-area root does not bound two cells, each at least "
-            f"{min_cell_width:g} degrees wide with edges in {order} latitude as "
-            f"in the initial guess: edges at {lat} degrees",
-            x,
-        )
-    return x
+    orientation = 1.0 if guess[2] >= guess[0] else -1.0
+    widths = _cell_widths(x, orientation)
+    if np.all(widths >= min_cell_width):
+        return x
+    order = "increasing" if orientation > 0 else "decreasing"
+    message = (
+        "equal-area root does not bound two cells, each at least "
+        f"{min_cell_width:g} degrees wide with edges in {order} latitude as "
+        f"in the initial guess: edges at {np.rad2deg(np.arcsin(x[:3]))} degrees"
+    )
+    if widths.max() < min_cell_width or widths.min() < _RESOLVE_MIN_WIDTH:
+        raise CellEdgeError(message, x)
+    return _confirm_narrow_cell(
+        func, x, args, orientation, resid_tol, min_cell_width, message
+    )
 
 
 # Original Lindzen and Hou 1988.
@@ -906,11 +1040,17 @@ def equal_area_lh88(
         Largest accepted residual (K).  The two continuity residuals are
         the circulation's minus the RCE depth-averaged potential
         temperature at each poleward edge.  Each energy-integral residual
-        is divided by its cell's width in sin(latitude), floored at
-        sin(min_cell_width), which makes it the area-weighted mean of that
-        difference over the cell.  Default: 1e-3.
+        is divided by its cell's width in sin(latitude), floored at that of
+        a cell min_cell_width wide at the shared edge, which makes it the
+        area-weighted mean of that difference over the cell.  Default:
+        1e-3.
     min_cell_width : float, optional, keyword only
-        Narrowest accepted cell (degrees latitude). Default: 0.5.
+        Narrowest cell accepted without a re-solve (degrees latitude).  A
+        root with one cell narrower than this and the other wider is
+        re-solved from itself with a tight tolerance, and the re-solved
+        root is returned if it passes every other check, no edge moved by
+        more than a tenth of the narrow cell's width, and that cell is at
+        least 0.001 degrees wide.  Default: 0.5.
 
     Returns
     -------
@@ -928,8 +1068,9 @@ def equal_area_lh88(
         A RuntimeError subclass, if the root solves the equations but its
         edges do not bound two cells: an edge at or beyond a pole, the
         edges not in the latitude order of ``init_guess``, or a cell
-        narrower than ``min_cell_width``.  The no-circulation state, all
-        three edges at one latitude, is such a root.
+        narrower than ``min_cell_width`` that the re-solve does not
+        confirm.  The no-circulation state, all three edges at one
+        latitude, is such a root.
 
     References
     ----------
@@ -1127,11 +1268,17 @@ def equal_area_lh88_fixed_temp_tropo(
         Largest accepted residual (K).  The two continuity residuals are
         the circulation's minus the RCE depth-averaged potential
         temperature at each poleward edge.  Each energy-integral residual
-        is divided by its cell's width in sin(latitude), floored at
-        sin(min_cell_width), which makes it the area-weighted mean of that
-        difference over the cell.  Default: 1e-3.
+        is divided by its cell's width in sin(latitude), floored at that of
+        a cell min_cell_width wide at the shared edge, which makes it the
+        area-weighted mean of that difference over the cell.  Default:
+        1e-3.
     min_cell_width : float, optional, keyword only
-        Narrowest accepted cell (degrees latitude). Default: 0.5.
+        Narrowest cell accepted without a re-solve (degrees latitude).  A
+        root with one cell narrower than this and the other wider is
+        re-solved from itself with a tight tolerance, and the re-solved
+        root is returned if it passes every other check, no edge moved by
+        more than a tenth of the narrow cell's width, and that cell is at
+        least 0.001 degrees wide.  Default: 0.5.
 
     Returns
     -------
@@ -1149,8 +1296,9 @@ def equal_area_lh88_fixed_temp_tropo(
         A RuntimeError subclass, if the root solves the equations but its
         edges do not bound two cells: an edge at or beyond a pole, the
         edges not in the latitude order of ``init_guess``, or a cell
-        narrower than ``min_cell_width``.  The no-circulation state, all
-        three edges at one latitude, is such a root.
+        narrower than ``min_cell_width`` that the re-solve does not
+        confirm.  The no-circulation state, all three edges at one
+        latitude, is such a root.
     """
     return _checked_root_solve(
         _lh88_model_fixed_tt,
@@ -1276,11 +1424,17 @@ def equal_area_bouss(
         Largest accepted residual (K).  The two continuity residuals are
         the circulation's minus the RCE depth-averaged potential
         temperature at each poleward edge.  Each energy-integral residual
-        is divided by its cell's width in sin(latitude), floored at
-        sin(min_cell_width), which makes it the area-weighted mean of that
-        difference over the cell.  Default: 1e-3.
+        is divided by its cell's width in sin(latitude), floored at that of
+        a cell min_cell_width wide at the shared edge, which makes it the
+        area-weighted mean of that difference over the cell.  Default:
+        1e-3.
     min_cell_width : float, optional, keyword only
-        Narrowest accepted cell (degrees latitude). Default: 0.5.
+        Narrowest cell accepted without a re-solve (degrees latitude).  A
+        root with one cell narrower than this and the other wider is
+        re-solved from itself with a tight tolerance, and the re-solved
+        root is returned if it passes every other check, no edge moved by
+        more than a tenth of the narrow cell's width, and that cell is at
+        least 0.001 degrees wide.  Default: 0.5.
 
     Returns
     -------
@@ -1299,8 +1453,9 @@ def equal_area_bouss(
         A RuntimeError subclass, if the root solves the equations but its
         edges do not bound two cells: an edge at or beyond a pole, the
         edges not in the latitude order of ``init_guess``, or a cell
-        narrower than ``min_cell_width``.  The no-circulation state, all
-        three edges at one latitude, is such a root.
+        narrower than ``min_cell_width`` that the re-solve does not
+        confirm.  The no-circulation state, all three edges at one
+        latitude, is such a root.
     """
     return _checked_root_solve(
         _equal_area_model_bouss,
@@ -1436,11 +1591,17 @@ def equal_area_cqe(
         Largest accepted residual (K).  The two continuity residuals are
         the circulation's minus the RCE potential temperature at each
         poleward edge.  Each energy-integral residual is divided by its
-        cell's width in sin(latitude), floored at sin(min_cell_width),
-        which makes it the area-weighted mean of that difference over the
-        cell.  Default: 1e-3.
+        cell's width in sin(latitude), floored at that of a cell
+        min_cell_width wide at the shared edge, which makes it the
+        area-weighted mean of that difference over the cell.  Default:
+        1e-3.
     min_cell_width : float, optional, keyword only
-        Narrowest accepted cell (degrees latitude). Default: 0.5.
+        Narrowest cell accepted without a re-solve (degrees latitude).  A
+        root with one cell narrower than this and the other wider is
+        re-solved from itself with a tight tolerance, and the re-solved
+        root is returned if it passes every other check, no edge moved by
+        more than a tenth of the narrow cell's width, and that cell is at
+        least 0.001 degrees wide.  Default: 0.5.
 
     Returns
     -------
@@ -1459,8 +1620,9 @@ def equal_area_cqe(
         A RuntimeError subclass, if the root solves the equations but its
         edges do not bound two cells: an edge at or beyond a pole, the
         edges not in the latitude order of ``init_guess``, or a cell
-        narrower than ``min_cell_width``.  The no-circulation state, all
-        three edges at one latitude, is such a root.
+        narrower than ``min_cell_width`` that the re-solve does not
+        confirm.  The no-circulation state, all three edges at one
+        latitude, is such a root.
     """
     return _checked_root_solve(
         _equal_area_model_cqe,
@@ -1632,11 +1794,17 @@ def equal_area_cqe_fixed_tt(
         Largest accepted residual (K).  The two continuity residuals are
         the circulation's minus the RCE potential temperature at each
         poleward edge.  Each energy-integral residual is divided by its
-        cell's width in sin(latitude), floored at sin(min_cell_width),
-        which makes it the area-weighted mean of that difference over the
-        cell.  Default: 1e-3.
+        cell's width in sin(latitude), floored at that of a cell
+        min_cell_width wide at the shared edge, which makes it the
+        area-weighted mean of that difference over the cell.  Default:
+        1e-3.
     min_cell_width : float, optional, keyword only
-        Narrowest accepted cell (degrees latitude). Default: 0.5.
+        Narrowest cell accepted without a re-solve (degrees latitude).  A
+        root with one cell narrower than this and the other wider is
+        re-solved from itself with a tight tolerance, and the re-solved
+        root is returned if it passes every other check, no edge moved by
+        more than a tenth of the narrow cell's width, and that cell is at
+        least 0.001 degrees wide.  Default: 0.5.
 
     Returns
     -------
@@ -1655,8 +1823,9 @@ def equal_area_cqe_fixed_tt(
         A RuntimeError subclass, if the root solves the equations but its
         edges do not bound two cells: an edge at or beyond a pole, the
         edges not in the latitude order of ``init_guess``, or a cell
-        narrower than ``min_cell_width``.  The no-circulation state, all
-        three edges at one latitude, is such a root.
+        narrower than ``min_cell_width`` that the re-solve does not
+        confirm.  The no-circulation state, all three edges at one
+        latitude, is such a root.
     """
     return _checked_root_solve(
         _eq_area_cqe_fixed_tt,
