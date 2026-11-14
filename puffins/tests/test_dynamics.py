@@ -1,5 +1,7 @@
 """Tests for dynamics module."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -86,9 +88,11 @@ def _wind_fields(
     levs = np.linspace(1e4, 9e4, 17)
     plev = xr.DataArray(levs, coords={LEV_STR: levs}, dims=[LEV_STR])
     phi = np.deg2rad(lat)
-    uwind = 20.0 * np.sin(2 * phi) * (1 - plev / _P0)
-    vwind = 2.0 * np.sin(3 * phi) * np.cos(np.pi * plev / _P0) + 3.0
-    omega = 0.05 * np.cos(3 * phi) * np.sin(np.pi * plev / _P0)
+    # numpy 2.5's stubs type these expressions as ndarrays; at runtime
+    # DataArray.__array_ufunc__ makes each a DataArray.
+    uwind = cast(xr.DataArray, 20.0 * np.sin(2 * phi) * (1 - plev / _P0))
+    vwind = cast(xr.DataArray, 2.0 * np.sin(3 * phi) * np.cos(np.pi * plev / _P0) + 3.0)
+    omega = cast(xr.DataArray, 0.05 * np.cos(3 * phi) * np.sin(np.pi * plev / _P0))
     return (
         uwind.transpose(*dims).rename("uwind"),
         vwind.transpose(*dims).rename("vwind"),
@@ -662,9 +666,9 @@ class TestRossNumFromUwind:
         """
         lat = _cell_centered_lats(1.0)
         phi = np.deg2rad(lat)
-        uwind = (20.0 * np.sin(2 * phi)).rename("uwind")
+        uwind = cast(xr.DataArray, 20.0 * np.sin(2 * phi)).rename("uwind")
         zeta = (-40.0 * np.cos(2 * phi) + uwind * np.tan(phi)) / RAD_MARS
-        exact = -zeta / (2 * ROT_RATE_MARS * np.sin(phi))
+        exact = cast(xr.DataArray, -zeta / (2 * ROT_RATE_MARS * np.sin(phi)))
         result = ross_num_from_uwind(uwind, radius=RAD_MARS, rot_rate=ROT_RATE_MARS)
         away = np.abs(lat.values) >= 5
         np.testing.assert_allclose(

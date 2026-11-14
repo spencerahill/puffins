@@ -51,7 +51,7 @@ a negative Python float while giving `nan` for a numpy scalar or array. It now
 uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 
 > **Note (what the "0 errors" figure depends on):** it holds for the
-> combination CI uses, namely `python_version = "3.11"` in `[tool.mypy]`
+> combination CI uses, namely `python_version = "3.12"` in `[tool.mypy]`
 > analyzed against the dependency versions in CI's environment, resolved by
 > `uv sync --extra dev` until 2026-10-25 and locked in pixi's `default`
 > environment since. Raising `python_version` from
@@ -70,7 +70,30 @@ uses `np.sqrt` for a uniform `nan` on a statically unstable layer.
 > numpy 2.4.6, mypy 1.19.1): 0 errors. With numpy 2.5.4, mypy 1.19.1 and
 > 1.20.2 stop on a `type` statement in numpy's stubs under
 > `python_version = "3.11"`, and mypy 2.4.0 reports 29 errors, so
-> `pyproject.toml` requires numpy below 2.5 and mypy 1.19.
+> `pyproject.toml` required numpy below 2.5 and mypy 1.19 until issue #101.
+>
+> Issue #101 (2026-11-14) raised `python_version` from 3.11 to 3.12 and
+> lifted the numpy cap, keeping mypy at 1.19. conda-forge has no Python 3.11
+> build of numpy 2.5, so the `py311` environment still locks numpy 2.4.6 and
+> still runs every test on Python 3.11, but mypy no longer checks puffins
+> against Python 3.11's standard library. Measured that day under
+> `python_version = "3.12"`, with mypy 1.19.1 except in the last item:
+>
+> - `default` environment (Python 3.14.10, numpy 2.5.4): 0 errors in 64
+>   files, after five expressions built from numpy ufuncs of DataArrays in
+>   `test_dynamics.py` were cast to `xr.DataArray`. Before the casts mypy
+>   reported 4 errors in that file, and a fifth once those were fixed. numpy
+>   2.5's stubs type `np.sin` of an ndarray-typed operand as an ndarray where
+>   numpy 2.4's gave `Any`, and both type `np.deg2rad` of a DataArray as an
+>   ndarray, though at runtime each is a DataArray.
+> - `py311` environment (Python 3.11.18, numpy 2.4.6): 0 errors, with or
+>   without the casts.
+> - `--python-version 3.11` in `default`: stops at line 737 of numpy's
+>   `__init__.pyi`, "Type statement is only supported in Python 3.12 and
+>   greater".
+> - mypy 2.4.1 in `default`: 4 errors, each an unused `# type: ignore[misc]`,
+>   2 in `test_enso.py` and 2 in `test_dynamics.py`, whose message gives
+>   `[call-arg]` as the narrower code.
 
 > **Note (overload coverage is test-driven):** the 14 functions carrying
 > `@overload` stacks are the ones the test suite exercises, not a complete
