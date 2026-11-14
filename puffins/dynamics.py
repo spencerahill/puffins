@@ -166,7 +166,10 @@ def abs_vort_vert_comp(
     per unit mass, as from `abs_ang_mom`, in m^2/s. The latitude derivative
     is second order at every row: a centered difference inside the grid and
     a three-point one-sided difference at its two end rows, so the latitude
-    dimension needs at least three rows, or a ValueError is raised.
+    dimension needs at least three rows, or a ValueError is raised. A NaN in
+    M makes the result NaN at the rows on either side of it, and through the
+    three-point end difference a NaN in the third row from either end also
+    makes that end row NaN.
 
     Near a pole M is quadratic in the distance from it, so a two-point end
     difference, divided by cos(phi), would leave an error about the size of
@@ -183,8 +186,11 @@ def abs_vort_vert_comp(
     per second, it comes to about 1e7 per second for float64 latitudes and
     to 0.02 per second, of the wrong sign, for float32.
 
-    For a zonal wind at hand, `abs_vort_from_u` gives the same quantity
-    without going through M.
+    For a zonal wind at hand, `abs_vort_from_u` computes the same quantity
+    without going through M, with two differences in its numerics: its
+    latitude derivative takes a two-point one-sided difference at the end
+    rows, which is first order there, and it does not set rows at the poles
+    to NaN.
     """
     lat = abs_ang_mom[lat_str]
     dm_dlat = np.rad2deg(abs_ang_mom.differentiate(lat_str, edge_order=2))
@@ -403,7 +409,9 @@ def zonal_fric_inferred_steady(
     poles, since [u v] cos^2(phi) varies there as the fourth power of the
     distance from the pole. Rows within 1e-4 degrees of 90 degrees north or
     south are NaN, since tan(phi) evaluates there to a huge finite value of
-    either sign.
+    either sign. A NaN in [u v] makes the result NaN at its own row and the
+    rows on either side, and through the three-point end difference a NaN in
+    the third row from either end also makes that end row NaN.
 
     The pressure derivative is a centered difference inside the grid and a
     two-point one-sided difference at its top and bottom levels, so it is
@@ -416,7 +424,9 @@ def zonal_fric_inferred_steady(
         winds, in m^2/s^2, with v positive northward. [u v] is the total
         flux, [u][v] plus the eddy flux [u* v*], with no factor of cos(phi).
         Its latitude coordinate, in degrees, is the one used for f and
-        tan(phi).
+        tan(phi). `kuo_el.kuo_el_eddy_mom_term` takes its eddy momentum flux
+        as u'v' cos(phi), with the factor, so a flux passed to both needs
+        the factor of cos(phi) for that function and not for this one.
     u_vert_flux : xarray.DataArray
         [u omega], the zonal mean of the product of the zonal wind and the
         pressure velocity omega, positive downward, in m/s times the
