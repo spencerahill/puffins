@@ -2926,6 +2926,73 @@ def _six_sigma_cells(polar: float) -> xr.DataArray:
     )
 
 
+# The northern-winter field of issue #139, from #134: a winter Hadley cell of
+# 1.8e11 at 8N, a summer Hadley cell of -3e9 at 24S, 1.7% of the winter cell,
+# Ferrel cells at 48S and 45N, and polar cells at 74S and 73N.
+_CELLS_139 = [
+    (1.8e11, 8.0, 26.0),
+    (-3e9, -24.0, 10.0),
+    (2e10, -48.0, 12.0),
+    (-4e10, 45.0, 13.0),
+    (-1e10, -74.0, 9.0),
+    (1e10, 73.0, 10.0),
+]
+_CENTERS_139 = [-74.0, -48.0, -24.0, 8.0, 45.0, 73.0]
+
+
+def _bump_cells_sigma(cells: list[tuple[float, float, float]]) -> xr.DataArray:
+    """``_bump_cells_streamfunc`` on sigma = plev / 1000, as in issue #139.
+
+    Each cell's extremum lies at sigma 0.55 wherever no other cell overlaps
+    it.
+    """
+    sf = _bump_cells_streamfunc(cells)
+    sf = sf.assign_coords({SIGMA_STR: (LEV_STR, sf[LEV_STR].values / 1000.0)})
+    return cast(xr.DataArray, sf.swap_dims({LEV_STR: SIGMA_STR}).drop_vars(LEV_STR))
+
+
+def _layered_half_sine_cells(
+    full: list[tuple[float, float, float]],
+    upper: list[tuple[float, float, float]],
+    lower: list[tuple[float, float, float]],
+) -> xr.DataArray:
+    """Half-sine cells filling all of sigma, only sigma below 0.53, or only above 0.57.
+
+    Each cell is (southern node, northern node, signed amplitude in units of
+    1e10), as in ``_sigma_half_sine_cells``, on its grid. The vertical
+    structures are those of ``test_cell_within_another_cells_edges``: sin(pi
+    * (sigma - 0.1) / 0.9) through the full depth, peaking at sigma 0.55;
+    sin(pi * (sigma - 0.05) / 0.5) in the upper cells, peaking at 0.3; and
+    sin(pi * (sigma - 0.55) / 0.5) in the lower cells, peaking at 0.8. At
+    sigma 0.55 the upper and lower cells are zero, so neither touches the
+    other.
+    """
+    lats = np.arange(-85.0, 86.0, 1.0)
+    sigmas = np.linspace(0.1, 1.0, 19)
+    lat = xr.DataArray(lats, dims=[LAT_STR], coords={LAT_STR: lats})
+    sigma = xr.DataArray(sigmas, dims=[SIGMA_STR], coords={SIGMA_STR: sigmas})
+
+    def merid(cells: list[tuple[float, float, float]]) -> xr.DataArray:
+        total = xr.zeros_like(lat)
+        for south, north, amp in cells:
+            x = (lat - south) / (north - south)
+            total = total + xr.where((x > 0) & (x < 1), amp * np.sin(np.pi * x), 0.0)
+        return total
+
+    vert_full = np.sin(np.pi * (sigma - 0.1) / 0.9)
+    vert_upper = xr.where(sigma < 0.53, np.sin(np.pi * (sigma - 0.05) / 0.5), 0.0)
+    vert_lower = xr.where(sigma > 0.57, np.sin(np.pi * (sigma - 0.55) / 0.5), 0.0)
+    return cast(
+        xr.DataArray,
+        1e10
+        * (
+            vert_full * merid(full)
+            + vert_upper * merid(upper)
+            + vert_lower * merid(lower)
+        ),
+    )
+
+
 class TestCellEdgesSigmaDroppedCells:
     """The cells cell_edges_sigma drops, and the warnings for those it reports."""
 
@@ -3295,6 +3362,183 @@ class TestCellEdgesSigmaDroppedCells:
         assert cells.sel(lat="center").values.tolist() == expected
         assert "sh_hadley" in cells["cell"].values
         assert "nh_hadley" in cells["cell"].values
+
+    @pytest.mark.parametrize("mirror", [False, True], ids=["nh_winter", "sh_winter"])
+    def test_weak_summer_hadley_cell_kept(self, mirror: bool) -> None:
+        """A summer Hadley cell below min_frac_strength is kept and labeled (#139).
+
+        The field is the northern-winter field of #139. Its summer Hadley
+        cell, of -3e9 at 24S, is 1.7% of the winter cell, of 1.8e11 at 8N,
+        below the default min_frac_strength of 0.05. No other cell reaches
+        24S, so the summer cell's maximum there is its peak, at sigma 0.55,
+        and its southern edge lies where its cos**2 bump falls to 0.1,
+        10 * (2 / pi) * arccos(sqrt(0.1)) = 7.95 degrees south of 24S. The
+        mirrored case is the southern-winter field, each cell at the
+        mirrored latitude with its sign reversed. had_cells_strength finds
+        the same two Hadley cells. The summer cell used to be dropped,
+        without a warning, before the Hadley cells were labeled.
+        """
+        sign = -1.0 if mirror else 1.0
+        cells_in = [(sign * peak, sign * lat, width) for peak, lat, width in _CELLS_139]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(_bump_cells_sigma(cells_in))
+        assert cells.sel(lat="center").values.tolist() == sorted(
+            sign * lat for lat in _CENTERS_139
+        )
+        assert list(cells["cell"].values) == [
+            "0",
+            "1",
+            "sh_hadley",
+            "nh_hadley",
+            "4",
+            "5",
+        ]
+        summer = cells.sel(cell="nh_hadley" if mirror else "sh_hadley")
+        assert summer.sel(lat="center").item() == -24.0 * sign
+        assert summer["cell_strength"].item() == pytest.approx(-3e9 * sign, rel=1e-12)
+        assert summer[SIGMA_STR].item() == pytest.approx(0.55, rel=1e-12)
+        offset = 10.0 * 2.0 / np.pi * np.arccos(np.sqrt(0.1))
+        poleward = summer.sel(lat="edge_north" if mirror else "edge_south").item()
+        assert poleward == pytest.approx(-(24.0 + offset) * sign, abs=0.01)
+        strengths = had_cells_strength(
+            _bump_cells_streamfunc(cells_in), min_lat=-50, max_lat=50
+        )
+        assert strengths[LAT_STR].values.tolist() == sorted([-24.0 * sign, 8.0 * sign])
+
+    @pytest.mark.parametrize(
+        ("min_frac_strength", "centers", "labels"),
+        [
+            (0.1, [-48.0, -24.0, 8.0, 45.0], ["0", "sh_hadley", "nh_hadley", "3"]),
+            (0.3, [-24.0, 8.0], ["sh_hadley", "nh_hadley"]),
+        ],
+    )
+    def test_weak_summer_hadley_cell_kept_at_any_min_frac_strength(
+        self, min_frac_strength: float, centers: list[float], labels: list[str]
+    ) -> None:
+        """Raising min_frac_strength drops other cells, never the summer Hadley cell.
+
+        In the field of #139, the polar cells are 5.6% of the winter Hadley
+        cell, the Ferrel cells 11% and 22%, and the summer Hadley cell 1.7%.
+        At 0.1, the polar cells are dropped, and at 0.3 the Ferrel cells
+        too, while the summer cell is kept at both.
+        """
+        cells = cell_edges_sigma(
+            _bump_cells_sigma(_CELLS_139), min_frac_strength=min_frac_strength
+        )
+        assert cells.sel(lat="center").values.tolist() == centers
+        assert list(cells["cell"].values) == labels
+
+    def test_weak_cell_other_than_a_hadley_cell_dropped(self) -> None:
+        """A cell below min_frac_strength is still dropped unless it is a Hadley cell.
+
+        The northern polar cell of the field of #139 is weakened to 5e9,
+        2.8% of the winter Hadley cell, and is dropped, without a warning,
+        though the summer Hadley cell, at 1.7%, is weaker still and kept.
+        """
+        cells_in = [*_CELLS_139[:-1], (5e9, 73.0, 10.0)]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(_bump_cells_sigma(cells_in))
+        assert cells.sel(lat="center").values.tolist() == _CENTERS_139[:-1]
+        assert list(cells["cell"].values) == ["0", "1", "sh_hadley", "nh_hadley", "4"]
+
+    def test_hadley_cell_beyond_max_cells_per_sign_kept(self) -> None:
+        """A Hadley cell beyond the max_cells_per_sign strongest of its sign is kept.
+
+        In the field of #139 at min_frac_strength 0.01, every cell passes the
+        strength filter. At max_cells_per_sign 1, the positive cells beyond
+        the winter Hadley cell, the southern Ferrel and northern polar
+        cells, are dropped, and so is the southern polar cell, the second
+        strongest negative cell after the northern Ferrel cell. The summer
+        Hadley cell, the weakest negative cell, is kept, and the limit
+        still drops three cells. It used to drop the summer cell as a
+        fourth.
+        """
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(
+                _bump_cells_sigma(_CELLS_139),
+                min_frac_strength=0.01,
+                max_cells_per_sign=1,
+            )
+        assert cells.sel(lat="center").values.tolist() == [-24.0, 8.0, 45.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2"]
+        messages = _dropped_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0].startswith(
+            "cell_edges_sigma dropped 3 cells: more than 1 cells of its sign "
+            "remain, and it is not among the 1 strongest; raise "
+            "max_cells_per_sign to keep it. The first is the cell centered at "
+            "latitude -48 and"
+        )
+
+    @pytest.mark.parametrize("nested_amp", [0.03, 0.2])
+    def test_cell_within_another_not_taken_for_the_summer_cell(
+        self, nested_amp: float
+    ) -> None:
+        """A cell lying within a stronger cell's edges takes no Hadley label.
+
+        A positive winter Hadley cell from 14.25S to 30.25N fills sigma 0.1
+        to 0.5, with its maximum at 8N. Beneath it lies a negative cell from
+        5.25S to 4.75N of amplitude ``nested_amp``, 3% or 20% of the winter
+        cell, which lies between the winter cell's edges. The summer Hadley
+        cell, negative, from 34.25S to 14.25S at 1.7% of the winter cell,
+        is weaker than either. The cell beneath the winter cell, on its
+        ascending side, is the strongest negative cell there, but the
+        summer Hadley cell is sought only among the cells lying within no
+        cell that passes the strength filter, as every cell kept must.
+        """
+        sf = _layered_half_sine_cells(
+            full=[(-34.25, -14.25, -0.017)],
+            upper=[(-14.25, 30.25, 1.0)],
+            lower=[(-5.25, 4.75, -nested_amp)],
+        )
+        cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-24.0, 8.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+
+    def test_cell_within_a_weak_hadley_cell_kept(self) -> None:
+        """A weak Hadley cell, kept, is not a cell within which others are dropped.
+
+        A positive winter Hadley cell from 14.25S to 30.25N fills all of
+        sigma. The negative summer Hadley cell, from 34.25S to 14.25S at
+        1.7% of the winter cell, fills sigma 0.1 to 0.5, and beneath it a
+        positive cell from 30.25S to 20.25S, at 10%, lies between the
+        summer cell's edges. Only a cell passing the strength filter can
+        hold another, as before the Hadley cells were exempted from it, so
+        the cell beneath the summer cell is kept.
+        """
+        sf = _layered_half_sine_cells(
+            full=[(-14.25, 30.25, 1.0)],
+            upper=[(-34.25, -14.25, -0.017)],
+            lower=[(-30.25, -20.25, 0.1)],
+        )
+        cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-25.0, -24.0, 8.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley"]
+        assert cells.sel(cell="0")[SIGMA_STR].item() == pytest.approx(0.8)
+        assert cells.sel(cell="sh_hadley")[SIGMA_STR].item() == pytest.approx(0.3)
+
+    def test_cell_whose_edges_cannot_be_measured_not_a_hadley_cell(self) -> None:
+        """A cell dropped for edges that cannot be measured takes no Hadley label.
+
+        The negative Hadley cell, from 29.75S to 0.25N, is 0.8 of the
+        positive one, from 0.25N to 30.25N, which a column of NaN at 20N
+        splits in two, each part dropped with a warning. Of the cells whose
+        edges can be measured, the strongest positive cell north of the
+        negative Hadley cell is one of 0.3 from 35.25N to 45.25N, which
+        takes the northern Hadley label. Were the parts of the split cell
+        candidates, the stronger one, centered at 15N, would take a Hadley
+        label, and on being dropped would take the label with it.
+        """
+        sf = _sigma_half_sine_cells(
+            [(-29.75, 0.25, -0.8), (0.25, 30.25, 1.0), (35.25, 45.25, 0.3)]
+        )
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where(sf[LAT_STR] != 20.0))
+        assert len(_dropped_messages(record)) == 2
+        assert cells.sel(lat="center").values.tolist() == [-15.0, 40.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
 
     @pytest.mark.parametrize("max_cells_per_sign", [None, 5, 3])
     def test_max_cells_per_sign(self, max_cells_per_sign: int | None) -> None:
@@ -4007,20 +4251,22 @@ class TestCellEdgesSigmaDroppedCells:
         A polar cell peaking at 85S, the grid's first latitude, cannot be
         measured. Were the threshold taken from every cell, a polar cell of 25
         times the Hadley cells' strength would set it, at 0.05 times its own
-        strength, above both Hadley cells, which would be dropped silently,
-        and the call would raise. The Hadley cells set it, so the strong polar
-        cell is dropped with a warning and the Hadley cells are returned as
-        without it. A polar cell of 0.001 times their strength falls below the
-        threshold and is dropped silently. Both fields used to make the call
-        raise, for the polar cell's maximum at the grid's end.
+        strength, above every other cell. The Hadley cells, exempt from the
+        threshold, would be kept, but the northern Ferrel cell, of 0.3 times
+        their strength, would be dropped silently. The Hadley cells set the
+        threshold, so the strong polar cell is dropped with a warning and the
+        other cells are returned as without it. A polar cell of 0.001 times
+        the Hadley cells' strength falls below the threshold and is dropped
+        silently. Both fields used to make the call raise, for the polar
+        cell's maximum at the grid's end.
         """
-        hadley = [(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0)]
-        alone = cell_edges_sigma(_sigma_half_sine_cells(hadley))
-        sf = _sigma_half_sine_cells([(-110.25, -59.75, polar), *hadley])
+        others = [(-29.75, 0.25, -1.0), (0.25, 30.25, 1.0), (30.25, 60.25, -0.3)]
+        alone = cell_edges_sigma(_sigma_half_sine_cells(others))
+        sf = _sigma_half_sine_cells([(-110.25, -59.75, polar), *others])
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always", UserWarning)
             cells = cell_edges_sigma(sf)
-        assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley"]
+        assert cells["cell"].values.tolist() == ["sh_hadley", "nh_hadley", "2"]
         np.testing.assert_array_equal(cells.values, alone.values)
         assert len(record) == (1 if warned else 0)
         if warned:
