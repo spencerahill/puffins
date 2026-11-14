@@ -55,6 +55,17 @@ def _cell_centered_lats(dlat: float) -> xr.DataArray:
     return _lat_dataarray(np.arange(-90.0 + dlat / 2, 90.0, dlat))
 
 
+def _gaussian_lats(nlat: int) -> xr.DataArray:
+    """Gaussian latitudes, south to north."""
+    nodes = np.polynomial.legendre.leggauss(nlat)[0]
+    return _lat_dataarray(np.sort(np.rad2deg(np.arcsin(nodes))))
+
+
+def _subset_lats(dlat: float) -> xr.DataArray:
+    """Latitudes from 60S to 60N whose end rows lie dlat/2 inside 60 degrees."""
+    return _lat_dataarray(np.arange(-60.0 + dlat / 2, 60.0, dlat))
+
+
 # Zonal winds u(phi) with their analytic derivatives du/dphi, phi in radians.
 # Both vanish only as fast as cos(phi) toward the poles, so both have nonzero
 # vorticity at the poles, which the cos(phi) form of the relative vorticity
@@ -447,6 +458,114 @@ class TestAbsVortVertComp:
         np.testing.assert_allclose(
             result.values[2:-2], expected.values[2:-2], rtol=1e-2
         )
+
+    @pytest.mark.parametrize("profile", sorted(_U_PROFILES))
+    @pytest.mark.parametrize(
+        ("grid", "tol"),
+        [
+            ("cell_centered", 2e-3),
+            ("north_to_south", 2e-3),
+            ("gaussian", 3e-3),
+            ("subset_60", 1e-3),
+        ],
+    )
+    def test_matches_closed_form_at_every_row(
+        self, profile: str, grid: str, tol: float
+    ) -> None:
+        """Within tol of the exact absolute vorticity at every row, end rows included.
+
+        The exact eta is 2 Omega sin(phi) + (-du/dphi + u tan(phi)) / a, with
+        du/dphi written out analytically, and tol is a fraction of the
+        largest |eta|. The grids: 1 degree from pole to pole with end rows
+        0.5 degrees from the poles, in both orders; 128 Gaussian latitudes;
+        and 1 degree from 60S to 60N. The largest errors measured were
+        1.2e-3, 1.9e-3 and 4.8e-4 of the largest |eta|. The two-point end
+        difference this replaced (issue #144) is off at the end rows by 1.0,
+        0.65 and 9.5e-3 of it. Mars's radius and rotation rate check that
+        ``radius`` is used.
+        """
+        lat = {
+            "cell_centered": _cell_centered_lats(1.0),
+            "north_to_south": _cell_centered_lats(1.0).isel(
+                {LAT_STR: slice(None, None, -1)}
+            ),
+            "gaussian": _gaussian_lats(128),
+            "subset_60": _subset_lats(1.0),
+        }[grid]
+        u_fn, du_fn = _U_PROFILES[profile]
+        phi = np.deg2rad(lat)
+        uwind = u_fn(phi).rename("uwind")
+        exact = (
+            2 * ROT_RATE_MARS * np.sin(phi)
+            + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_MARS
+        )
+        m = abs_ang_mom(uwind, radius=RAD_MARS, rot_rate=ROT_RATE_MARS)
+        result = abs_vort_vert_comp(m, radius=RAD_MARS)
+        assert np.array_equal(result[LAT_STR].values, lat.values)
+        scale = np.abs(exact.values).max()
+        np.testing.assert_allclose(
+            result.values, exact.values, rtol=0, atol=tol * scale
+        )
+
+    def test_second_order_end_rows_on_a_subset(self) -> None:
+        """On a grid stopping at 60 degrees, the end-row error falls 4-fold per halving.
+
+        Measured 4.01 from 1 to 0.5 degrees; the two-point end difference
+        gives 1.94, first order.
+        """
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        errors = []
+        for dlat in (1.0, 0.5):
+            phi = np.deg2rad(_subset_lats(dlat))
+            exact = (
+                2 * ROT_RATE_EARTH * np.sin(phi)
+                + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+            )
+            result = abs_vort_vert_comp(abs_ang_mom(u_fn(phi).rename("uwind")))
+            err = np.abs(result.values - exact.values)
+            errors.append(max(err[0], err[-1]))
+        assert errors[0] / errors[1] > 3.0
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_pole_rows_nan(self, dtype: type) -> None:
+        """Rows at exactly 90 degrees are NaN; the others match the closed form.
+
+        Unmasked, the pole rows come to about 1e7 per second for float64
+        latitudes and 0.02 per second, of the wrong sign, for float32,
+        against an exact 1.6e-4 per second.
+        """
+        lats: np.ndarray = np.linspace(-90.0, 90.0, 181).astype(dtype)
+        lat = xr.DataArray(lats, coords={LAT_STR: lats}, dims=[LAT_STR])
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        phi = np.deg2rad(lat.astype(np.float64))
+        uwind = u_fn(phi).rename("uwind")
+        result = abs_vort_vert_comp(abs_ang_mom(uwind))
+        is_pole = np.abs(lats) == 90.0
+        assert is_pole.sum() == 2
+        assert np.isnan(result.values[is_pole]).all()
+        exact = (
+            2 * ROT_RATE_EARTH * np.sin(phi)
+            + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+        ).values
+        scale = np.abs(exact[~is_pole]).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], exact[~is_pole], rtol=0, atol=5e-4 * scale
+        )
+
+    def test_rows_within_tolerance_of_a_pole_nan(self) -> None:
+        """Rows within 1e-4 degrees of a pole are NaN; one 0.01 degrees away is not."""
+        lats = np.array([-90 + 5e-5, -89.99, -60.0, 0.0, 60.0, 89.99, 90 - 5e-5])
+        uwind = _uwind_dataarray(20.0 * np.sin(2 * np.deg2rad(lats)), lats)
+        result = abs_vort_vert_comp(abs_ang_mom(uwind))
+        np.testing.assert_array_equal(
+            np.isnan(result.values), [True, False, False, False, False, False, True]
+        )
+
+    def test_fewer_than_three_rows_raises(self) -> None:
+        """The three-point end difference needs three latitude rows."""
+        uwind = _uwind_dataarray([10.0, 12.0], [10.0, 20.0])
+        with pytest.raises(ValueError, match="at least"):
+            abs_vort_vert_comp(abs_ang_mom(uwind))
 
 
 # ---------------------------------------------------------------------------
@@ -919,8 +1038,95 @@ class TestRossbyRadius:
 # ---------------------------------------------------------------------------
 
 
+def _steady_flow(
+    lat: xr.DataArray,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    names: tuple[str, str] = (LAT_STR, LEV_STR),
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+    """u, v, omega and the friction F of a steady, zonally uniform flow.
+
+    With phi the latitude in radians and p the pressure in Pa, on 10 levels
+    from 100 to 1000 hPa: u = 20 sin(2 phi) + 5 cos(phi) and v = 2 sin(2 phi),
+    in m/s and uniform in pressure, and omega = -2 p (3 cos(2 phi) - 1) / a
+    in Pa/s. Continuity holds exactly: (1/(a cos(phi))) d(v cos(phi))/dphi
+    is (2/a)(3 cos(2 phi) - 1), which is -d(omega)/dp. Since u is uniform in
+    pressure, the steady budget in advective form gives
+    F = (v/a) du/dphi - (f + u tan(phi)/a) v = -eta v, with eta the
+    absolute vorticity 2 Omega sin(phi) + (-du/dphi + u tan(phi)) / a and
+    du/dphi = 40 cos(2 phi) - 5 sin(phi). u omega is linear in pressure, so
+    its pressure derivative is exact at every level.
+    """
+    lat_str, lev_str = names
+    lat = lat.rename({LAT_STR: lat_str})
+    levs = np.linspace(1e4, 1e5, 10)
+    plev = xr.DataArray(levs, coords={lev_str: levs}, dims=[lev_str])
+    phi = np.deg2rad(lat)
+    uwind = 20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi) + 0.0 * plev
+    du_dphi = 40.0 * np.cos(2 * phi) - 5.0 * np.sin(phi)
+    vwind = 2.0 * np.sin(2 * phi) + 0.0 * plev
+    omega = -2.0 * plev * (3 * np.cos(2 * phi) - 1) / radius
+    eta = 2 * rot_rate * np.sin(phi) + (-du_dphi + uwind * np.tan(phi)) / radius
+    fric = -eta * vwind
+    return (
+        uwind.transpose(lat_str, lev_str).rename("uwind"),
+        vwind.transpose(lat_str, lev_str).rename("vwind"),
+        omega.transpose(lat_str, lev_str).rename("omega"),
+        fric.transpose(lat_str, lev_str).rename("fric"),
+    )
+
+
 class TestZonalFricInferredSteady:
     """Tests for zonal_fric_inferred_steady."""
+
+    def test_matches_closed_form_given_uv(self) -> None:
+        """Matches the closed-form F given [u v], and not given [u v] cos(phi).
+
+        On a 0.5-degree grid from 60S to 60N, away from its two end rows,
+        whose one-sided differences are first order. Given [u v], the
+        largest error measured was 5.1e-5 of the largest |F|; given
+        [u v] cos(phi), the convention before issue #145, it is 8.0e-2. Mars's
+        radius and rotation rate check that ``radius`` and ``rot_rate`` are
+        used.
+        """
+        uwind, vwind, omega, fric = _steady_flow(
+            _subset_lats(0.5), radius=RAD_MARS, rot_rate=ROT_RATE_MARS
+        )
+        coslat = np.cos(np.deg2rad(uwind[LAT_STR]))
+        u_vert_flux = (uwind * omega).rename("u_omega")
+        inner = {LAT_STR: slice(1, -1)}
+        scale = np.abs(fric.values).max()
+        errors = []
+        for u_merid_flux in (uwind * vwind, uwind * vwind * coslat):
+            result = zonal_fric_inferred_steady(
+                u_merid_flux.rename("uv"),
+                u_vert_flux,
+                vwind,
+                radius=RAD_MARS,
+                rot_rate=ROT_RATE_MARS,
+            )
+            err = (result - fric).isel(inner)
+            errors.append(np.abs(err.values).max() / scale)
+        assert errors[0] < 2e-4
+        assert errors[1] > 1e-2
+
+    def test_custom_dim_names(self) -> None:
+        """``lat_str`` and ``vert_str`` set the dimensions differentiated along."""
+        lat = _subset_lats(1.0)
+        uwind, vwind, omega, _ = _steady_flow(lat)
+        expected = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        uwind, vwind, omega, _ = _steady_flow(lat, names=("latitude", "pfull"))
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"),
+            (uwind * omega).rename("u_omega"),
+            vwind,
+            vert_str="pfull",
+            lat_str="latitude",
+        )
+        assert result.dims == ("latitude", "pfull")
+        np.testing.assert_array_equal(result.values, expected.values)
 
     def test_zero_inputs(self) -> None:
         """Zero fluxes and wind give zero friction."""

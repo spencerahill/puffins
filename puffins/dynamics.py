@@ -95,7 +95,8 @@ def therm_ross_num(
     )
 
 
-# Rows this close to a pole, in degrees, get no relative vorticity. Float32
+# Rows this close to a pole, in degrees, get no relative or absolute
+# vorticity from rel_vort_from_u and abs_vort_vert_comp. Float32
 # latitudes are spaced 7.6e-6 degrees apart there, and on any grid with a
 # spacing of 0.01 degrees or more the next row lies at least 0.005 degrees
 # from the pole.
@@ -159,13 +160,36 @@ def abs_vort_vert_comp(
     radius: float = RAD_EARTH,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
-    """Vertical component of absolute vorticity (in axisymmetric case)."""
-    return cast(
-        xr.DataArray,
-        -1
-        * lat_deriv(abs_ang_mom, lat_str)
-        / (radius**2 * cosdeg(abs_ang_mom[lat_str])),
-    )
+    """Vertical component of absolute vorticity of a zonally uniform flow.
+
+    eta = -(1/(a^2 cos(phi))) dM/dphi, with M the absolute angular momentum
+    per unit mass, as from `abs_ang_mom`, in m^2/s. The latitude derivative
+    is second order at every row: a centered difference inside the grid and
+    a three-point one-sided difference at its two end rows, so the latitude
+    dimension needs at least three rows, or a ValueError is raised.
+
+    Near a pole M is quadratic in the distance from it, so a two-point end
+    difference, divided by cos(phi), would leave an error about the size of
+    the absolute vorticity at the pole, at any grid spacing: all of it on a
+    grid whose end rows lie half a spacing from the poles, and about 65% of
+    it on a Gaussian grid. The three-point difference is exact for a
+    quadratic. On a grid stopping at 60 degrees, a two-point end difference
+    is first order; the three-point one is second order.
+
+    Rows within 1e-4 degrees of 90 degrees north or south are NaN. There
+    dM/dphi and cos(phi) both vanish, and cos(phi) evaluates to about 6e-17
+    for float64 latitudes and to -4e-8 for float32, so the quotient is
+    meaningless: for a wind whose absolute vorticity at the pole is 1.6e-4
+    per second, it comes to about 1e7 per second for float64 latitudes and
+    to 0.02 per second, of the wrong sign, for float32.
+
+    For a zonal wind at hand, `abs_vort_from_u` gives the same quantity
+    without going through M.
+    """
+    lat = abs_ang_mom[lat_str]
+    dm_dlat = np.rad2deg(abs_ang_mom.differentiate(lat_str, edge_order=2))
+    abs_vort = -dm_dlat / (radius**2 * cosdeg(lat))
+    return cast(xr.DataArray, abs_vort.where(np.abs(lat) < 90.0 - _POLE_TOL_DEG))
 
 
 def abs_vort_from_u(
@@ -345,10 +369,76 @@ def zonal_fric_inferred_steady(
     vert_str: str = LEV_STR,
     lat_str: str = LAT_STR,
 ) -> xr.DataArray:
-    """Steady-state zonal friction inferred from flux div + Coriolis."""
+    """Zonal force that closes a steady zonal-mean zonal momentum budget.
+
+    In pressure coordinates, the zonal-mean zonal momentum budget in flux
+    form is::
+
+        d[u]/dt = -(1/(a cos^2(phi))) d([u v] cos^2(phi))/dphi
+                  - d([u omega])/dp + f [v] + F
+
+    with [.] the zonal mean, a the planetary radius, phi the latitude and f
+    the Coriolis parameter. The zonal pressure gradient force has no zonal
+    mean on a pressure surface above the ground. The factor cos^2(phi)
+    includes the metric term, since (1/(a cos^2(phi))) d(X cos^2(phi))/dphi
+    equals (1/(a cos(phi))) d(X cos(phi))/dphi - X tan(phi)/a. F is the
+    zonal force per unit mass not represented by the fluxes and the Coriolis
+    term: friction, gravity wave drag and any other parameterized momentum
+    source. This returns the F for which d[u]/dt is zero::
+
+        F = (1/(a cos^2(phi))) d([u v] cos^2(phi))/dphi
+            + d([u omega])/dp - f [v]
+
+    in m/s^2, positive eastward, so drag on surface westerlies is negative.
+    For a time-mean budget, pass time means of the products, so that the
+    fluxes include the transient eddies.
+
+    Each derivative is a centered difference inside the grid and a two-point
+    one-sided difference at its two end rows or levels, which is first order
+    there. On a grid reaching toward the poles, the latitude term's error at
+    the few rows nearest each pole is first order in the grid spacing too,
+    since for a smooth flow [u v] cos^2(phi) varies there as the fourth
+    power of the distance from the pole. For u = 20 sin(2 phi) + 5 cos(phi)
+    and v = 2 sin(2 phi), in m/s, on a 1-degree grid whose end rows lie 0.5
+    degrees from the poles, the error is about 4% of the largest |F| at the
+    end rows and about 0.5% at the rows next to them. Values at rows on
+    the poles themselves are meaningless, since cos^2(phi) evaluates there
+    to about 4e-33: for the same flow on a 1-degree grid including the
+    poles, they came to about 4e22 m/s^2 in magnitude.
+
+    Parameters
+    ----------
+    u_merid_flux : xarray.DataArray
+        [u v], the zonal mean of the product of the zonal and meridional
+        winds, in m^2/s^2, with v positive northward. [u v] is the total
+        flux, [u][v] plus the eddy flux [u* v*], with no factor of cos(phi).
+        Its latitude coordinate, in degrees, is the one used for f and
+        cos(phi).
+    u_vert_flux : xarray.DataArray
+        [u omega], the zonal mean of the product of the zonal wind and the
+        pressure velocity omega, positive downward, in m/s times the
+        ``vert_str`` coordinate's units per second: m Pa/s^2 for levels in
+        Pa. For levels in hPa, omega must be in hPa/s.
+    vwind : xarray.DataArray
+        [v], the zonal-mean meridional wind, in m/s, positive northward.
+    radius : float, optional
+        Planetary radius (m). Default: Earth.
+    rot_rate : float, optional
+        Planetary rotation rate (1/s). Default: Earth.
+    vert_str : str, optional
+        Name of the pressure coordinate along which ``u_vert_flux`` is
+        differentiated. Default: 'plev'.
+    lat_str : str, optional
+        Name of the latitude coordinate. Default: 'lat'.
+
+    Returns
+    -------
+    xarray.DataArray
+        F, the zonal force per unit mass (m/s^2), positive eastward.
+    """
     lats = u_merid_flux[lat_str]
     coslat = cosdeg(lats)
-    duv_dlat_term = lat_deriv(u_merid_flux * coslat, lat_str) / (radius * coslat**2)
+    duv_dlat_term = lat_deriv(u_merid_flux * coslat**2, lat_str) / (radius * coslat**2)
     duw_dvert_term = u_vert_flux.differentiate(vert_str)
 
     u_flux_div = duv_dlat_term + duw_dvert_term
