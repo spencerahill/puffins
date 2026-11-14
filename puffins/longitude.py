@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -10,6 +11,27 @@ import numpy as np
 import xarray as xr
 
 from ._typing import ArrayLike
+
+
+def _int64_if_unsigned_or_8bit(lon: ArrayLike) -> ArrayLike:
+    """Unsigned and 8-bit integer input as int64, otherwise ``lon`` unchanged.
+
+    NumPy 2 will not convert the constant 360 to int8 or uint8, which cannot
+    represent it, and an unsigned type cannot represent the negative values
+    ``lon_to_pm180`` returns (issue #148).  Unsigned values are reduced modulo
+    360 in uint64, which represents 360 and every unsigned value exactly,
+    before the cast, since casting a uint64 above the int64 maximum wraps it
+    to a negative value.
+    """
+    dtype = getattr(lon, "dtype", None)
+    if dtype is None:
+        return lon
+    values = cast(Any, lon)
+    if dtype.kind == "u":
+        return cast(ArrayLike, (values.astype(np.uint64) % 360).astype(np.int64))
+    if dtype.kind == "i" and dtype.itemsize == 1:
+        return cast(ArrayLike, values.astype(np.int64))
+    return lon
 
 
 def lon_to_0360(lon: ArrayLike) -> ArrayLike:
@@ -29,9 +51,13 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
     -------
         If ``lon`` is a scalar, then a scalar of the same type in the range [0,
         360).  If ``lon`` is array-like, then an array-like of the same type
-        with each element a scalar in the range [0, 360).
+        with each element a scalar in the range [0, 360).  The one exception
+        is unsigned or 8-bit integer input, scalar or array, which comes back
+        as int64, the type ``lon_to_pm180`` returns for it.  NaN comes back
+        as NaN.
 
     """
+    lon = _int64_if_unsigned_or_8bit(lon)
     # A single ``lon % 360`` returns exactly 360 for a negative ``lon`` of
     # magnitude at most half the floating-point spacing at 360 (2**-45, about
     # 2.8e-14, in float64 and 2**-16, about 1.5e-5, in float32), because
@@ -43,16 +69,16 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
     return lon % 360 % 360
 
 
-def _lon_in_west_hem(lon: ArrayLike) -> Any:
-    return lon_to_0360(lon) >= 180
-
-
 def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
     """Convert longitude(s) to be within [-180, 180).
 
     The Eastern hemisphere corresponds to 0 <= lon + (n*360) < 180, and the
     Western Hemisphere corresponds to 180 <= lon + (n*360) < 360, where 'n' is
     any integer (positive, negative, or zero).
+
+    The result is the exact value of ``lon`` minus a multiple of 360, with no
+    rounding, so every value already in [-180, 180) comes back unchanged:
+    ``lon_to_pm180(-0.1)`` is -0.1.  A negative zero comes back as 0.
 
     Parameters
     ----------
@@ -64,15 +90,37 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
     -------
         If ``lon`` is a scalar, then a scalar of the same type in the range
         [-180, 180).  If ``lon`` is array-like, then an array-like of the same
-        type with each element a scalar in the range [-180, 180).
+        type with each element a scalar in the range [-180, 180).  The one
+        exception is unsigned or 8-bit integer input, scalar or array, which
+        comes back as int64, since an unsigned type cannot represent a negative
+        result.  NaN comes back as NaN.
 
     """
-    lon0360 = lon_to_0360(lon)
-    # `lon0360 // 180 % 2` is 1 in the western hemisphere and 0 in the
-    # eastern, in lon0360's own type, so scalars stay scalars, float32 stays
-    # float32, DataArrays keep their coordinates, and the values match the
-    # former scalar-only `lon0360 - 360` branch exactly.
-    return cast(ArrayLike, lon0360 - 360 * (lon0360 // 180 % 2))
+    lon = _int64_if_unsigned_or_8bit(lon)
+    rem: Any
+    if isinstance(lon, int):
+        # A Python int, whose % is exact at any magnitude.  A NumPy integer is
+        # not an int subclass and takes the last branch.
+        rem = lon % 360
+    elif isinstance(lon, float) and not isinstance(lon, np.generic):
+        # A Python float stays one.  np.fmod returns NaN for an infinity, as
+        # % does, where math.fmod raises.
+        rem = float(np.fmod(lon, 360))
+    else:
+        rem = np.fmod(lon, 360)
+    # fmod is exact and takes the sign of lon, so it returns -0.1 for -0.1,
+    # where lon % 360 gives 360 - 0.1 rounded, from which subtracting 360 does
+    # not recover -0.1 (issue #149).  Adding 0 turns the -0.0 that fmod gives
+    # for -0.0 and for negative multiples of 360 into 0.0, as % gives, and
+    # changes no other value.
+    rem = rem + 0
+    # rem // 180 is -2 on (-360, -180), -1 on [-180, 0), 0 on [0, 180) and 1
+    # on [180, 360), so (rem // 180 + 1) // 2 is -1, 0, 0 and 1 there: the
+    # multiple of 360 to subtract, in rem's own type, so scalars stay
+    # scalars, float32 stays float32 and DataArrays keep their coordinates.
+    # The subtraction is exact, since rem and 360 are within a factor of 2
+    # of each other whenever the multiple is not 0 (Sterbenz's lemma).
+    return cast(ArrayLike, rem - 360 * ((rem // 180 + 1) // 2))
 
 
 def _maybe_cast_to_lon(obj: Any, strict: bool = False) -> Any:
@@ -94,6 +142,31 @@ def _other_to_lon(func: Callable[..., Any]) -> Callable[..., Any]:
         return func(obj, _maybe_cast_to_lon(other))
 
     return func_other_to_lon
+
+
+def _compare_unconverted(ufunc: np.ufunc, other: Any, lon: Longitude) -> Any:
+    """Compare ``other``, which could not be cast to a Longitude, with ``lon``.
+
+    ``ufunc`` is the comparison with ``other`` on the left.  A Dataset, or an
+    array or list of one or more dimensions, is compared element by element,
+    each element coming back through the Longitude comparison method.  A 0-d
+    array counts as a scalar, as ``Longitude`` treats it, so a NaN in one gives
+    the bool False, as a finite value in one gives a bool.  A NaN or infinite
+    number compares as a float compares with NaN: False, which makes ``!=``
+    True, since Python takes it as the negation of ``==``.  Passing such an
+    element back to ``xr.apply_ufunc`` would call the same comparison method on
+    it again, without end (issue #150).  For anything else, such as a string or
+    None, this returns NotImplemented, so Python raises TypeError for ``<``,
+    ``<=``, ``>`` and ``>=``, and ``==`` falls back to identity.
+    """
+    # np.ndim raises TypeError for a Dataset.
+    if isinstance(other, xr.Dataset) or np.ndim(other) > 0:
+        return xr.apply_ufunc(ufunc, other, lon)
+    try:
+        float(other)
+    except (TypeError, ValueError):
+        return NotImplemented
+    return False
 
 
 class Longitude:
@@ -119,7 +192,11 @@ class Longitude:
     In addition to other Longitude objects, the operators can be used to
     compare a Longitude object to anything that can be casted to a Longitude
     object, or to any sequence (e.g. a list or xarray.DataArray) whose elements
-    can be casted to Longitude objects.
+    can be casted to Longitude objects.  A NaN or infinite number, alone or as
+    an element, compares as a float compares with NaN: ``==``, ``<``, ``<=``,
+    ``>`` and ``>=`` give False and ``!=`` gives True.  Anything else that
+    cannot be cast, such as a string that is not a longitude or None, gives
+    False for ``==`` and raises TypeError for ``<``, ``<=``, ``>`` and ``>=``.
 
     """
 
@@ -134,7 +211,10 @@ class Longitude:
             Scalars get converted to longitudes using the convention that 0-180
             corresponds to the Eastern Hemisphere, 180-360 corresponds to the
             Western Hemisphere, 360-540 the Eastern Hemisphere, and so on,
-            including for negative numbers.
+            including for negative numbers.  The hemisphere and the magnitude
+            both come from ``lon_to_pm180``, which is exact, so a negative
+            number is western however small: ``Longitude(-1e-14)`` is 1e-14
+            degrees west, and ``Longitude(-0.1)`` equals ``Longitude('0.1w')``.
 
             Strings must be castable to a float or be a positive number in the
             range 0-180 followed by a single letter 'e' or 'w' (case
@@ -144,6 +224,9 @@ class Longitude:
             representation a scalar gives them, so that each meridian has one:
             ``Longitude('0w')`` is 0 degrees east and ``Longitude('180e')`` is
             180 degrees west.
+
+            A NaN or infinite value, as a number or a string such as
+            ``'nanw'``, raises ValueError.
         """
         try:
             val_as_float = float(value)
@@ -156,6 +239,8 @@ class Longitude:
                 lon_value = float(value[:-1])
             except ValueError:
                 raise ValueError("improperly formatted string")
+            if not math.isfinite(lon_value):
+                raise ValueError(f"value must be finite; value given: {value!r}")
             if (lon_value < 0) or (lon_value > 180):
                 raise ValueError(
                     "Value given as strings with hemisphere "
@@ -174,13 +259,16 @@ class Longitude:
             self._longitude = lon_value
             self._hemisphere = hemisphere
         else:
+            if not math.isfinite(val_as_float):
+                raise ValueError(f"value must be finite; value given: {value!r}")
             lon_pm180 = float(lon_to_pm180(val_as_float))
-            if _lon_in_west_hem(val_as_float):
-                self._longitude = abs(lon_pm180)
-                self._hemisphere = "W"
-            else:
-                self._longitude = lon_pm180
-                self._hemisphere = "E"
+            # The hemisphere comes from the sign of the exact value in
+            # [-180, 180).  Taking it from lon_to_0360 would put a negative
+            # value too small for value + 360 to differ from 360 in the east,
+            # since lon_to_0360 rounds that value onto 0 (issue #149).
+            # lon_to_pm180 gives 0.0 for -0.0, so 0 is eastern.
+            self._longitude = abs(lon_pm180)
+            self._hemisphere = "W" if lon_pm180 < 0 else "E"
 
     @property
     def longitude(self) -> float:
@@ -223,7 +311,7 @@ class Longitude:
                 and self.longitude == other.longitude
             )
         else:
-            return xr.apply_ufunc(np.equal, other, self)
+            return _compare_unconverted(np.equal, other, self)
 
     @_other_to_lon
     def __lt__(self, other: Any) -> Any:
@@ -239,7 +327,7 @@ class Longitude:
                 else:
                     return self.longitude < other.longitude
         else:
-            return xr.apply_ufunc(np.greater, other, self)
+            return _compare_unconverted(np.greater, other, self)
 
     @_other_to_lon
     def __gt__(self, other: Any) -> Any:
@@ -255,21 +343,21 @@ class Longitude:
                 else:
                     return self.longitude > other.longitude
         else:
-            return xr.apply_ufunc(np.less, other, self)
+            return _compare_unconverted(np.less, other, self)
 
     @_other_to_lon
     def __le__(self, other: Any) -> Any:
         if isinstance(other, Longitude):
             return self < other or self == other
         else:
-            return xr.apply_ufunc(np.greater_equal, other, self)
+            return _compare_unconverted(np.greater_equal, other, self)
 
     @_other_to_lon
     def __ge__(self, other: Any) -> Any:
         if isinstance(other, Longitude):
             return self > other or self == other
         else:
-            return xr.apply_ufunc(np.less_equal, other, self)
+            return _compare_unconverted(np.less_equal, other, self)
 
     def to_0360(self) -> float:
         """Convert longitude to its numerical value within [0, 360)."""
