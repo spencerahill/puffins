@@ -17,7 +17,7 @@ defaults invites silent inconsistencies.
 
 import inspect
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -25,8 +25,10 @@ import pytest
 import scipy.optimize
 import xarray as xr
 
+from puffins import constants as pc
 from puffins import eq_area
 from puffins.eq_area import (
+    CellEdgeError,
     _eq_area_cqe_fixed_tt,
     _equal_area_model_bouss,
     _equal_area_model_cqe,
@@ -1346,6 +1348,557 @@ class TestSolverConvergenceChecks:
                 rot_rate=ROT_RATE,
                 radius=RADIUS,
                 c_p=C_P,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Checks on the root of a solve that scipy reports converged (#120)
+# ---------------------------------------------------------------------------
+
+# A two-cell root, edges at 30 S, 5 N and 25 N, and a guess near it.
+GOOD_ROOT = [*np.sin(np.deg2rad([-30.0, 5.0, 25.0])), 300.0]
+GOOD_GUESS = [-0.5, 0.1, 0.4, 300.0]
+
+# Earth parameters of issue #120.
+ISSUE_THETA_REF = 290.0
+ISSUE_DELTA_H = 1.0 / 6.0
+ISSUE_BURG_DELH = (
+    pc.GRAV_EARTH * 10e3 * ISSUE_DELTA_H / (pc.ROT_RATE_EARTH * pc.RAD_EARTH) ** 2
+)
+ISSUE_THETA_1 = ISSUE_THETA_REF * (1 + ISSUE_DELTA_H / 3)
+SINLAT_6 = float(np.sin(np.deg2rad(6.0)))
+
+# The five solvers from GOOD_GUESS, taking the two tolerance keywords.
+_SOLVER_CALLS = [
+    pytest.param(
+        lambda **kw: equal_area_lh88(GOOD_GUESS, 0.0, THETA_REF, DELTA_H, 0.02, **kw),
+        id="lh88",
+    ),
+    pytest.param(
+        lambda **kw: equal_area_bouss(
+            GOOD_GUESS,
+            THETA_REF,
+            DELTA_H / 0.02,
+            _rce_lh88_func(0.0, THETA_REF, DELTA_H),
+            **kw,
+        ),
+        id="bouss",
+    ),
+    pytest.param(
+        lambda **kw: equal_area_cqe(
+            GOOD_GUESS,
+            100.0,
+            C_P,
+            RADIUS,
+            ROT_RATE,
+            _rce_lh88_func(0.0, 345.0, 1.0 / 6.0),
+            **kw,
+        ),
+        id="cqe",
+    ),
+    pytest.param(
+        lambda **kw: equal_area_lh88_fixed_temp_tropo(
+            GOOD_GUESS,
+            0.0,
+            theta_ref=290.0,
+            delta_h=1.0 / 6.0,
+            gamma=1.0,
+            dtheta_dts=1.0,
+            temp_tropo=200.0,
+            rot_rate=ROT_RATE,
+            radius=RADIUS,
+            c_p=C_P,
+            **kw,
+        ),
+        id="lh88-fixed-tt",
+    ),
+    pytest.param(
+        lambda **kw: equal_area_cqe_fixed_tt(
+            GOOD_GUESS,
+            _rce_lh88_func(0.0, 345.0, 1.0 / 6.0),
+            np.linspace(250.0, 420.0, 10),
+            temp_tropo=200.0,
+            rel_hum=0.7,
+            pressure=1.0e5,
+            c_p=C_P,
+            radius=RADIUS,
+            rot_rate=ROT_RATE,
+            **kw,
+        ),
+        id="cqe-fixed-tt",
+    ),
+]
+
+
+def _fake_converged_root(
+    x: Sequence[float] | np.ndarray, fun: Sequence[float] | np.ndarray
+) -> Callable[..., types.SimpleNamespace]:
+    """Stand-in for scipy.optimize.root reporting success at a given root."""
+
+    def _root(*args: object, **kwargs: object) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            success=True,
+            x=np.array(x, dtype=float),
+            fun=np.array(fun, dtype=float),
+            message="mocked success",
+        )
+
+    return _root
+
+
+def _root_at(lat_deg: Sequence[float], temp: float = 300.0) -> list[float]:
+    """Root vector with edges at the given latitudes (degrees)."""
+    return [*np.sin(np.deg2rad(lat_deg)), temp]
+
+
+class TestRootChecks:
+    """The checks on a root that scipy reports converged, through
+    equal_area_lh88 with scipy.optimize.root mocked, so that each check
+    sees exactly the root and residuals given."""
+
+    @staticmethod
+    def _solve(
+        monkeypatch: pytest.MonkeyPatch,
+        x: Sequence[float] | np.ndarray,
+        fun: Sequence[float] | np.ndarray = (0.0, 0.0, 0.0, 0.0),
+        guess: Sequence[float] = GOOD_GUESS,
+        **kwargs: float,
+    ) -> np.ndarray:
+        monkeypatch.setattr(scipy.optimize, "root", _fake_converged_root(x, fun))
+        return equal_area_lh88(guess, 0.0, THETA_REF, DELTA_H, 0.02, **kwargs)
+
+    def test_two_cell_root_returned_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sol = self._solve(monkeypatch, GOOD_ROOT)
+        np.testing.assert_array_equal(sol, GOOD_ROOT)
+
+    def test_edge_error_is_a_runtime_error(self) -> None:
+        assert issubclass(CellEdgeError, RuntimeError)
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_continuity_residual_against_tol_in_kelvin(
+        self, monkeypatch: pytest.MonkeyPatch, index: int
+    ) -> None:
+        fun = np.zeros(4)
+        fun[index] = 0.9e-3
+        self._solve(monkeypatch, GOOD_ROOT, fun)
+        fun[index] = -1.1e-3
+        with pytest.raises(RuntimeError, match="resid_tol") as excinfo:
+            self._solve(monkeypatch, GOOD_ROOT, fun)
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    @pytest.mark.parametrize("index", [2, 3])
+    def test_integral_residual_against_tol_times_its_cell_width(
+        self, monkeypatch: pytest.MonkeyPatch, index: int
+    ) -> None:
+        """The energy integral over the cell from 30 S to 5 N (index 2), and
+        over the one from 5 N to 25 N (index 3), each against resid_tol times
+        that cell's width in sin(latitude): its area-weighted mean
+        temperature difference against resid_tol."""
+        sinlat = np.sin(np.deg2rad([-30.0, 5.0, 25.0]))
+        width = {2: sinlat[1] - sinlat[0], 3: sinlat[2] - sinlat[1]}[index]
+        fun = np.zeros(4)
+        fun[index] = 0.9e-3 * width
+        self._solve(monkeypatch, GOOD_ROOT, fun)
+        fun[index] = -1.1e-3 * width
+        with pytest.raises(RuntimeError, match="resid_tol"):
+            self._solve(monkeypatch, GOOD_ROOT, fun)
+
+    def test_resid_tol_sets_the_tolerance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fun = [2e-3, 0.0, 0.0, 0.0]
+        with pytest.raises(RuntimeError, match="resid_tol"):
+            self._solve(monkeypatch, GOOD_ROOT, fun)
+        sol = self._solve(monkeypatch, GOOD_ROOT, fun, resid_tol=3e-3)
+        np.testing.assert_array_equal(sol, GOOD_ROOT)
+
+    @pytest.mark.parametrize("min_cell_width", [0.5, 2.0])
+    def test_width_floor_keeps_a_vanished_cell_an_edge_error(
+        self, monkeypatch: pytest.MonkeyPatch, min_cell_width: float
+    ) -> None:
+        """A summer cell 1e-9 wide in sin(latitude) has its integral residual
+        compared with resid_tol times sin(min_cell_width), so the rounding
+        error of a converged vanished cell does not fail the residual check."""
+        sinlat_1 = float(np.sin(np.deg2rad(20.0)))
+        x = [float(np.sin(np.deg2rad(-30.0))), sinlat_1, sinlat_1 + 1e-9, 300.0]
+        floor = float(np.sin(np.deg2rad(min_cell_width)))
+        with pytest.raises(CellEdgeError):
+            self._solve(
+                monkeypatch, x, [0, 0, 0, 0.9e-3 * floor], min_cell_width=min_cell_width
+            )
+        with pytest.raises(RuntimeError, match="resid_tol") as excinfo:
+            self._solve(
+                monkeypatch, x, [0, 0, 0, 1.1e-3 * floor], min_cell_width=min_cell_width
+            )
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    @pytest.mark.parametrize(
+        "x",
+        [
+            [np.nan, *GOOD_ROOT[1:]],
+            [*GOOD_ROOT[:3], np.nan],
+        ],
+        ids=["edge", "temperature"],
+    )
+    def test_nonfinite_root_raises_runtime_error(
+        self, monkeypatch: pytest.MonkeyPatch, x: list[float]
+    ) -> None:
+        with pytest.raises(RuntimeError, match="resid_tol") as excinfo:
+            self._solve(monkeypatch, x)
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    @pytest.mark.parametrize("index", [0, 3])
+    def test_nonfinite_residual_raises_runtime_error(
+        self, monkeypatch: pytest.MonkeyPatch, index: int
+    ) -> None:
+        fun = np.zeros(4)
+        fun[index] = np.nan
+        with pytest.raises(RuntimeError, match="resid_tol") as excinfo:
+            self._solve(monkeypatch, GOOD_ROOT, fun)
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    @pytest.mark.parametrize(
+        "index, value", [(0, -1.0), (0, -1.01), (1, 1.2), (2, 1.0)]
+    )
+    def test_edge_at_or_beyond_a_pole(
+        self, monkeypatch: pytest.MonkeyPatch, index: int, value: float
+    ) -> None:
+        x = list(GOOD_ROOT)
+        x[index] = value
+        with pytest.raises(CellEdgeError, match="pole"):
+            self._solve(monkeypatch, x)
+
+    def test_shared_edge_outside_the_poleward_edges(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(CellEdgeError, match="two cells"):
+            self._solve(monkeypatch, _root_at([-30.0, 30.0, 25.0]))
+
+    @pytest.mark.parametrize(
+        "lat_deg",
+        [[-30.0, 20.0, 20.5 + 1e-6], [20.0 - 0.5 - 1e-6, 20.0, 40.0]],
+        ids=["summer", "winter"],
+    )
+    def test_cell_just_wider_than_the_default_minimum_passes(
+        self, monkeypatch: pytest.MonkeyPatch, lat_deg: list[float]
+    ) -> None:
+        x = _root_at(lat_deg)
+        np.testing.assert_array_equal(self._solve(monkeypatch, x), x)
+
+    @pytest.mark.parametrize(
+        "lat_deg",
+        [[-30.0, 20.0, 20.5 - 1e-6], [20.0 - 0.5 + 1e-6, 20.0, 40.0]],
+        ids=["summer", "winter"],
+    )
+    def test_cell_just_narrower_than_the_default_minimum_raises(
+        self, monkeypatch: pytest.MonkeyPatch, lat_deg: list[float]
+    ) -> None:
+        with pytest.raises(CellEdgeError, match="0.5 degrees"):
+            self._solve(monkeypatch, _root_at(lat_deg))
+
+    def test_min_cell_width_sets_the_minimum(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The summer cell is 0.4 degrees wide."""
+        x = _root_at([-30.0, 20.0, 20.4])
+        with pytest.raises(CellEdgeError):
+            self._solve(monkeypatch, x)
+        np.testing.assert_array_equal(
+            self._solve(monkeypatch, x, min_cell_width=0.3), x
+        )
+
+    def test_zero_min_cell_width_accepts_the_no_circulation_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero widths, with zero integrals, pass both checks."""
+        x = _root_at([20.0, 20.0, 20.0])
+        np.testing.assert_array_equal(
+            self._solve(monkeypatch, x, min_cell_width=0.0), x
+        )
+
+    def test_edge_order_follows_the_guess(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The equations are symmetric under exchanging the two poleward
+        edges, so a guess in decreasing latitude, as [winter, shared, summer]
+        is for a Southern Hemisphere summer, gets its root in that order."""
+        ascending = _root_at([-30.0, 5.0, 25.0])
+        descending = _root_at([25.0, 5.0, -30.0])
+        guess_descending = [0.4, 0.1, -0.5, 300.0]
+        np.testing.assert_array_equal(
+            self._solve(monkeypatch, descending, guess=guess_descending), descending
+        )
+        with pytest.raises(CellEdgeError, match="decreasing"):
+            self._solve(monkeypatch, ascending, guess=guess_descending)
+        with pytest.raises(CellEdgeError, match="increasing"):
+            self._solve(monkeypatch, descending)
+
+    def test_guess_with_equal_poleward_edges_takes_increasing_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        guess = [0.1, 0.1, 0.1, 300.0]
+        ascending = _root_at([-30.0, 5.0, 25.0])
+        np.testing.assert_array_equal(
+            self._solve(monkeypatch, ascending, guess=guess), ascending
+        )
+        with pytest.raises(CellEdgeError, match="increasing"):
+            self._solve(monkeypatch, _root_at([25.0, 5.0, -30.0]), guess=guess)
+
+    def test_edge_error_carries_the_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        x = _root_at([-30.0, 20.0, 20.1])
+        with pytest.raises(CellEdgeError) as excinfo:
+            self._solve(monkeypatch, x)
+        np.testing.assert_array_equal(excinfo.value.x, x)
+
+    @pytest.mark.parametrize(
+        "kwargs, match",
+        [
+            (dict(resid_tol=0.0), "resid_tol"),
+            (dict(resid_tol=-1e-3), "resid_tol"),
+            (dict(resid_tol=np.nan), "resid_tol"),
+            (dict(min_cell_width=-0.1), "min_cell_width"),
+            (dict(min_cell_width=np.nan), "min_cell_width"),
+        ],
+    )
+    def test_invalid_tolerance_raises_value_error(
+        self, monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], match: str
+    ) -> None:
+        monkeypatch.setattr(
+            scipy.optimize, "root", _fake_converged_root(GOOD_ROOT, np.zeros(4))
+        )
+        with pytest.raises(ValueError, match=match):
+            equal_area_lh88(GOOD_GUESS, 0.0, THETA_REF, DELTA_H, 0.02, **kwargs)
+
+    def test_guess_of_wrong_length_raises_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(ValueError, match="length 4"):
+            self._solve(monkeypatch, GOOD_ROOT, guess=GOOD_GUESS[:3])
+
+    @pytest.mark.parametrize("solver", _SOLVER_CALLS)
+    def test_every_solver_passes_its_tolerances_on(
+        self, monkeypatch: pytest.MonkeyPatch, solver: Callable[..., np.ndarray]
+    ) -> None:
+        """GOOD_ROOT's cells are 35 and 20 degrees wide."""
+        monkeypatch.setattr(
+            scipy.optimize, "root", _fake_converged_root(GOOD_ROOT, [2e-3, 0, 0, 0])
+        )
+        with pytest.raises(RuntimeError, match="resid_tol"):
+            solver()
+        np.testing.assert_array_equal(solver(resid_tol=3e-3), GOOD_ROOT)
+        with pytest.raises(CellEdgeError):
+            solver(resid_tol=3e-3, min_cell_width=21.0)
+
+
+class TestResidualErrorsBecomeRuntimeErrors:
+    """ValueError and ArithmeticError from evaluating the residuals become
+    RuntimeError, chained to the original; other errors propagate."""
+
+    @pytest.mark.parametrize("exc", [ValueError, ZeroDivisionError])
+    def test_converted(self, exc: type[Exception]) -> None:
+        def rce(sinlat: float) -> float:
+            raise exc("out of domain")
+
+        with pytest.raises(RuntimeError, match=f"raised {exc.__name__}") as excinfo:
+            equal_area_bouss(GOOD_GUESS, THETA_REF, DELTA_H / 0.02, rce)
+        assert isinstance(excinfo.value.__cause__, exc)
+
+    def test_type_error_propagates(self) -> None:
+        def rce(sinlat: float) -> float:
+            raise TypeError("a bug in the RCE function")
+
+        with pytest.raises(TypeError, match="a bug"):
+            equal_area_bouss(GOOD_GUESS, THETA_REF, DELTA_H / 0.02, rce)
+
+
+@pytest.mark.parametrize(
+    "name, positional",
+    [
+        (
+            "equal_area_lh88",
+            ["init_guess", "sinlat_0", "theta_ref", "delta_h", "burg_delh"],
+        ),
+        (
+            "equal_area_lh88_fixed_temp_tropo",
+            [
+                "init_guess",
+                "sinlat_0",
+                "theta_ref",
+                "delta_h",
+                "gamma",
+                "dtheta_dts",
+                "temp_tropo",
+                "rot_rate",
+                "radius",
+                "c_p",
+            ],
+        ),
+        (
+            "equal_area_bouss",
+            ["init_guess", "theta_ref", "del_h_over_ro", "_theta_rce_func"],
+        ),
+        (
+            "equal_area_cqe",
+            [
+                "init_guess",
+                "sfc_trop_diff",
+                "c_p",
+                "radius",
+                "rot_rate",
+                "_theta_rce_func",
+            ],
+        ),
+        (
+            "equal_area_cqe_fixed_tt",
+            [
+                "init_guess",
+                "theta_rce_func",
+                "theta_guesses",
+                "temp_tropo",
+                "rel_hum",
+                "pressure",
+                "c_p",
+                "radius",
+                "rot_rate",
+            ],
+        ),
+    ],
+)
+def test_tolerances_keyword_only_after_unchanged_positionals(
+    name: str, positional: list[str]
+) -> None:
+    """The positional parameters keep their v0.3.0 positions, so every
+    positional call of v0.3.0 stays valid (#120), and the two tolerances
+    are keyword only."""
+    params = inspect.signature(getattr(eq_area, name)).parameters.values()
+    kinds = inspect.Parameter
+    assert [p.name for p in params if p.kind is kinds.POSITIONAL_OR_KEYWORD] == (
+        positional
+    )
+    assert {p.name: p.default for p in params if p.kind is kinds.KEYWORD_ONLY} == {
+        "resid_tol": 1e-3,
+        "min_cell_width": 0.5,
+    }
+
+
+@_IGNORE_QUAD_WARNINGS
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+class TestIssueSolves:
+    """Real solves from issue #120, Earth parameters, at which scipy
+    reports convergence: each now raises, except the two-cell one."""
+
+    def test_guess_returned_unchanged_raises_runtime_error(self) -> None:
+        """scipy returns this guess unchanged, with residuals of 1.5 K."""
+        guess = [-0.3, 0.0, 0.3, ISSUE_THETA_1]
+        with pytest.raises(RuntimeError, match="scipy reported success") as excinfo:
+            equal_area_lh88(guess, 0.0, ISSUE_THETA_REF, ISSUE_DELTA_H, ISSUE_BURG_DELH)
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    def test_no_circulation_state_raises_edge_error(self) -> None:
+        """All three edges at one latitude, and the inner-edge temperature
+        at the RCE temperature there (Lindzen and Hou 1988 Eq. 1b, by hand),
+        solve the equations exactly."""
+        guess = [-0.3, SINLAT_6, 0.3, ISSUE_THETA_1]
+        with pytest.raises(CellEdgeError) as excinfo:
+            equal_area_lh88(
+                guess, SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H, ISSUE_BURG_DELH
+            )
+        x = excinfo.value.x
+        assert np.ptp(x[:3]) < 1e-6
+        theta_rce = ISSUE_THETA_REF * (
+            1 + ISSUE_DELTA_H / 3 - ISSUE_DELTA_H * (x[1] - SINLAT_6) ** 2
+        )
+        np.testing.assert_allclose(x[3], theta_rce, rtol=0, atol=1e-6)
+
+    def test_vanished_summer_cell_raises_edge_error(self) -> None:
+        """From this guess the solver finds a vanished summer cell, though
+        a two-cell solution exists here (next test)."""
+        guess = [-0.5, SINLAT_6, 0.5, 0.99 * ISSUE_THETA_1]
+        with pytest.raises(CellEdgeError) as excinfo:
+            equal_area_lh88(
+                guess, SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H, ISSUE_BURG_DELH
+            )
+        lat = np.rad2deg(np.arcsin(excinfo.value.x[:3]))
+        assert lat[2] - lat[1] < 1e-3
+        assert lat[1] - lat[0] > 50.0
+
+    def test_two_cell_solution_returned(self) -> None:
+        guess = [-0.5, SINLAT_6, 0.5, ISSUE_THETA_1]
+        sol = equal_area_lh88(
+            guess, SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H, ISSUE_BURG_DELH
+        )
+        resid = _lh88_model(
+            sol, SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H, ISSUE_BURG_DELH
+        )
+        np.testing.assert_allclose(np.abs(resid).max(), 0.0, atol=1e-6)
+        # Anchors from a converged solve (residuals ~2e-8), 2026-11-14.
+        np.testing.assert_allclose(
+            np.rad2deg(np.arcsin(sol[:3])), [-33.2, 18.5, 24.4], atol=0.1
+        )
+
+    def test_converged_flag_at_a_large_residual_raises_runtime_error(self) -> None:
+        """scipy reports convergence at a root whose residuals reach 36 K,
+        with the shared edge beyond the South Pole."""
+        guess = [-0.95, SINLAT_6, 0.95, 0.99 * ISSUE_THETA_1]
+        rce = _rce_lh88_func(SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H)
+        del_h_over_ro = 0.5 * ISSUE_DELTA_H / ISSUE_BURG_DELH
+        with pytest.raises(RuntimeError, match="scipy reported success") as excinfo:
+            equal_area_bouss(guess, ISSUE_THETA_REF, del_h_over_ro, rce)
+        assert not isinstance(excinfo.value, CellEdgeError)
+
+    def test_rce_function_raising_past_a_pole_gives_runtime_error(self) -> None:
+        """The previous solve, with an RCE profile defined only on
+        sin(lat) in [-1, 1], as an interpolator with bounds checking is:
+        the iterates past the South Pole make it raise ValueError."""
+        base = _rce_lh88_func(SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H)
+
+        def rce(sinlat: float) -> float:
+            if abs(sinlat) > 1:
+                raise ValueError("sin(lat) outside [-1, 1]")
+            return base(sinlat)
+
+        guess = [-0.95, SINLAT_6, 0.95, 0.99 * ISSUE_THETA_1]
+        del_h_over_ro = 0.5 * ISSUE_DELTA_H / ISSUE_BURG_DELH
+        with pytest.raises(RuntimeError, match="raised ValueError") as excinfo:
+            equal_area_bouss(guess, ISSUE_THETA_REF, del_h_over_ro, rce)
+        assert isinstance(excinfo.value.__cause__, ValueError)
+
+    def test_folded_edges_raise_edge_error(self) -> None:
+        """The CQE solver lands on both poleward edges at 11.0 N with the
+        shared edge at 3.1 N."""
+        guess = [-0.3, SINLAT_6, 0.3, 0.99 * ISSUE_THETA_1]
+        rce = _rce_lh88_func(SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H)
+        with pytest.raises(CellEdgeError) as excinfo:
+            equal_area_cqe(
+                guess,
+                ISSUE_THETA_1 - 200.0,
+                pc.C_P,
+                pc.RAD_EARTH,
+                pc.ROT_RATE_EARTH,
+                rce,
+            )
+        lat = np.rad2deg(np.arcsin(excinfo.value.x[:3]))
+        np.testing.assert_allclose(lat, [11.04, 3.12, 11.04], atol=0.01)
+
+    def test_cqe_fixed_tt_past_a_pole_raises_runtime_error(self) -> None:
+        """Issue case 3.  At 2a41b3f it raised scipy's ValueError, from a
+        brentq bracket of NaN values at an iterate past a pole in
+        pot_temp_amc_cqe_fixed_tt; since 0073106 (#108) that latitude gives
+        a NaN residual, and the solve fails to converge."""
+        guess = [-0.3, 0.0, 0.3, ISSUE_THETA_1]
+        with pytest.raises(RuntimeError):
+            equal_area_cqe_fixed_tt(
+                guess,
+                _rce_lh88_func(0.0, ISSUE_THETA_REF, ISSUE_DELTA_H),
+                np.linspace(201.0, 580.0, 33),
+                temp_tropo=200.0,
+                rel_hum=0.7,
+                pressure=1e5,
+                c_p=pc.C_P,
+                radius=pc.RAD_EARTH,
+                rot_rate=pc.ROT_RATE_EARTH,
             )
 
 

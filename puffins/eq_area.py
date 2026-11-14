@@ -651,20 +651,129 @@ def pot_temp_lin_ro_eq_area(
     )
 
 
+class CellEdgeError(RuntimeError):
+    """An equal-area solve found a root whose edges do not bound two cells.
+
+    Raised by the numerical equal-area solvers when the four equations are
+    solved to within the residual tolerance, but an edge lies at or beyond
+    a pole, the shared edge does not lie between the two poleward edges, or
+    a cell is narrower than the minimum width.  Narrower cells include the
+    no-circulation state, with all three edges at one latitude and the
+    inner-edge temperature equal to the RCE temperature there, which solves
+    the equations exactly at any latitude.  They also include a vanished
+    cell, which in continuation in the heating maximum can mark the end of
+    the two-cell solution.
+
+    It subclasses RuntimeError, which the solvers raise for a numerical
+    failure, so ``except RuntimeError`` catches both, and continuation code
+    can catch this one alone.
+
+    Attributes
+    ----------
+    x : numpy.ndarray of length 4
+        The root, laid out as the solver's return value.
+    """
+
+    def __init__(self, message: str, x: np.ndarray) -> None:
+        super().__init__(message)
+        self.x = x
+
+
+# Defaults of the solvers' resid_tol (K) and min_cell_width (degrees).
+_RESID_TOL = 1e-3
+_MIN_CELL_WIDTH = 0.5
+
+
 def _checked_root_solve(
     func: Callable[..., np.ndarray],
     init_guess: Sequence[float] | np.ndarray,
     args: tuple,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
-    """Solve func(x, *args) = 0, raising if scipy reports non-convergence.
+    """Solve the equal-area system func(x, *args) = 0 and check the root.
 
-    Without this check a failed solve silently returns the (possibly
-    unmodified) iterate, which is indistinguishable from a solution.
+    ``x`` is [sin(lat_a), sin(lat_1), sin(lat_b), T_1]: the sines of one
+    poleward edge, the shared edge and the other poleward edge, and the
+    temperature at the shared edge.  ``func`` returns the four residuals
+    [continuity at lat_a, continuity at lat_b, integral over cell a,
+    integral over cell b].  Each continuity residual is the circulation's
+    temperature minus the RCE temperature at a poleward edge, in K.  Each
+    integral residual is the integral of that difference over sin(latitude)
+    across a cell, in K times sin(latitude).
+
+    scipy's success flag alone does not establish a root: it is sometimes
+    set for the initial guess returned unchanged.  So the residuals are
+    checked against ``resid_tol``.  Dividing an integral residual by its
+    cell's width in sin(latitude) gives the area-weighted mean over the cell
+    of the temperature difference, in K, which is also the error in T_1
+    that the integral alone implies.  The width is floored at
+    sin(min_cell_width), the width in sin(latitude) of a cell that narrow
+    beside the equator.  Without the floor, the division amplifies the
+    rounding error of a converged root with a vanished cell, which then
+    fails the residual check where it should fail the edge check.
+
+    Raises RuntimeError if evaluating the residuals raises ValueError or
+    ArithmeticError (as scipy's brentq does on meeting a NaN), if scipy
+    reports non-convergence, or if the root is not finite or any scaled
+    residual exceeds ``resid_tol``.  Raises CellEdgeError, a RuntimeError
+    subclass, if the root's edges do not bound two cells, each at least
+    ``min_cell_width`` degrees wide, in the order of the initial guess:
+    increasing latitude if init_guess[2] >= init_guess[0], decreasing
+    otherwise.  The equations are symmetric under exchanging the two
+    poleward edges, so either order solves the same model.
     """
-    sol = scipy.optimize.root(func, init_guess, args=args)
+    if np.shape(init_guess) != (4,):
+        raise ValueError(
+            f"init_guess must have length 4; got shape {np.shape(init_guess)}"
+        )
+    if not resid_tol > 0:
+        raise ValueError(f"resid_tol must be positive; got {resid_tol}")
+    if not min_cell_width >= 0:
+        raise ValueError(f"min_cell_width must be non-negative; got {min_cell_width}")
+    try:
+        sol = scipy.optimize.root(func, init_guess, args=args)
+    except (ValueError, ArithmeticError) as err:
+        raise RuntimeError(
+            f"equal-area solver failed: evaluating the residuals raised "
+            f"{type(err).__name__}: {err}"
+        ) from err
     if not sol.success:
         raise RuntimeError(f"equal-area solver did not converge: {sol.message}")
-    return cast(np.ndarray, sol.x)
+    x = np.asarray(sol.x, dtype=float)
+    resid = np.abs(np.asarray(sol.fun, dtype=float))
+    width_floor = np.sin(np.deg2rad(min_cell_width))
+    widths_sin = np.maximum(np.abs(x[[0, 2]] - x[1]), width_floor)
+    # Integrals compared with resid_tol times the width rather than divided
+    # by it, so that a zero width, allowed when min_cell_width is 0, passes
+    # a zero integral.  Written so that a NaN root or residual also raises.
+    within_tol = np.concatenate(
+        [resid[:2] <= resid_tol, resid[2:] <= resid_tol * widths_sin]
+    )
+    if not (np.isfinite(x).all() and within_tol.all()):
+        raise RuntimeError(
+            "equal-area solver did not converge: scipy reported success, but "
+            f"a residual exceeds resid_tol = {resid_tol:g} K at the root {x}: "
+            f"continuity residuals {resid[:2]} K, energy-integral residuals "
+            f"{resid[2:]} K over cells {widths_sin} wide in sin(latitude)"
+        )
+    if not np.all(np.abs(x[:3]) < 1):
+        raise CellEdgeError(
+            f"equal-area root has an edge at or beyond a pole: sin(lat) = {x[:3]}",
+            x,
+        )
+    lat = np.rad2deg(np.arcsin(x[:3]))
+    orientation = 1.0 if init_guess[2] >= init_guess[0] else -1.0
+    widths = orientation * np.diff(lat)
+    if not np.all(widths >= min_cell_width):
+        order = "increasing" if orientation > 0 else "decreasing"
+        raise CellEdgeError(
+            "equal-area root does not bound two cells, each at least "
+            f"{min_cell_width:g} degrees wide with edges in {order} latitude as "
+            f"in the initial guess: edges at {lat} degrees",
+            x,
+        )
+    return x
 
 
 # Original Lindzen and Hou 1988.
@@ -767,6 +876,9 @@ def equal_area_lh88(
     theta_ref: float = THETA_REF,
     delta_h: float = DELTA_H,
     burg_delh: float = 0.15,
+    *,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
     """Solve the Lindzen-Hou 1988 equal-area model numerically.
 
@@ -788,6 +900,15 @@ def equal_area_lh88(
     burg_delh : float, optional
         Planetary Burger number times delta_h, g H delta_h / (Omega a)^2:
         the thermal Rossby number of Held and Hou (1980). Default: 0.15.
+    resid_tol : float, optional, keyword only
+        Largest accepted residual (K).  The two continuity residuals are
+        the circulation's minus the RCE depth-averaged potential
+        temperature at each poleward edge.  Each energy-integral residual
+        is divided by its cell's width in sin(latitude), floored at
+        sin(min_cell_width), which makes it the area-weighted mean of that
+        difference over the cell.  Default: 1e-3.
+    min_cell_width : float, optional, keyword only
+        Narrowest accepted cell (degrees latitude). Default: 0.5.
 
     Returns
     -------
@@ -795,13 +916,30 @@ def equal_area_lh88(
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_hat_1].
 
+    Raises
+    ------
+    RuntimeError
+        If the solve fails: scipy reports non-convergence, the largest
+        residual exceeds ``resid_tol``, or evaluating the residuals raises
+        ValueError or ArithmeticError.
+    CellEdgeError
+        A RuntimeError subclass, if the root solves the equations but its
+        edges do not bound two cells: an edge at or beyond a pole, the
+        edges not in the latitude order of ``init_guess``, or a cell
+        narrower than ``min_cell_width``.  The no-circulation state, all
+        three edges at one latitude, is such a root.
+
     References
     ----------
     .. [1] Lindzen, R. S. & Hou, A. Y. (1988). J. Atmos. Sci., 45,
        2416-2427.
     """
     return _checked_root_solve(
-        _lh88_model, init_guess, (sinlat_0, theta_ref, delta_h, burg_delh)
+        _lh88_model,
+        init_guess,
+        (sinlat_0, theta_ref, delta_h, burg_delh),
+        resid_tol=resid_tol,
+        min_cell_width=min_cell_width,
     )
 
 
@@ -950,6 +1088,9 @@ def equal_area_lh88_fixed_temp_tropo(
     rot_rate: float = ROT_RATE_EARTH,
     radius: float = RAD_EARTH,
     c_p: float = C_P,
+    *,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
     """Solve the LH88 equal-area model with fixed tropopause temperature.
 
@@ -980,12 +1121,34 @@ def equal_area_lh88_fixed_temp_tropo(
         Planetary radius (m). Default: Earth.
     c_p : float, optional
         Specific heat at constant pressure (J/kg/K). Default: C_P.
+    resid_tol : float, optional, keyword only
+        Largest accepted residual (K).  The two continuity residuals are
+        the circulation's minus the RCE depth-averaged potential
+        temperature at each poleward edge.  Each energy-integral residual
+        is divided by its cell's width in sin(latitude), floored at
+        sin(min_cell_width), which makes it the area-weighted mean of that
+        difference over the cell.  Default: 1e-3.
+    min_cell_width : float, optional, keyword only
+        Narrowest accepted cell (degrees latitude). Default: 0.5.
 
     Returns
     -------
     numpy.ndarray of length 4
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         T_sfc_1].
+
+    Raises
+    ------
+    RuntimeError
+        If the solve fails: scipy reports non-convergence, the largest
+        residual exceeds ``resid_tol``, or evaluating the residuals raises
+        ValueError or ArithmeticError.
+    CellEdgeError
+        A RuntimeError subclass, if the root solves the equations but its
+        edges do not bound two cells: an edge at or beyond a pole, the
+        edges not in the latitude order of ``init_guess``, or a cell
+        narrower than ``min_cell_width``.  The no-circulation state, all
+        three edges at one latitude, is such a root.
     """
     return _checked_root_solve(
         _lh88_model_fixed_tt,
@@ -1001,6 +1164,8 @@ def equal_area_lh88_fixed_temp_tropo(
             radius,
             c_p,
         ),
+        resid_tol=resid_tol,
+        min_cell_width=min_cell_width,
     )
 
 
@@ -1077,6 +1242,9 @@ def equal_area_bouss(
     theta_ref: float,
     del_h_over_ro: float,
     _theta_rce_func: Callable[[float], float],
+    *,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
     """Boussinesq equal-area model for arbitrary RCE potential temperatures.
 
@@ -1102,17 +1270,42 @@ def equal_area_bouss(
     _theta_rce_func : callable
         Function of sin(latitude) returning the RCE depth-averaged
         potential temperature.
+    resid_tol : float, optional, keyword only
+        Largest accepted residual (K).  The two continuity residuals are
+        the circulation's minus the RCE depth-averaged potential
+        temperature at each poleward edge.  Each energy-integral residual
+        is divided by its cell's width in sin(latitude), floored at
+        sin(min_cell_width), which makes it the area-weighted mean of that
+        difference over the cell.  Default: 1e-3.
+    min_cell_width : float, optional, keyword only
+        Narrowest accepted cell (degrees latitude). Default: 0.5.
 
     Returns
     -------
     numpy.ndarray of length 4
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
+
+    Raises
+    ------
+    RuntimeError
+        If the solve fails: scipy reports non-convergence, the largest
+        residual exceeds ``resid_tol``, or evaluating the residuals raises
+        ValueError or ArithmeticError, as from ``_theta_rce_func`` at an
+        iterate outside its domain.
+    CellEdgeError
+        A RuntimeError subclass, if the root solves the equations but its
+        edges do not bound two cells: an edge at or beyond a pole, the
+        edges not in the latitude order of ``init_guess``, or a cell
+        narrower than ``min_cell_width``.  The no-circulation state, all
+        three edges at one latitude, is such a root.
     """
     return _checked_root_solve(
         _equal_area_model_bouss,
         init_guess,
         (theta_ref, del_h_over_ro, _theta_rce_func),
+        resid_tol=resid_tol,
+        min_cell_width=min_cell_width,
     )
 
 
@@ -1211,6 +1404,9 @@ def equal_area_cqe(
     radius: float,
     rot_rate: float,
     _theta_rce_func: Callable[[float], float],
+    *,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
     """CQE equal-area model for arbitrary RCE potential temperatures.
 
@@ -1234,17 +1430,42 @@ def equal_area_cqe(
     _theta_rce_func : callable
         Function of sin(latitude) returning the RCE depth-averaged
         potential temperature.
+    resid_tol : float, optional, keyword only
+        Largest accepted residual (K).  The two continuity residuals are
+        the circulation's minus the RCE potential temperature at each
+        poleward edge.  Each energy-integral residual is divided by its
+        cell's width in sin(latitude), floored at sin(min_cell_width),
+        which makes it the area-weighted mean of that difference over the
+        cell.  Default: 1e-3.
+    min_cell_width : float, optional, keyword only
+        Narrowest accepted cell (degrees latitude). Default: 0.5.
 
     Returns
     -------
     numpy.ndarray of length 4
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
+
+    Raises
+    ------
+    RuntimeError
+        If the solve fails: scipy reports non-convergence, the largest
+        residual exceeds ``resid_tol``, or evaluating the residuals raises
+        ValueError or ArithmeticError, as from ``_theta_rce_func`` at an
+        iterate outside its domain.
+    CellEdgeError
+        A RuntimeError subclass, if the root solves the equations but its
+        edges do not bound two cells: an edge at or beyond a pole, the
+        edges not in the latitude order of ``init_guess``, or a cell
+        narrower than ``min_cell_width``.  The no-circulation state, all
+        three edges at one latitude, is such a root.
     """
     return _checked_root_solve(
         _equal_area_model_cqe,
         init_guess,
         (sfc_trop_diff, c_p, radius, rot_rate, _theta_rce_func),
+        resid_tol=resid_tol,
+        min_cell_width=min_cell_width,
     )
 
 
@@ -1373,6 +1594,9 @@ def equal_area_cqe_fixed_tt(
     c_p: float = C_P,
     radius: float = RAD_EARTH,
     rot_rate: float = ROT_RATE_EARTH,
+    *,
+    resid_tol: float = _RESID_TOL,
+    min_cell_width: float = _MIN_CELL_WIDTH,
 ) -> np.ndarray:
     """CQE equal-area model with fixed tropopause temperature.
 
@@ -1402,12 +1626,35 @@ def equal_area_cqe_fixed_tt(
         Planetary radius (m). Default: Earth.
     rot_rate : float, optional
         Planetary rotation rate (rad/s). Default: Earth.
+    resid_tol : float, optional, keyword only
+        Largest accepted residual (K).  The two continuity residuals are
+        the circulation's minus the RCE potential temperature at each
+        poleward edge.  Each energy-integral residual is divided by its
+        cell's width in sin(latitude), floored at sin(min_cell_width),
+        which makes it the area-weighted mean of that difference over the
+        cell.  Default: 1e-3.
+    min_cell_width : float, optional, keyword only
+        Narrowest accepted cell (degrees latitude). Default: 0.5.
 
     Returns
     -------
     numpy.ndarray of length 4
         Solution array: [sin(lat_winter), sin(lat_1), sin(lat_summer),
         theta_1].
+
+    Raises
+    ------
+    RuntimeError
+        If the solve fails: scipy reports non-convergence, the largest
+        residual exceeds ``resid_tol``, or evaluating the residuals raises
+        ValueError or ArithmeticError, as from ``theta_rce_func`` at an
+        iterate outside its domain.
+    CellEdgeError
+        A RuntimeError subclass, if the root solves the equations but its
+        edges do not bound two cells: an edge at or beyond a pole, the
+        edges not in the latitude order of ``init_guess``, or a cell
+        narrower than ``min_cell_width``.  The no-circulation state, all
+        three edges at one latitude, is such a root.
     """
     return _checked_root_solve(
         _eq_area_cqe_fixed_tt,
@@ -1422,6 +1669,8 @@ def equal_area_cqe_fixed_tt(
             radius,
             rot_rate,
         ),
+        resid_tol=resid_tol,
+        min_cell_width=min_cell_width,
     )
 
 
