@@ -54,7 +54,7 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
         with each element a scalar in the range [0, 360).  The one exception
         is unsigned or 8-bit integer input, scalar or array, which comes back
         as int64, the type ``lon_to_pm180`` returns for it.  NaN comes back
-        as NaN.
+        as NaN, and an infinity gives NaN, with no warning.
 
     """
     lon = _int64_if_unsigned_or_8bit(lon)
@@ -65,8 +65,11 @@ def lon_to_0360(lon: ArrayLike) -> ArrayLike:
     # 0 and returns every value already in [0, 360) unchanged and in its own
     # type (issue #83).  ``%`` also stays exact at magnitudes, from about 1.3e8
     # in float32 and 7.2e16 in float64, where ``lon - (lon // 360) * 360`` does
-    # not.
-    return lon % 360 % 360
+    # not.  NaN for an infinity is the documented result, so NumPy's "invalid
+    # value" warning for it, which NumPy raises on some platforms and for some
+    # dtypes and not others, is silenced.
+    with np.errstate(invalid="ignore"):
+        return lon % 360 % 360
 
 
 def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
@@ -93,34 +96,50 @@ def lon_to_pm180(lon: ArrayLike) -> ArrayLike:
         type with each element a scalar in the range [-180, 180).  The one
         exception is unsigned or 8-bit integer input, scalar or array, which
         comes back as int64, since an unsigned type cannot represent a negative
-        result.  NaN comes back as NaN.
+        result.  NaN comes back as NaN, and an infinity gives NaN, with no
+        warning.  Python ints, NumPy integers, ``fractions.Fraction``,
+        ``decimal.Decimal`` and object arrays of them are reduced exactly, at
+        any magnitude.  A float inside an object array is reduced with ``%``,
+        which can round a negative value once.
 
     """
     lon = _int64_if_unsigned_or_8bit(lon)
+    kind = getattr(getattr(lon, "dtype", None), "kind", None)
     rem: Any
-    if isinstance(lon, int):
-        # A Python int, whose % is exact at any magnitude.  A NumPy integer is
-        # not an int subclass and takes the last branch.
-        rem = lon % 360
-    elif isinstance(lon, float) and not isinstance(lon, np.generic):
-        # A Python float stays one.  np.fmod returns NaN for an infinity, as
-        # % does, where math.fmod raises.
-        rem = float(np.fmod(lon, 360))
-    else:
-        rem = np.fmod(lon, 360)
-    # fmod is exact and takes the sign of lon, so it returns -0.1 for -0.1,
-    # where lon % 360 gives 360 - 0.1 rounded, from which subtracting 360 does
-    # not recover -0.1 (issue #149).  Adding 0 turns the -0.0 that fmod gives
-    # for -0.0 and for negative multiples of 360 into 0.0, as % gives, and
-    # changes no other value.
-    rem = rem + 0
-    # rem // 180 is -2 on (-360, -180), -1 on [-180, 0), 0 on [0, 180) and 1
-    # on [180, 360), so (rem // 180 + 1) // 2 is -1, 0, 0 and 1 there: the
-    # multiple of 360 to subtract, in rem's own type, so scalars stay
-    # scalars, float32 stays float32 and DataArrays keep their coordinates.
-    # The subtraction is exact, since rem and 360 are within a factor of 2
-    # of each other whenever the multiple is not 0 (Sterbenz's lemma).
-    return cast(ArrayLike, rem - 360 * ((rem // 180 + 1) // 2))
+    # NaN for an infinity is the documented result, so NumPy's "invalid value"
+    # warning for it, which NumPy raises on some platforms and for some dtypes
+    # and not others, is silenced.
+    with np.errstate(invalid="ignore"):
+        if kind is None and isinstance(lon, float):
+            # A Python float stays one.  np.fmod returns NaN for an infinity,
+            # as % does, where math.fmod raises.
+            rem = float(np.fmod(lon, 360))
+        elif kind == "f":
+            rem = np.fmod(lon, 360)
+        else:
+            # Integers, Fractions, Decimals and object arrays, for which % is
+            # exact at any magnitude, and np.fmod raises for the last three.
+            # % gives [0, 360), except that a Decimal's % takes the sign of
+            # lon, so 360 is added to a negative remainder.  NumPy integer
+            # dtypes, whose % is never negative, skip that step, which would
+            # promote int16 and int32 to int64.
+            rem = lon % 360
+            if kind is None or kind == "O":
+                rem = rem + 360 * (rem < 0)
+        # fmod is exact and takes the sign of lon, so it returns -0.1 for
+        # -0.1, where lon % 360 gives 360 - 0.1 rounded, from which
+        # subtracting 360 does not recover -0.1 (issue #149).  Adding 0 turns
+        # the -0.0 that fmod gives for -0.0 and for negative multiples of 360
+        # into 0.0, as % gives, and changes no other value.
+        rem = rem + 0
+        # rem // 180 is -2 on (-360, -180), -1 on [-180, 0), 0 on [0, 180) and
+        # 1 on [180, 360), so (rem // 180 + 1) // 2 is -1, 0, 0 and 1 there:
+        # the multiple of 360 to subtract, in rem's own type, so scalars stay
+        # scalars, float32 stays float32 and DataArrays keep their
+        # coordinates.  The subtraction is exact, since rem and 360 are within
+        # a factor of 2 of each other whenever the multiple is not 0
+        # (Sterbenz's lemma).
+        return cast(ArrayLike, rem - 360 * ((rem // 180 + 1) // 2))
 
 
 def _maybe_cast_to_lon(obj: Any, strict: bool = False) -> Any:
@@ -144,18 +163,37 @@ def _other_to_lon(func: Callable[..., Any]) -> Callable[..., Any]:
     return func_other_to_lon
 
 
-def _compare_unconverted(ufunc: np.ufunc, other: Any, lon: Longitude) -> Any:
+def _is_finite(number: Any) -> bool:
+    """Whether ``number`` is finite, judged in its own type.
+
+    float() would turn a finite longdouble beyond float64's range into an
+    infinity.  NumPy raises TypeError for a Fraction, a Decimal or a Python
+    int beyond int64, so those are checked with math.isfinite, which raises
+    OverflowError only for a finite value too large for a float.
+    """
+    try:
+        return bool(np.isfinite(number))
+    except TypeError:
+        try:
+            return math.isfinite(number)
+        except OverflowError:
+            return True
+
+
+def _compare_unconverted(
+    ufunc: np.ufunc, other: Any, lon: Longitude, nan_result: bool = False
+) -> Any:
     """Compare ``other``, which could not be cast to a Longitude, with ``lon``.
 
     ``ufunc`` is the comparison with ``other`` on the left.  A Dataset, or an
-    array or list of one or more dimensions, is compared element by element,
-    each element coming back through the Longitude comparison method.  A 0-d
-    array counts as a scalar, as ``Longitude`` treats it, so a NaN in one gives
-    the bool False, as a finite value in one gives a bool.  A NaN or infinite
-    number compares as a float compares with NaN: False, which makes ``!=``
-    True, since Python takes it as the negation of ``==``.  Passing such an
-    element back to ``xr.apply_ufunc`` would call the same comparison method on
-    it again, without end (issue #150).  For anything else, such as None or a
+    array, list or tuple of one or more dimensions, is compared element by
+    element, each element coming back through the Longitude comparison method.
+    A 0-d array counts as a scalar, as ``Longitude`` treats it, so a NaN in one
+    gives a bool, as a finite value in one does.  A NaN or infinite number
+    gives ``nan_result``, what a float comparison with NaN gives: False, and
+    True for ``!=``.  Passing such an element back to ``xr.apply_ufunc`` would
+    call the same comparison method on it again, without end (issue #150).
+    For anything else, such as None or a
     string, this returns NotImplemented, so Python raises TypeError for ``<``,
     ``<=``, ``>`` and ``>=``, and ``==`` falls back to identity.  A string that
     spells NaN or infinity, such as 'nan' or 'inf', also gets NotImplemented,
@@ -170,7 +208,7 @@ def _compare_unconverted(ufunc: np.ufunc, other: Any, lon: Longitude) -> Any:
         float(other)
     except (TypeError, ValueError):
         return NotImplemented
-    return False
+    return nan_result
 
 
 class Longitude:
@@ -220,6 +258,9 @@ class Longitude:
             both come from ``lon_to_pm180``, which is exact, so a negative
             number is western however small: ``Longitude(-1e-14)`` is 1e-14
             degrees west, and ``Longitude(-0.1)`` equals ``Longitude('0.1w')``.
+            A scalar is reduced in its own type before becoming a float, so
+            ``Longitude(2**53 + 1)`` is 33 degrees east and a longdouble keeps
+            the precision it has beyond float64.
 
             Strings must be castable to a float or be a positive number in the
             range 0-180 followed by a single letter 'e' or 'w' (case
@@ -231,14 +272,20 @@ class Longitude:
             180 degrees west.
 
             A NaN or infinite value, as a number or a string such as
-            ``'nanw'``, raises ValueError.
+            ``'nanw'``, raises ValueError, and so does an empty string.
         """
         try:
-            val_as_float = float(value)
+            float(value)
+            is_number = True
+        except OverflowError:
+            # A number too large for a float, such as 2**2000.
+            is_number = True
         except (ValueError, TypeError):
+            is_number = False
+        if not is_number:
             if not isinstance(value, str):
                 raise ValueError("value must be a scalar or a string")
-            if value[-1].lower() not in ("w", "e"):
+            if not value or value[-1].lower() not in ("w", "e"):
                 raise ValueError("string inputs must end in 'e' or 'w'")
             try:
                 lon_value = float(value[:-1])
@@ -264,9 +311,14 @@ class Longitude:
             self._longitude = lon_value
             self._hemisphere = hemisphere
         else:
-            if not math.isfinite(val_as_float):
+            # A numeric string, such as '-10' or 'nan', is read as a float.
+            # Any other number is reduced in its own type, which is exact for
+            # an integer beyond 2**53 or a longdouble finer than float64, and
+            # only the reduced value, within 180 of 0, becomes a float.
+            number = float(value) if isinstance(value, str) else value
+            if not _is_finite(number):
                 raise ValueError(f"value must be finite; value given: {value!r}")
-            lon_pm180 = float(lon_to_pm180(val_as_float))
+            lon_pm180 = float(lon_to_pm180(number))
             # The hemisphere comes from the sign of the exact value in
             # [-180, 180).  Taking it from lon_to_0360 would put a negative
             # value too small for value + 360 to differ from 360 in the east,
@@ -317,6 +369,15 @@ class Longitude:
             )
         else:
             return _compare_unconverted(np.equal, other, self)
+
+    @_other_to_lon
+    def __ne__(self, other: Any) -> Any:
+        # Defined, where Python's default negates bool(self == other), which
+        # raises for an array of more than one element.
+        if isinstance(other, Longitude):
+            return not self == other
+        else:
+            return _compare_unconverted(np.not_equal, other, self, nan_result=True)
 
     @_other_to_lon
     def __lt__(self, other: Any) -> Any:
@@ -380,13 +441,17 @@ class Longitude:
         else:
             return self.longitude
 
+    # Sums and differences go through to_pm180, which is exact, where to_0360
+    # rounds 360 minus a western magnitude, so that Longitude(-0.1) +
+    # Longitude(0) is Longitude(-0.1).  The one rounding left is that of the
+    # sum or difference itself.
     @_other_to_lon
     def __add__(self, other: Any) -> Longitude:
-        return Longitude(self.to_0360() + other.to_0360())
+        return Longitude(self.to_pm180() + other.to_pm180())
 
     @_other_to_lon
     def __sub__(self, other: Any) -> Longitude:
-        return Longitude(self.to_0360() - other.to_0360())
+        return Longitude(self.to_pm180() - other.to_pm180())
 
 
 if __name__ == "__main__":
