@@ -155,13 +155,17 @@ def _compare_unconverted(ufunc: np.ufunc, other: Any, lon: Longitude) -> Any:
     number compares as a float compares with NaN: False, which makes ``!=``
     True, since Python takes it as the negation of ``==``.  Passing such an
     element back to ``xr.apply_ufunc`` would call the same comparison method on
-    it again, without end (issue #150).  For anything else, such as a string or
-    None, this returns NotImplemented, so Python raises TypeError for ``<``,
-    ``<=``, ``>`` and ``>=``, and ``==`` falls back to identity.
+    it again, without end (issue #150).  For anything else, such as None or a
+    string, this returns NotImplemented, so Python raises TypeError for ``<``,
+    ``<=``, ``>`` and ``>=``, and ``==`` falls back to identity.  A string that
+    spells NaN or infinity, such as 'nan' or 'inf', also gets NotImplemented,
+    though float() accepts it, so that it compares as 'nanw' and 'abc' do.
     """
     # np.ndim raises TypeError for a Dataset.
     if isinstance(other, xr.Dataset) or np.ndim(other) > 0:
         return xr.apply_ufunc(ufunc, other, lon)
+    if isinstance(other, str):
+        return NotImplemented
     try:
         float(other)
     except (TypeError, ValueError):
@@ -195,8 +199,9 @@ class Longitude:
     can be casted to Longitude objects.  A NaN or infinite number, alone or as
     an element, compares as a float compares with NaN: ``==``, ``<``, ``<=``,
     ``>`` and ``>=`` give False and ``!=`` gives True.  Anything else that
-    cannot be cast, such as a string that is not a longitude or None, gives
-    False for ``==`` and raises TypeError for ``<``, ``<=``, ``>`` and ``>=``.
+    cannot be cast, such as None or a string that is not a longitude ('abc',
+    and also 'nan', 'inf' and 'nanw'), gives False for ``==`` and raises
+    TypeError for ``<``, ``<=``, ``>`` and ``>=``.
 
     """
 

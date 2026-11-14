@@ -457,6 +457,30 @@ class TestLonToPm180:
         assert type(result) is type(lon)
         assert result == _exact_pm180(np.array([lon]))[0]
 
+    @pytest.mark.parametrize(
+        "lon", [2.0**60, -3.818876831979843e34, 1.01331035e17, -1e300]
+    )
+    def test_huge_python_float_gives_exact_value(self, lon: float) -> None:
+        """A Python float far past any longitude gives the exact value, a float.
+
+        2.0**60 gives 136.0, and returning it unreduced would give 128.0.
+        """
+        result = lon_to_pm180(lon)
+        assert type(result) is float
+        assert result == _exact_pm180(np.array([lon]))[0]
+
+    @pytest.mark.parametrize(
+        "lon", [2**53 + 1, 10**20 + 190, 2**70 + 1, -(10**20 + 190)]
+    )
+    def test_huge_python_int_gives_exact_value(self, lon: int) -> None:
+        """A Python int of any size gives the exact value, an int.
+
+        2**53 + 1 gives 33; reducing it through a float would give 32.
+        """
+        result = lon_to_pm180(lon)
+        assert type(result) is int
+        assert result == (lon + 180) % 360 - 180
+
     def test_signed_zeros_give_positive_zero(self) -> None:
         """-0.0 and the negative multiples of 360 give 0.0, never -0.0."""
         lons = np.array([-0.0, -360.0, -720.0, 0.0, 360.0])
@@ -604,6 +628,12 @@ class TestLongitudeInit:
         obj = Longitude(value)
         assert obj.hemisphere == "W"
         assert obj.longitude == -value
+
+    def test_huge_float_reduced_exactly(self) -> None:
+        """2.0**60 is 136 degrees east, its exact remainder modulo 360."""
+        obj = Longitude(2.0**60)
+        assert obj.hemisphere == "E"
+        assert obj.longitude == 136
 
     @pytest.mark.parametrize("value", [-0.0, -360.0, np.float32(-0.0)])
     def test_negative_zero_is_zero_east(self, value: float) -> None:
@@ -837,11 +867,13 @@ class TestLongitudeComparisons:
             assert bool(op(Longitude(lon), other)) is nan_result
             assert bool(op(other, Longitude(lon))) is nan_result
 
-    @pytest.mark.parametrize("other", ["abc", None])
+    @pytest.mark.parametrize("other", ["abc", None, "nan", "inf", "nanw", "infe"])
     def test_non_numeric_scalar(self, other: Any) -> None:
         """== is False and != True; an ordering raises TypeError (#150).
 
-        All of these raised RecursionError before.
+        That holds for strings that spell NaN or infinity too, which float()
+        accepts.  Before, 'abc', None and 'infe' raised RecursionError, 'nan'
+        and 'inf' compared as NaN, and 'nanw' as a western longitude.
         """
         lon = Longitude("20e")
         assert (lon == other) is False
@@ -853,11 +885,12 @@ class TestLongitudeComparisons:
             with pytest.raises(TypeError):
                 op(other, lon)
 
-    def test_list_with_nan(self) -> None:
-        """A list is compared element by element, NaN giving False."""
+    @pytest.mark.parametrize("container", [list, np.array])
+    def test_list_with_nan(self, container: Callable[[list[float]], Any]) -> None:
+        """A list or array is compared element by element, NaN giving False."""
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            result = Longitude("20e") < [np.nan, 10.0, 30.0]
+            result = Longitude("20e") < container([np.nan, 10.0, 30.0])
         assert isinstance(result, np.ndarray)
         np.testing.assert_array_equal(result, [False, False, True])
 
