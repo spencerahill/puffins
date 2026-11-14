@@ -161,6 +161,39 @@ def _stacklevel_outside_module() -> int:
     return level
 
 
+def _lons_description(arr: xr.DataArray, name: str, lon_str: str) -> str:
+    """The number, first and last of the longitudes of `arr`, for an error message."""
+    num = arr.sizes[lon_str]
+    if num == 0:
+        return f"{name} has no longitudes"
+    count = f"{num} longitude" + ("" if num == 1 else "s")
+    if lon_str not in arr.indexes:
+        return f"{name} has {count}, with no coordinate"
+    lons = arr.indexes[lon_str]
+    return f"{name} has {count} from {lons[0]} to {lons[-1]}, of dtype {lons.dtype}"
+
+
+def _check_same_lons(v: xr.DataArray, dp: xr.DataArray, lon_str: str) -> None:
+    """Raise a ValueError unless `v` and `dp` have the same longitudes.
+
+    Where either has no coordinate along the longitude dimension, the two
+    need only have the same length. Arithmetic on `v` and `dp` would
+    otherwise keep only the longitudes they share, or raise from xarray's
+    alignment.
+    """
+    if v.sizes[lon_str] == dp.sizes[lon_str] and (
+        lon_str not in v.indexes
+        or lon_str not in dp.indexes
+        or v.indexes[lon_str].equals(dp.indexes[lon_str])
+    ):
+        return
+    raise ValueError(
+        f"merid_streamfunc: v and dp must have the same longitudes along "
+        f"{lon_str!r}, but {_lons_description(v, 'v', lon_str)}, and "
+        f"{_lons_description(dp, 'dp', lon_str)}."
+    )
+
+
 def merid_streamfunc(
     v: xr.DataArray,
     dp: xr.DataArray,
@@ -175,8 +208,8 @@ def merid_streamfunc(
 
     The streamfunction at each latitude and level is the zonal-mean
     meridional mass flux, ``v * dp / grav``, summed from the top of the
-    column down to that level, times the length of the latitude circle,
-    ``2 * pi * radius * cos(lat)``.
+    column down to the bottom of that level's layer, times the length of
+    the latitude circle, ``2 * pi * radius * cos(lat)``.
 
     Parameters
     ----------
@@ -185,10 +218,13 @@ def merid_streamfunc(
         dimension, named by `lon_str`, which is averaged over. Any other
         dimension, such as time, is kept in the result.
     dp : xarray.DataArray
-        Pressure thickness of each gridbox, in Pascal. `dp` may vary along
-        the levels only. Where `v` has the longitude dimension, `dp` may have
-        it too, with NaN or 0 below ground, as for a bottom layer whose
-        thickness follows the surface pressure.
+        Pressure thickness of each gridbox, in Pascal. `dp` may have any of
+        the dimensions of `v`, and the longitude dimension even where `v`
+        lacks it. Where `dp` has the longitude dimension, it may be NaN or 0
+        below ground, as for a bottom layer whose thickness follows the
+        surface pressure. Where `v` and `dp` both have the longitude
+        dimension, they must have the same longitudes, or the same number of
+        longitudes where either has no coordinate along it.
     grav : float, optional
         Gravitational acceleration, in m/s^2. Default: Earth's.
     radius : float, optional
@@ -211,6 +247,12 @@ def merid_streamfunc(
         streamfunction has no longitude dimension. It is NaN at each
         latitude and level that is below ground at every longitude.
 
+    Raises
+    ------
+    ValueError
+        If `v` and `dp` both have the longitude dimension with different
+        longitudes, or if the levels are not monotonic.
+
     Notes
     -----
     Where `v` or `dp` has the longitude dimension, the zonal-mean mass flux
@@ -222,9 +264,10 @@ def merid_streamfunc(
     `v` and `dp` along longitude, which the product of their zonal means
     leaves out. With `impose_zero_col_flux`, the net column mass flux is
     removed in proportion to the zonal-mean mass above ground at each level,
-    which is the zonal mean of `dp` with zero thickness below ground. So `dp`
-    along the levels only, `dp` with longitude and NaN below ground, and
-    `dp` with longitude and 0 below ground give the same result.
+    which is the zonal mean of `dp` with zero thickness below ground. So,
+    for the same thickness at the points above ground, `dp` along the
+    levels only, `dp` with longitude and NaN below ground, and `dp` with
+    longitude and 0 below ground give the same result.
 
     A caller who takes the zonal mean of `v` before calling, and passes `dp`
     along the levels only, must first set `v` to zero below ground. The
@@ -247,6 +290,8 @@ def merid_streamfunc(
         # mass-weighted zonal mean of v, so that its product with that mass,
         # in the sum from the top, is the zonal-mean mass flux. The ratio is
         # NaN where every longitude is below ground.
+        if lon_str in v.dims and lon_str in dp.dims:
+            _check_same_lons(v, dp, lon_str)
         flux = v * dp
         above_ground = flux.notnull()
         flux_znl_mean = flux.where(above_ground, 0.0).mean(dim=lon_str)

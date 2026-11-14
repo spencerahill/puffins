@@ -1,6 +1,7 @@
 """Tests for had_cell module."""
 
 import inspect
+import re
 import warnings
 from collections.abc import Callable, Iterable
 from decimal import Decimal, localcontext
@@ -313,10 +314,13 @@ class TestMeridStreamfunc:
 
     @pytest.mark.parametrize("impose_zero_col_flux", [True, False])
     def test_zonal_mean_matches_preaveraged(self, impose_zero_col_flux: bool) -> None:
-        """With no NaN and dp along the levels only, averaging first agrees.
+        """With no NaN, and dp nonzero along the levels only, averaging agrees.
 
-        The comparison was `==`, which broadcast the second result across
-        the longitude dimension the first one kept (#137).
+        Averaging v over longitude before calling gives the same result. At
+        a level whose dp is 0 at every longitude it would not: the result is
+        NaN there with v's longitude dimension, and finite with v averaged
+        first. The comparison was `==`, which broadcast the second result
+        across the longitude dimension the first one kept (#137).
         """
         v, dp, _, _ = self._v_dp()
         v_lon = xr.concat([v, v + 2.0], dim=xr.DataArray([0.0, 180.0], dims=[LON_STR]))
@@ -390,14 +394,20 @@ class TestMeridStreamfuncZonalMean:
         coslat = np.cos(np.deg2rad(self.LATS))[:, np.newaxis]
         return cast(np.ndarray, 2.0 * np.pi * self.RADIUS * coslat / self.GRAV)
 
-    def _v(self, v_800: tuple[float, float]) -> xr.DataArray:
-        """v of 0 at 200 and 500 hPa, and `v_800` at lon 0 and 180 at 800 hPa."""
-        vals = np.zeros((3, 3, 2))
+    def _v(self, v_800: tuple[float, ...]) -> xr.DataArray:
+        """v of 0 at 200 and 500 hPa, and `v_800` at 800 hPa.
+
+        The longitudes are evenly spaced from 0, one per value of `v_800`,
+        so two values are at lon 0 and 180.
+        """
+        num_lons = len(v_800)
+        vals = np.zeros((3, 3, num_lons))
         vals[:, 2, :] = v_800
+        lons = 360.0 / num_lons * np.arange(num_lons)
         return xr.DataArray(
             vals,
             dims=[LAT_STR, LEV_STR, LON_STR],
-            coords={LAT_STR: self.LATS, LEV_STR: self.PLEVS, LON_STR: self.LONS},
+            coords={LAT_STR: self.LATS, LEV_STR: self.PLEVS, LON_STR: lons},
             name="v",
         )
 
@@ -451,8 +461,11 @@ class TestMeridStreamfuncZonalMean:
     def test_level_partly_below_ground(self, convention: str) -> None:
         """At 800 hPa, v is 1 m/s at lon 0 and below ground at lon 180.
 
-        The zonal mean of v dp there is (1 m/s * 350e2 Pa + 0) / 2. The
-        NaN-skipping zonal mean of v times dp gave twice that.
+        The zonal mean of v dp there is (1 m/s * 350e2 Pa + 0) / 2. Before
+        #137, the product of the zonal means of v and dp gave twice that
+        with dp along the levels or NaN below ground, and the same value
+        with dp 0 below ground. With v extrapolated to 5 m/s below ground,
+        it gave six times that with dp NaN there, and three times with dp 0.
         """
         v, dp = self._mark(self._v((1.0, np.nan)), convention)
         result = merid_streamfunc(
@@ -472,8 +485,11 @@ class TestMeridStreamfuncZonalMean:
         800 hPa, and the zonal-mean mass above ground is 350e2, 300e2 and
         175e2 Pa, so the column-mean flux per unit mass is 175 / 825 m/s.
         Subtracting it times each level's mass and summing from the top
-        gives -350e2, -650e2 and 0 times 175 / 825 m/s. With the full
-        thickness at 800 hPa, the column mean was 350 / 1000 m/s.
+        gives -350e2, -650e2 and 0 times 175 / 825 m/s. Before #137, the
+        column mean was 350 / 1000 m/s with dp along the levels or NaN below
+        ground, the same 175 / 825 m/s with dp 0 below ground, and 1050 /
+        1000 and 525 / 825 m/s with v at 5 m/s below ground and dp NaN or 0
+        there.
         """
         v, dp = self._mark(self._v((1.0, np.nan)), convention)
         result = merid_streamfunc(v, dp, grav=self.GRAV, radius=self.RADIUS)
@@ -544,15 +560,165 @@ class TestMeridStreamfuncZonalMean:
         for result in results[1:]:
             xr.testing.assert_identical(result, results[0])
 
-    def test_lon_in_dp_only(self) -> None:
-        """dp with the longitude dimension and v without: none in the result."""
+    @pytest.mark.parametrize("below_ground", [None, np.nan, 0.0])
+    def test_lon_in_dp_only(self, below_ground: float | None) -> None:
+        """dp with the longitude dimension and v without.
+
+        v is 1 m/s at 800 hPa. With `below_ground` of NaN or 0, dp marks
+        800 hPa as below ground at lon 180, and at both longitudes at 30N.
+        The zonal mean of v dp at 800 hPa is then 175e2 Pa m/s, and NaN at
+        30N. The column-mean flux per unit mass is 175 / 825 m/s, and 0 at
+        30N, where the column above 800 hPa has no flux. With nothing
+        marked, the flux is 350e2 Pa m/s and the column mean 350 / 1000 m/s.
+        """
         v = self._v((1.0, 1.0)).isel({LON_STR: 0}, drop=True)
-        dp_lon = (self._dp() * xr.ones_like(self._v((0.0, 0.0)))).rename("dp")
-        result = merid_streamfunc(v, dp_lon, grav=self.GRAV, radius=self.RADIUS)
-        assert result.dims == (LAT_STR, LEV_STR)
-        expected = merid_streamfunc(v, self._dp(), grav=self.GRAV, radius=self.RADIUS)
+        dp = (self._dp() * xr.ones_like(self._v((0.0, 0.0)))).rename("dp")
+        if below_ground is not None:
+            dp.loc[{LEV_STR: 800e2, LON_STR: 180.0}] = below_ground
+            dp.loc[{LAT_STR: 30.0, LEV_STR: 800e2}] = below_ground
+        kwargs: dict[str, Any] = dict(grav=self.GRAV, radius=self.RADIUS)
+        free = merid_streamfunc(v, dp, impose_zero_col_flux=False, **kwargs)
+        imposed = merid_streamfunc(v, dp, **kwargs)
+        assert free.dims == imposed.dims == (LAT_STR, LEV_STR)
+        if below_ground is None:
+            expected_free = self._circ() * np.array([0.0, 0.0, 350e2])
+            expected_imposed = (
+                self._circ() * np.array([-350e2, -650e2, 0.0]) * (350e2 / 1000e2)
+            )
+        else:
+            expected_free = self._circ() * np.array([0.0, 0.0, 175e2])
+            expected_free[2, 2] = np.nan
+            expected_imposed = (
+                self._circ() * np.array([-350e2, -650e2, 0.0]) * (175e2 / 825e2)
+            )
+            expected_imposed[2] = [0.0, 0.0, np.nan]
+        np.testing.assert_allclose(free.values, expected_free, rtol=1e-14, atol=0.0)
+        scale = float(np.nanmax(np.abs(expected_imposed)))
+        np.testing.assert_allclose(
+            imposed.values, expected_imposed, rtol=1e-13, atol=1e-13 * scale
+        )
+
+    @pytest.mark.parametrize("convention", _BELOW_GROUND_CONVENTIONS)
+    def test_three_lons(self, convention: str) -> None:
+        """Three longitudes, with 800 hPa below ground at one of them.
+
+        v at 800 hPa is 1 and 2 m/s at lon 0 and 120, and below ground at
+        lon 240. The zonal mean of v dp there is (1 + 2) m/s * 350e2 Pa / 3
+        = 350e2 Pa m/s, and the zonal-mean mass above ground is 2 / 3 *
+        350e2 Pa. So the column-mean flux per unit mass is 350e2 / (350e2 +
+        300e2 + 700e2 / 3) = 21 / 53 m/s.
+        """
+        v, dp = self._mark(self._v((1.0, 2.0, np.nan)), convention)
+        kwargs: dict[str, Any] = dict(grav=self.GRAV, radius=self.RADIUS)
+        free = merid_streamfunc(v, dp, impose_zero_col_flux=False, **kwargs)
+        expected = self._circ() * np.array([0.0, 0.0, 350e2])
+        np.testing.assert_allclose(free.values, expected, rtol=1e-14, atol=0.0)
+        imposed = merid_streamfunc(v, dp, **kwargs)
+        expected = self._circ() * np.array([-350e2, -650e2, 0.0]) * (21.0 / 53.0)
         scale = float(np.abs(expected).max())
-        xr.testing.assert_allclose(result, expected, rtol=0.0, atol=1e-14 * scale)
+        np.testing.assert_allclose(
+            imposed.values, expected, rtol=1e-13, atol=1e-13 * scale
+        )
+
+    @pytest.mark.parametrize("convention", _BELOW_GROUND_CONVENTIONS)
+    def test_time_dim(self, convention: str) -> None:
+        """Two times whose v differs, each with its own hand value.
+
+        At 800 hPa, v is 1 m/s at lon 0 and below ground at lon 180 at the
+        first time, and 3 and 1 m/s at the second. The zonal mean of v dp
+        there is 175e2 and 700e2 Pa m/s, and the column-mean flux per unit
+        mass 175 / 825 and 700 / 1000 m/s.
+        """
+        v = xr.concat([self._v((1.0, np.nan)), self._v((3.0, 1.0))], dim=TIME_STR)
+        v, dp = self._mark(v, convention)
+        kwargs: dict[str, Any] = dict(grav=self.GRAV, radius=self.RADIUS)
+        free = merid_streamfunc(v, dp, impose_zero_col_flux=False, **kwargs)
+        imposed = merid_streamfunc(v, dp, **kwargs)
+        assert free.dims == imposed.dims == (TIME_STR, LAT_STR, LEV_STR)
+        for i, (flux_800, col_mean) in enumerate(
+            [(175e2, 175e2 / 825e2), (700e2, 700e2 / 1000e2)]
+        ):
+            expected = self._circ() * np.array([0.0, 0.0, flux_800])
+            np.testing.assert_allclose(
+                free.isel({TIME_STR: i}).values, expected, rtol=1e-14, atol=0.0
+            )
+            expected = self._circ() * np.array([-350e2, -650e2, 0.0]) * col_mean
+            scale = float(np.abs(expected).max())
+            np.testing.assert_allclose(
+                imposed.isel({TIME_STR: i}).values,
+                expected,
+                rtol=1e-13,
+                atol=1e-13 * scale,
+            )
+
+    @pytest.mark.parametrize(
+        ("mismatch", "dp_lons"),
+        [
+            ("subset", "dp has 4 longitudes from 0.1 to 135.1, of dtype float64"),
+            (
+                "relabeled",
+                "dp has 8 longitudes from -179.9 to 135.10000000000002, of dtype "
+                "float64",
+            ),
+            (
+                "float32",
+                "dp has 8 longitudes from 0.10000000149011612 to "
+                "315.1000061035156, of dtype float32",
+            ),
+            ("length 1", "dp has 1 longitude from 0.1 to 0.1, of dtype float64"),
+            ("length 1, no coordinate", "dp has 1 longitude, with no coordinate"),
+            ("reversed", "dp has 8 longitudes from 315.1 to 0.1, of dtype float64"),
+            ("empty", "dp has no longitudes"),
+        ],
+    )
+    def test_mismatched_lons_raise(self, mismatch: str, dp_lons: str) -> None:
+        """v and dp on different longitudes raise a ValueError.
+
+        With dp on a subset of v's longitudes, the product of v and dp kept
+        only the shared longitudes, so the zonal mean was over those alone.
+        Other mismatches raised xarray's AlignmentError from a later step.
+        v's longitudes are offset by 0.1 degree from multiples of 45, so that
+        in float32 they differ from their float64 values. The message gives the number of
+        each one's longitudes, and the first and last of them.
+        """
+        lons = np.arange(0.0, 360.0, 45.0) + 0.1
+        v = xr.DataArray(
+            np.ones((3, 3, lons.size)),
+            dims=[LAT_STR, LEV_STR, LON_STR],
+            coords={LAT_STR: self.LATS, LEV_STR: self.PLEVS, LON_STR: lons},
+            name="v",
+        )
+        dp = (self._dp() * xr.ones_like(v)).rename("dp")
+        dp = {
+            "subset": dp.isel({LON_STR: slice(0, 4)}),
+            "relabeled": dp.assign_coords({LON_STR: lons - 180.0}),
+            "float32": dp.assign_coords({LON_STR: lons.astype(np.float32)}),
+            "length 1": dp.isel({LON_STR: [0]}),
+            "length 1, no coordinate": dp.drop_vars(LON_STR).isel({LON_STR: [0]}),
+            "reversed": dp.isel({LON_STR: slice(None, None, -1)}),
+            "empty": dp.isel({LON_STR: slice(0, 0)}),
+        }[mismatch]
+        message = (
+            "v and dp must have the same longitudes along 'lon', but v has 8 "
+            f"longitudes from 0.1 to 315.1, of dtype float64, and {dp_lons}."
+        )
+        with pytest.raises(ValueError, match=re.escape(message)):
+            merid_streamfunc(v, dp)
+
+    @pytest.mark.parametrize("without_coord", ["v", "dp"])
+    def test_lon_dim_without_coord(self, without_coord: str) -> None:
+        """v or dp with the longitude dimension but no coordinate along it.
+
+        The other has a longitude coordinate of the same length, so the
+        result is the same as with both on those longitudes.
+        """
+        v, dp = self._mark(self._v((1.0, np.nan)), "dp NaN below ground")
+        expected = merid_streamfunc(v, dp)
+        if without_coord == "v":
+            v = v.drop_vars(LON_STR)
+        else:
+            dp = dp.drop_vars(LON_STR)
+        xr.testing.assert_identical(merid_streamfunc(v, dp), expected)
 
     def test_custom_lon_name(self) -> None:
         v, dp = self._mark(self._v((1.0, np.nan)), "dp NaN below ground")
