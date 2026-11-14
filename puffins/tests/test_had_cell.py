@@ -311,14 +311,28 @@ class TestMeridStreamfunc:
                 result.sel({LAT_STR: lat}).values, clean.sel({LAT_STR: lat}).values
             )
 
-    def test_zonal_mean_matches_preaveraged(self) -> None:
+    @pytest.mark.parametrize("impose_zero_col_flux", [True, False])
+    def test_zonal_mean_matches_preaveraged(self, impose_zero_col_flux: bool) -> None:
+        """With no NaN and dp along the levels only, averaging first agrees.
+
+        The comparison was `==`, which broadcast the second result across
+        the longitude dimension the first one kept (#137).
+        """
         v, dp, _, _ = self._v_dp()
         v_lon = xr.concat([v, v + 2.0], dim=xr.DataArray([0.0, 180.0], dims=[LON_STR]))
-        result_lon = merid_streamfunc(v_lon, dp, impose_zero_col_flux=False)
-        result_mean = merid_streamfunc(
-            v_lon.mean(LON_STR), dp, impose_zero_col_flux=False
+        result_lon = merid_streamfunc(
+            v_lon, dp, impose_zero_col_flux=impose_zero_col_flux
         )
-        assert bool((result_lon == result_mean).all())
+        result_mean = merid_streamfunc(
+            v_lon.mean(LON_STR), dp, impose_zero_col_flux=impose_zero_col_flux
+        )
+        assert result_lon.dims == (LAT_STR, LEV_STR)
+        # The streamfunction is zero to roundoff at the bottom with the
+        # column flux removed, so the tolerance is relative to its maximum.
+        scale = float(np.abs(result_mean).max())
+        xr.testing.assert_allclose(
+            result_lon, result_mean, rtol=0.0, atol=1e-14 * scale
+        )
 
     def test_nan_masked(self) -> None:
         v, dp, _, _ = self._v_dp()
@@ -345,6 +359,209 @@ class TestMeridStreamfunc:
         )
         np.testing.assert_allclose(result.values, default.values)
         assert set(result.dims) == {"latitude", "pressure"}
+
+
+# The ways of marking the points below ground, where v is NaN, in v and dp.
+_BELOW_GROUND_CONVENTIONS = [
+    "dp along levels",
+    "dp NaN below ground",
+    "dp 0 below ground",
+    "v defined, dp NaN below ground",
+    "v defined, dp 0 below ground",
+]
+
+
+class TestMeridStreamfuncZonalMean:
+    """merid_streamfunc given fields with a longitude dimension (#137).
+
+    Latitudes 30S, 0 and 30N, levels 200, 500 and 800 hPa, 350, 300 and
+    350 hPa thick, and longitudes 0 and 180. v is zero at 200 and 500 hPa,
+    so the zonal-mean mass flux is nonzero at 800 hPa only, and each
+    expected value is a hand computation from it.
+    """
+
+    GRAV, RADIUS = 10.0, 2e6
+    LATS = np.array([-30.0, 0.0, 30.0])
+    PLEVS = np.array([200e2, 500e2, 800e2])
+    LONS = np.array([0.0, 180.0])
+
+    def _circ(self) -> np.ndarray:
+        """2 pi a cos(lat) / g, per latitude, as a column."""
+        coslat = np.cos(np.deg2rad(self.LATS))[:, np.newaxis]
+        return cast(np.ndarray, 2.0 * np.pi * self.RADIUS * coslat / self.GRAV)
+
+    def _v(self, v_800: tuple[float, float]) -> xr.DataArray:
+        """v of 0 at 200 and 500 hPa, and `v_800` at lon 0 and 180 at 800 hPa."""
+        vals = np.zeros((3, 3, 2))
+        vals[:, 2, :] = v_800
+        return xr.DataArray(
+            vals,
+            dims=[LAT_STR, LEV_STR, LON_STR],
+            coords={LAT_STR: self.LATS, LEV_STR: self.PLEVS, LON_STR: self.LONS},
+            name="v",
+        )
+
+    def _dp(self) -> xr.DataArray:
+        return xr.DataArray(
+            [350e2, 300e2, 350e2],
+            dims=[LEV_STR],
+            coords={LEV_STR: self.PLEVS},
+            name="dp",
+        )
+
+    def _mark(
+        self, v: xr.DataArray, convention: str
+    ) -> tuple[xr.DataArray, xr.DataArray]:
+        """`v` and `dp`, with the points where `v` is NaN marked per `convention`.
+
+        Where v is defined below ground, as when extrapolated there, it is
+        5 m/s, which changes the result if those points are counted.
+        """
+        below = v.isnull()
+        dp_lon = (self._dp() * xr.ones_like(v)).rename("dp")
+        if convention == "dp along levels":
+            return v, self._dp()
+        if convention == "dp NaN below ground":
+            return v, dp_lon.where(~below)
+        if convention == "dp 0 below ground":
+            return v, dp_lon.where(~below, 0.0)
+        if convention == "v defined, dp NaN below ground":
+            return v.fillna(5.0), dp_lon.where(~below)
+        assert convention == "v defined, dp 0 below ground"
+        return v.fillna(5.0), dp_lon.where(~below, 0.0)
+
+    def test_result_has_no_lon_dim(self) -> None:
+        """The result has no longitude dimension, and keeps the others.
+
+        It had kept the longitude dimension, so had_cell_strength returned
+        one strength per longitude.
+        """
+        rng = np.random.default_rng(0)
+        v = xr.DataArray(
+            rng.normal(size=(2, 3, 3, 2)),
+            dims=[TIME_STR, LAT_STR, LEV_STR, LON_STR],
+            coords={LAT_STR: self.LATS, LEV_STR: self.PLEVS, LON_STR: self.LONS},
+            name="v",
+        )
+        result = merid_streamfunc(v, self._dp())
+        assert result.dims == (TIME_STR, LAT_STR, LEV_STR)
+        assert had_cell_strength(result).dims == (TIME_STR,)
+
+    @pytest.mark.parametrize("convention", _BELOW_GROUND_CONVENTIONS)
+    def test_level_partly_below_ground(self, convention: str) -> None:
+        """At 800 hPa, v is 1 m/s at lon 0 and below ground at lon 180.
+
+        The zonal mean of v dp there is (1 m/s * 350e2 Pa + 0) / 2. The
+        NaN-skipping zonal mean of v times dp gave twice that.
+        """
+        v, dp = self._mark(self._v((1.0, np.nan)), convention)
+        result = merid_streamfunc(
+            v, dp, grav=self.GRAV, radius=self.RADIUS, impose_zero_col_flux=False
+        )
+        assert result.dims == (LAT_STR, LEV_STR)
+        expected = self._circ() * np.array([0.0, 0.0, 0.5 * 350e2])
+        np.testing.assert_allclose(result.values, expected, rtol=1e-14, atol=0.0)
+
+    @pytest.mark.parametrize("convention", _BELOW_GROUND_CONVENTIONS)
+    def test_impose_zero_col_flux_with_level_partly_below_ground(
+        self, convention: str
+    ) -> None:
+        """The net column flux is removed in proportion to the mass above ground.
+
+        The zonal-mean mass flux is 0, 0 and 175e2 Pa m/s at 200, 500 and
+        800 hPa, and the zonal-mean mass above ground is 350e2, 300e2 and
+        175e2 Pa, so the column-mean flux per unit mass is 175 / 825 m/s.
+        Subtracting it times each level's mass and summing from the top
+        gives -350e2, -650e2 and 0 times 175 / 825 m/s. With the full
+        thickness at 800 hPa, the column mean was 350 / 1000 m/s.
+        """
+        v, dp = self._mark(self._v((1.0, np.nan)), convention)
+        result = merid_streamfunc(v, dp, grav=self.GRAV, radius=self.RADIUS)
+        col_mean = 175e2 / 825e2
+        expected = self._circ() * np.array([-350e2, -650e2, 0.0]) * col_mean
+        scale = float(np.abs(expected).max())
+        np.testing.assert_allclose(
+            result.values, expected, rtol=1e-13, atol=1e-13 * scale
+        )
+
+    @pytest.mark.parametrize("convention", _BELOW_GROUND_CONVENTIONS)
+    def test_nan_only_where_every_lon_below_ground(self, convention: str) -> None:
+        """At 30N, 800 hPa is below ground at both longitudes.
+
+        The result is NaN there, and defined at 800 hPa at the other
+        latitudes, where only lon 180 is below ground. The result had been
+        masked with the input v, longitude by longitude.
+        """
+        v = self._v((1.0, np.nan))
+        v.loc[{LAT_STR: 30.0, LEV_STR: 800e2}] = np.nan
+        v, dp = self._mark(v, convention)
+        result = merid_streamfunc(
+            v, dp, grav=self.GRAV, radius=self.RADIUS, impose_zero_col_flux=False
+        )
+        assert result.dims == (LAT_STR, LEV_STR)
+        expected = self._circ() * np.array([0.0, 0.0, 0.5 * 350e2])
+        expected[2, 2] = np.nan
+        np.testing.assert_allclose(result.values, expected, rtol=1e-14, atol=0.0)
+
+    def test_covariance_along_lon(self) -> None:
+        """At 800 hPa, v of +1 and -1 m/s over layers 350 and 150 hPa thick.
+
+        The zonal mean of v dp there is (350e2 - 150e2) / 2 = 100e2 Pa m/s,
+        while the product of the zonal means of v and dp, which the result
+        had been, is 0.
+        """
+        v = self._v((1.0, -1.0))
+        dp = xr.DataArray(
+            [[350e2, 350e2], [300e2, 300e2], [350e2, 150e2]],
+            dims=[LEV_STR, LON_STR],
+            coords={LEV_STR: self.PLEVS, LON_STR: self.LONS},
+            name="dp",
+        )
+        result = merid_streamfunc(
+            v, dp, grav=self.GRAV, radius=self.RADIUS, impose_zero_col_flux=False
+        )
+        expected = self._circ() * np.array([0.0, 0.0, 100e2])
+        np.testing.assert_allclose(result.values, expected, rtol=1e-14, atol=0.0)
+        # With the column flux removed, in proportion to the zonal-mean mass
+        # of 350e2, 300e2 and 250e2 Pa: 100 / 900 m/s per unit mass.
+        result = merid_streamfunc(v, dp, grav=self.GRAV, radius=self.RADIUS)
+        expected = self._circ() * np.array([-350e2, -650e2, 0.0]) * (100e2 / 900e2)
+        scale = float(np.abs(expected).max())
+        np.testing.assert_allclose(
+            result.values, expected, rtol=1e-13, atol=1e-13 * scale
+        )
+
+    def test_below_ground_conventions_agree(self) -> None:
+        """Each way of marking the points below ground gives the same result."""
+        rng = np.random.default_rng(1)
+        v = self._v((0.0, 0.0)).copy(data=rng.normal(size=(3, 3, 2)))
+        v.loc[{LEV_STR: 800e2, LON_STR: 180.0}] = np.nan
+        v.loc[{LAT_STR: 30.0, LEV_STR: 800e2}] = np.nan
+        results = [
+            merid_streamfunc(*self._mark(v, convention))
+            for convention in _BELOW_GROUND_CONVENTIONS
+        ]
+        for result in results[1:]:
+            xr.testing.assert_identical(result, results[0])
+
+    def test_lon_in_dp_only(self) -> None:
+        """dp with the longitude dimension and v without: none in the result."""
+        v = self._v((1.0, 1.0)).isel({LON_STR: 0}, drop=True)
+        dp_lon = (self._dp() * xr.ones_like(self._v((0.0, 0.0)))).rename("dp")
+        result = merid_streamfunc(v, dp_lon, grav=self.GRAV, radius=self.RADIUS)
+        assert result.dims == (LAT_STR, LEV_STR)
+        expected = merid_streamfunc(v, self._dp(), grav=self.GRAV, radius=self.RADIUS)
+        scale = float(np.abs(expected).max())
+        xr.testing.assert_allclose(result, expected, rtol=0.0, atol=1e-14 * scale)
+
+    def test_custom_lon_name(self) -> None:
+        v, dp = self._mark(self._v((1.0, np.nan)), "dp NaN below ground")
+        default = merid_streamfunc(v, dp)
+        renames = {LON_STR: "longitude"}
+        result = merid_streamfunc(
+            v.rename(renames), dp.rename(renames), lon_str="longitude"
+        )
+        xr.testing.assert_identical(result, default)
 
 
 class TestHadCellStrength:
