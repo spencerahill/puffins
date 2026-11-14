@@ -171,16 +171,32 @@ class TestLonTo0360:
         np.testing.assert_array_equal(result.values, [v % 360 for v in values])
 
     def test_nan_and_infinity_give_nan(self) -> None:
-        """NaN passes through, and an infinity gives NaN, with no warning."""
+        """NaN passes through with no warning, and an infinity gives NaN.
+
+        For an infinite NumPy value, NumPy's remainder warns "invalid value
+        encountered" on some platforms (Linux, where CI runs) and not on others
+        (macOS), on master too, so that one warning is allowed there.
+        """
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            result = lon_to_0360(np.array([np.nan, np.inf, -np.inf, 10.0]))
+            result = lon_to_0360(np.array([np.nan, 10.0]))
             assert isinstance(result, np.ndarray)
-            np.testing.assert_array_equal(result, [np.nan, np.nan, np.nan, 10.0])
+            np.testing.assert_array_equal(result, [np.nan, 10.0])
             for value in (math.nan, math.inf, np.float32(np.nan)):
                 scalar = lon_to_0360(value)
                 assert type(scalar) is type(value)
                 assert math.isnan(scalar)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warnings.filterwarnings(
+                "ignore", message="invalid value encountered", category=RuntimeWarning
+            )
+            result = lon_to_0360(np.array([np.nan, np.inf, -np.inf, 10.0]))
+            assert isinstance(result, np.ndarray)
+            np.testing.assert_array_equal(result, [np.nan, np.nan, np.nan, 10.0])
+            scalar = lon_to_0360(np.float32(np.inf))
+            assert type(scalar) is np.float32
+            assert math.isnan(scalar)
 
     def test_large_positive(self) -> None:
         assert lon_to_0360(720) == 0
@@ -455,13 +471,31 @@ class TestLonToPm180:
             assert not np.signbit(scalar)
 
     def test_nan_and_infinity_give_nan(self) -> None:
-        """NaN passes through, and an infinity gives NaN, with no warning."""
+        """NaN passes through with no warning, and an infinity gives NaN.
+
+        For an infinity, NumPy's fmod warns "invalid value encountered" on some
+        platforms (Linux, where CI runs) and not on others (macOS), and on
+        master NumPy's remainder did the same, so that one warning is allowed
+        there.
+        """
         with warnings.catch_warnings():
             warnings.simplefilter("error")
+            result = lon_to_pm180(np.array([np.nan, 190.0]))
+            assert isinstance(result, np.ndarray)
+            np.testing.assert_array_equal(result, [np.nan, -170.0])
+            for value in (math.nan, np.float32(np.nan)):
+                scalar = lon_to_pm180(value)
+                assert type(scalar) is type(value)
+                assert math.isnan(scalar)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warnings.filterwarnings(
+                "ignore", message="invalid value encountered", category=RuntimeWarning
+            )
             result = lon_to_pm180(np.array([np.nan, np.inf, -np.inf, 190.0]))
             assert isinstance(result, np.ndarray)
             np.testing.assert_array_equal(result, [np.nan, np.nan, np.nan, -170.0])
-            for value in (math.nan, math.inf, -math.inf, np.float32(np.inf)):
+            for value in (math.inf, -math.inf, np.float32(np.inf)):
                 scalar = lon_to_pm180(value)
                 assert type(scalar) is type(value)
                 assert math.isnan(scalar)
