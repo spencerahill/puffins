@@ -2581,8 +2581,10 @@ class TestCellEdgesSigma:
         cell, negative, used to be labeled nh_hadley, and with no southern
         Hadley cell the positive Hadley cell was labeled sh_hadley. The
         southern polar cell, negative, lies on the Hadley cell's ascending
-        side, but centered at 72.75S, beyond max_partner_lat, so it takes no
-        Hadley label unless max_partner_lat is raised to 80.
+        side, centered at 72.75S, beyond max_partner_lat. Raised to 80,
+        max_partner_lat takes it in, and the polar cell used to be labeled
+        sh_hadley then. It still takes no Hadley label, since the southern
+        Ferrel cell, of the Hadley cell's sign, lies between them.
         """
         cells_in = [
             (-85.25, -60.25, -0.2),
@@ -2598,13 +2600,7 @@ class TestCellEdgesSigma:
             kwargs["max_partner_lat"] = max_partner_lat
         cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in), **kwargs)
         label = "sh_hadley" if mirror else "nh_hadley"
-        polar = "4" if mirror else "0"
-        if max_partner_lat is not None:
-            polar = "nh_hadley" if mirror else "sh_hadley"
-        expected = (
-            ["0", "1", label, "3", polar] if mirror else [polar, "1", label, "3", "4"]
-        )
-        assert list(cells["cell"].values) == expected
+        assert list(cells["cell"].values) == ["0", "1", label, "3", "4"]
         center = cells.sel(cell=label, lat="center").item()
         assert center == (-4.0 if mirror else 4.0)
         polar_center = cells.isel(cell=4 if mirror else 0).sel(lat="center").item()
@@ -2652,6 +2648,23 @@ class TestCellEdgesSigma:
         cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
         assert list(cells["cell"].values) == expected
 
+    def test_partner_on_the_equator_labeled_by_its_sign(self) -> None:
+        """A partner centered on the equator is labeled by its sign.
+
+        A negative Hadley cell of -1e11 centered at 30S, on the bound
+        max_center_lat, and a positive cell of 3e10 centered on the equator,
+        north of it, which is its partner and is labeled nh_hadley by its
+        sign. A positive cell of 2e9 at 50N, 2% of the strongest, is
+        dropped.
+        """
+        cells = cell_edges_sigma(
+            _bump_cells_sigma(
+                [(-1e11, -30.0, 12.0), (2e9, 50.0, 10.0), (3e10, 0.0, 8.0)]
+            )
+        )
+        assert cells.sel(lat="center").values.tolist() == [-30.0, 0.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+
     @pytest.mark.parametrize(
         ("max_center_lat", "expected"),
         [
@@ -2692,21 +2705,37 @@ class TestCellEdgesSigma:
             np.sign(cells["cell_strength"].values), [1, -1, 1, -1]
         )
 
-    def test_cells_of_equal_strength(self) -> None:
-        """Two cells of the same strength, which comes back as a scalar.
+    @pytest.mark.parametrize("max_cells_per_sign", [None, 1])
+    def test_cells_of_equal_strength(self, max_cells_per_sign: int | None) -> None:
+        """Two cells of the same strength, which comes back along the cells.
 
         Both cells are positive, of amplitude 1 and 30 degrees wide, centered
         at -25 and 20. The one nearer the equator is nh_hadley, and the
         other, of the same sign, is unlabeled; it used to be labeled
-        sh_hadley.
+        sh_hadley. xr.concat makes a strength every cell shares a scalar
+        coordinate, which used to be returned as one. With max_cells_per_sign
+        1, the two cells tie for the strongest positive cell, the limit's
+        sort puts the Hadley cell first, and the other cell is dropped with a
+        warning; the sort used to raise a ValueError on the scalar
+        coordinate.
         """
-        cells = cell_edges_sigma(
-            _sigma_half_sine_cells([(-40.25, -10.25, 1.0), (5.25, 35.25, 1.0)])
-        )
-        # The case under test: one strength shared by two cells, held as a
-        # scalar coordinate.
-        assert cells["cell_strength"].ndim == 0
-        assert list(cells["cell"].values) == ["0", "nh_hadley"]
+        sf = _sigma_half_sine_cells([(-40.25, -10.25, 1.0), (5.25, 35.25, 1.0)])
+        if max_cells_per_sign is None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                cells = cell_edges_sigma(sf)
+            expected = ["0", "nh_hadley"]
+        else:
+            with pytest.warns(UserWarning) as record:
+                cells = cell_edges_sigma(sf, max_cells_per_sign=max_cells_per_sign)
+            messages = _dropped_messages(record)
+            assert len(record) == len(messages) == 1
+            assert messages[0].startswith(
+                "cell_edges_sigma dropped the cell centered at latitude -25 and"
+            )
+            expected = ["nh_hadley"]
+        assert cells["cell_strength"].dims == ("cell",)
+        assert list(cells["cell"].values) == expected
 
     @pytest.mark.parametrize(
         ("kwargs", "expected"),
@@ -2780,14 +2809,17 @@ class TestCellEdgesSigma:
         assert cells.sel(cell="sh_hadley", lat="center").item() == -19.0
         assert cells.sel(cell="nh_hadley", lat="center").item() == 19.0
 
-    def test_tie_goes_to_the_southern_cell(self) -> None:
+    @pytest.mark.parametrize("max_cells_per_sign", [4, 1])
+    def test_tie_goes_to_the_southern_cell(self, max_cells_per_sign: int) -> None:
         """Of two cells equally strong and equally near the equator, the southern.
 
         Two positive half-sine cells, from 30.25S to 0.25S and from 0.25N to
         30.25N, computed from the magnitude of latitude so that they are
         equal to the last bit, peak at 15S and 15N. The southern one is
         taken as the first Hadley cell and labeled nh_hadley by its sign,
-        with no negative cell to pair with.
+        with no negative cell to pair with. With max_cells_per_sign 1, the
+        limit's sort puts the northern cell first of the two, and the
+        Hadley cell, though as strong as the strongest cell, is kept as well.
         """
         lats = np.arange(-85.0, 86.0, 1.0)
         sigmas = np.linspace(0.1, 1.0, 19)
@@ -2796,8 +2828,11 @@ class TestCellEdgesSigma:
         x = (np.abs(lat) - 0.25) / 30.0
         merid = xr.where((x > 0) & (x < 1), np.sin(np.pi * x), 0.0)
         sf = 1e10 * np.sin(np.pi * (sigma - 0.1) / 0.9) * merid
-        cells = cell_edges_sigma(sf)
-        assert cells["cell_strength"].ndim == 0
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf, max_cells_per_sign=max_cells_per_sign)
+        strengths = cells["cell_strength"].values
+        assert strengths[0] == strengths[1]
         assert list(cells["cell"].values) == ["nh_hadley", "1"]
         assert cells.sel(cell="nh_hadley", lat="center").item() == -15.0
 
@@ -2808,25 +2843,36 @@ class TestCellEdgesSigma:
         assert list(cells["cell"].values) == ["0", "1"]
         assert cells.sel(lat="center").values.tolist() == [-15.0, 15.0]
 
-    def test_polar_cell_beyond_the_partner_bound(self) -> None:
+    @pytest.mark.parametrize("ferrel", [True, False], ids=["ferrel", "no_ferrel"])
+    def test_polar_cell_beyond_the_partner_bound(self, ferrel: bool) -> None:
         """A cell centered beyond max_partner_lat is not the summer Hadley cell.
 
         A negative winter Hadley cell from 29.75S to 0.25N, with no summer
         Hadley cell, a negative northern Ferrel cell from 30.25N to 50.25N,
         and a positive lobe of the northern polar cell from 50.25N to
         60.25N, centered at 55N. Beyond the default max_partner_lat of 50,
-        the lobe takes no Hadley label, which it does with the bound at 60.
+        the lobe takes no Hadley label. With the bound at 60 it still takes
+        none, since the Ferrel cell, of the winter cell's sign, lies between
+        them; it used to be labeled nh_hadley then. Without the Ferrel cell,
+        the bound at 60 takes the lobe in.
         """
-        sf = _sigma_half_sine_cells(
-            [(-29.75, 0.25, -1.0), (30.25, 50.25, -0.3), (50.25, 60.25, 0.2)]
-        )
+        cells_in = [(-29.75, 0.25, -1.0), (50.25, 60.25, 0.2)]
+        if ferrel:
+            cells_in.insert(1, (30.25, 50.25, -0.3))
+        sf = _sigma_half_sine_cells(cells_in)
         default = cell_edges_sigma(sf)
         raised = cell_edges_sigma(sf, max_partner_lat=60.0)
-        assert default.sel(lat="center").values.tolist() == [-15.0, 40.0, 55.0]
-        assert list(default["cell"].values) == ["sh_hadley", "1", "2"]
-        assert list(raised["cell"].values) == ["sh_hadley", "1", "nh_hadley"]
+        centers = [-15.0, 40.0, 55.0] if ferrel else [-15.0, 55.0]
+        assert default.sel(lat="center").values.tolist() == centers
+        unlabeled = [str(i) for i in range(1, len(centers))]
+        assert list(default["cell"].values) == ["sh_hadley", *unlabeled]
+        if ferrel:
+            assert list(raised["cell"].values) == ["sh_hadley", "1", "2"]
+        else:
+            assert list(raised["cell"].values) == ["sh_hadley", "nh_hadley"]
 
-    def test_cell_beneath_the_first_cell_not_its_partner(self) -> None:
+    @pytest.mark.parametrize("mirror", [False, True])
+    def test_cell_beneath_the_first_cell_not_its_partner(self, mirror: bool) -> None:
         """A cell centered at the first Hadley cell's latitude is not its partner.
 
         Beneath a negative Hadley cell at sigma 0.1 to 0.55 lies a positive
@@ -2834,7 +2880,9 @@ class TestCellEdgesSigma:
         cell reaches farther south and the lower one farther north, so
         neither lies within the other. The lower cell, of 0.7, is stronger
         than the positive Hadley cell from 0.25N to 30.25N, of 0.5, but the
-        partner is sought strictly north of the first cell.
+        partner is sought strictly north of the first cell. The mirrored
+        field, reflected across the equator with its sign reversed, has the
+        first cell positive at 15N and its partner sought strictly south.
         """
         lats = np.arange(-85.0, 86.0, 1.0)
         sigmas = np.linspace(0.1, 1.0, 19)
@@ -2870,11 +2918,15 @@ class TestCellEdgesSigma:
             + 0.7 * layer(0.55, 1.0) * skewed(-20.0, -15.0, 0.0)
             + 0.5 * nh
         )
+        centers, signs = [-15.0, -15.0, 15.0], [-1, 1, 1]
+        if mirror:
+            sf = -sf.isel({LAT_STR: slice(None, None, -1)}).assign_coords(
+                {LAT_STR: lats}
+            )
+            centers, signs = [-15.0, 15.0, 15.0], [-1, -1, 1]
         cells = cell_edges_sigma(sf.transpose(SIGMA_STR, LAT_STR))
-        assert cells.sel(lat="center").values.tolist() == [-15.0, -15.0, 15.0]
-        np.testing.assert_array_equal(
-            np.sign(cells["cell_strength"].values), [-1, 1, 1]
-        )
+        assert cells.sel(lat="center").values.tolist() == centers
+        np.testing.assert_array_equal(np.sign(cells["cell_strength"].values), signs)
         assert list(cells["cell"].values) == ["sh_hadley", "1", "nh_hadley"]
 
     def test_max_lat_gap_removed(self) -> None:
@@ -2893,6 +2945,20 @@ def _cut_messages(record: Iterable[warnings.WarningMessage]) -> list[str]:
     """The messages of the warnings for cells kept with a NaN edge."""
     messages = [str(w.message) for w in record]
     return [m for m in messages if m.startswith("cell_edges_sigma kept")]
+
+
+def _weak_label_messages(record: Iterable[warnings.WarningMessage]) -> list[str]:
+    """The messages of the warnings for Hadley cells below the strength threshold."""
+    messages = [str(w.message) for w in record]
+    return [m for m in messages if m.startswith("cell_edges_sigma gave a Hadley")]
+
+
+# The reason the warning for a Hadley cell below the strength threshold gives,
+# at the default min_frac_strength.
+_WEAK_LABEL_REASON = (
+    "a cell no stronger than min_frac_strength=0.05 times the strongest cell "
+    "whose edges can be measured is kept only as a Hadley cell"
+)
 
 
 # Southern polar, Ferrel and Hadley cells and a northern Hadley cell. The
@@ -3376,13 +3442,21 @@ class TestCellEdgesSigmaDroppedCells:
         mirrored case is the southern-winter field, each cell at the
         mirrored latitude with its sign reversed. had_cells_strength finds
         the same two Hadley cells. The summer cell used to be dropped,
-        without a warning, before the Hadley cells were labeled.
+        without a warning, before the Hadley cells were labeled. It is kept
+        with a warning that gives its strength as 1.7% of the winter cell's,
+        3e9 / 1.8e11, the winter cell being the strongest.
         """
         sign = -1.0 if mirror else 1.0
         cells_in = [(sign * peak, sign * lat, width) for peak, lat, width in _CELLS_139]
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
             cells = cell_edges_sigma(_bump_cells_sigma(cells_in))
+        assert [str(w.message) for w in record] == [
+            "cell_edges_sigma gave a Hadley label to the cell centered at "
+            f"latitude {-24.0 * sign:g} and sigma 0.55, of strength "
+            f"{-3e9 * sign:.3g}, 1.7% as strong as the strongest cell whose "
+            f"edges can be measured: {_WEAK_LABEL_REASON}."
+        ]
         assert cells.sel(lat="center").values.tolist() == sorted(
             sign * lat for lat in _CENTERS_139
         )
@@ -3421,56 +3495,107 @@ class TestCellEdgesSigmaDroppedCells:
         In the field of #139, the polar cells are 5.6% of the winter Hadley
         cell, the Ferrel cells 11% and 22%, and the summer Hadley cell 1.7%.
         At 0.1, the polar cells are dropped, and at 0.3 the Ferrel cells
-        too, while the summer cell is kept at both.
+        too, while the summer cell is kept at both, with a warning giving the
+        threshold.
         """
-        cells = cell_edges_sigma(
-            _bump_cells_sigma(_CELLS_139), min_frac_strength=min_frac_strength
-        )
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(
+                _bump_cells_sigma(_CELLS_139), min_frac_strength=min_frac_strength
+            )
         assert cells.sel(lat="center").values.tolist() == centers
         assert list(cells["cell"].values) == labels
+        messages = _weak_label_messages(record)
+        assert len(record) == len(messages) == 1
+        assert (
+            f"no stronger than min_frac_strength={min_frac_strength:g} times"
+            in (messages[0])
+        )
 
     def test_weak_cell_other_than_a_hadley_cell_dropped(self) -> None:
         """A cell below min_frac_strength is still dropped unless it is a Hadley cell.
 
         The northern polar cell of the field of #139 is weakened to 5e9,
         2.8% of the winter Hadley cell, and is dropped, without a warning,
-        though the summer Hadley cell, at 1.7%, is weaker still and kept.
+        though the summer Hadley cell, at 1.7%, is weaker still and kept,
+        with the one warning, for the summer cell.
         """
         cells_in = [*_CELLS_139[:-1], (5e9, 73.0, 10.0)]
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
+        with pytest.warns(UserWarning) as record:
             cells = cell_edges_sigma(_bump_cells_sigma(cells_in))
         assert cells.sel(lat="center").values.tolist() == _CENTERS_139[:-1]
         assert list(cells["cell"].values) == ["0", "1", "sh_hadley", "nh_hadley", "4"]
+        messages = _weak_label_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0].startswith(
+            "cell_edges_sigma gave a Hadley label to the cell centered at latitude "
+            "-24 and"
+        )
 
-    def test_hadley_cell_beyond_max_cells_per_sign_kept(self) -> None:
+    @pytest.mark.parametrize("mirror", [False, True], ids=["nh_winter", "sh_winter"])
+    def test_hadley_cell_beyond_max_cells_per_sign_kept(self, mirror: bool) -> None:
         """A Hadley cell beyond the max_cells_per_sign strongest of its sign is kept.
 
         In the field of #139 at min_frac_strength 0.01, every cell passes the
-        strength filter. At max_cells_per_sign 1, the positive cells beyond
-        the winter Hadley cell, the southern Ferrel and northern polar
-        cells, are dropped, and so is the southern polar cell, the second
-        strongest negative cell after the northern Ferrel cell. The summer
-        Hadley cell, the weakest negative cell, is kept, and the limit
+        strength filter. At max_cells_per_sign 1, the cells of the winter
+        cell's sign beyond it, the southern Ferrel and northern polar cells,
+        are dropped, and so is the southern polar cell, the second strongest
+        cell of the summer cell's sign after the northern Ferrel cell. The
+        summer Hadley cell, the weakest of its sign, is kept, and the limit
         still drops three cells. It used to drop the summer cell as a
-        fourth.
+        fourth. The mirrored case is the southern-winter field, where the
+        summer cell is positive, at 24N. The warning names first the
+        strongest positive cell dropped: the southern Ferrel cell at 48S, or
+        mirrored, the northern polar cell at 74N.
         """
+        sign = -1.0 if mirror else 1.0
+        cells_in = [(sign * peak, sign * lat, width) for peak, lat, width in _CELLS_139]
         with pytest.warns(UserWarning) as record:
             cells = cell_edges_sigma(
-                _bump_cells_sigma(_CELLS_139),
+                _bump_cells_sigma(cells_in),
                 min_frac_strength=0.01,
                 max_cells_per_sign=1,
             )
-        assert cells.sel(lat="center").values.tolist() == [-24.0, 8.0, 45.0]
-        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2"]
+        assert cells.sel(lat="center").values.tolist() == sorted(
+            [-24.0 * sign, 8.0 * sign, 45.0 * sign]
+        )
+        labels = (
+            ["0", "sh_hadley", "nh_hadley"]
+            if mirror
+            else ["sh_hadley", "nh_hadley", "2"]
+        )
+        assert list(cells["cell"].values) == labels
         messages = _dropped_messages(record)
         assert len(record) == len(messages) == 1
         assert messages[0].startswith(
             "cell_edges_sigma dropped 3 cells: more than 1 cells of its sign "
             "remain, and it is not among the 1 strongest; raise "
             "max_cells_per_sign to keep it. The first is the cell centered at "
-            "latitude -48 and"
+            f"latitude {74 if mirror else -48} and"
         )
+
+    def test_both_hadley_cells_beyond_max_cells_per_sign_kept(self) -> None:
+        """Both Hadley cells are kept when each is beyond the limit of its sign.
+
+        The field of test_ferrel_cells_stronger_than_hadley_cells: Ferrel
+        cells of 1 at 45S and of 0.8 at 45N, stronger than the Hadley cells
+        between them, of 0.5 at 15S and 0.6 at 15N. At max_cells_per_sign 1,
+        each Ferrel cell is the strongest of its sign, and each Hadley cell
+        is kept besides it, so no cell is dropped. The limit used to drop
+        both Hadley cells, leaving none within max_center_lat to label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-59.75, -29.75, 1.0),
+                (-29.75, 0.25, -0.5),
+                (0.25, 30.25, 0.6),
+                (30.25, 60.25, -0.8),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf, max_cells_per_sign=1)
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -15.0, 15.0, 45.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
 
     @pytest.mark.parametrize("nested_amp", [0.03, 0.2])
     def test_cell_within_another_not_taken_for_the_summer_cell(
@@ -3493,7 +3618,8 @@ class TestCellEdgesSigmaDroppedCells:
             upper=[(-14.25, 30.25, 1.0)],
             lower=[(-5.25, 4.75, -nested_amp)],
         )
-        cells = cell_edges_sigma(sf)
+        with pytest.warns(UserWarning, match="Hadley label to the cell centered at"):
+            cells = cell_edges_sigma(sf)
         assert cells.sel(lat="center").values.tolist() == [-24.0, 8.0]
         assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
 
@@ -3513,7 +3639,8 @@ class TestCellEdgesSigmaDroppedCells:
             upper=[(-34.25, -14.25, -0.017)],
             lower=[(-30.25, -20.25, 0.1)],
         )
-        cells = cell_edges_sigma(sf)
+        with pytest.warns(UserWarning, match="Hadley label to the cell centered at"):
+            cells = cell_edges_sigma(sf)
         assert cells.sel(lat="center").values.tolist() == [-25.0, -24.0, 8.0]
         assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley"]
         assert cells.sel(cell="0")[SIGMA_STR].item() == pytest.approx(0.8)
@@ -3539,6 +3666,382 @@ class TestCellEdgesSigmaDroppedCells:
         assert len(_dropped_messages(record)) == 2
         assert cells.sel(lat="center").values.tolist() == [-15.0, 40.0]
         assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+
+    @pytest.mark.parametrize("mirror", [False, True], ids=["nh_winter", "sh_winter"])
+    @pytest.mark.parametrize("amp", [0.02, 0.075])
+    def test_no_summer_label_beyond_the_ferrel_cell(
+        self, amp: float, mirror: bool
+    ) -> None:
+        """A cell beyond the winter cell's Ferrel cell is not the summer Hadley cell.
+
+        A northern-winter field with no summer Hadley cell: the positive
+        winter Hadley cell from 15.25S to 29.75N, centered at 7N, the
+        positive southern Ferrel cell, at 0.1 of its strength, from 40.25S
+        to 25.25S, and the negative northern Ferrel cell. Beyond the
+        southern Ferrel cell, from 52.25S to 40.25S, lies a negative cell of
+        ``amp``, 2% or 7.5% of the winter cell, on the winter cell's
+        ascending side and within max_partner_lat. The southern Ferrel cell
+        lies between it and the winter cell, so it takes no Hadley label.
+        Below the strength threshold it is dropped; above it, it is kept
+        unlabeled. It used to be labeled sh_hadley at 2%, once exempt from
+        the strength filter, and at 7.5% before that. The mirrored case is
+        the southern-winter field.
+        """
+        cells_in = [
+            (-52.25, -40.25, -amp),
+            (-40.25, -25.25, 0.1),
+            (-15.25, 29.75, 1.0),
+            (29.75, 59.75, -0.15),
+        ]
+        centers = [-46.0, -33.0, 7.0, 45.0]
+        if amp < 0.05:
+            cells_in, centers = cells_in[1:], centers[1:]
+        labels = [str(i) for i in range(len(centers))]
+        labels[-2] = "nh_hadley"
+        if mirror:
+            cells_in = _mirror_cells(cells_in)
+            centers = [-c for c in reversed(centers)]
+            labels = [str(i) for i in range(len(centers))]
+            labels[1] = "sh_hadley"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
+        assert cells.sel(lat="center").values.tolist() == centers
+        assert list(cells["cell"].values) == labels
+
+    @pytest.mark.parametrize("mirror", [False, True], ids=["nh_winter", "sh_winter"])
+    @pytest.mark.parametrize(
+        ("summer", "ferrel", "rival"),
+        [(0.015, 0.1, 0.03), (0.06, 0.1, 0.075), (0.015, 0.06, 0.1)],
+        ids=["weak_rival", "rival_above_threshold", "rival_above_the_ferrel_cell"],
+    )
+    def test_summer_cell_short_of_the_ferrel_cell(
+        self, summer: float, ferrel: float, rival: float, mirror: bool
+    ) -> None:
+        """The summer Hadley cell is sought short of the winter cell's Ferrel cell.
+
+        A northern-winter field: the positive winter Hadley cell from 8.25S
+        to 29.75N, centered at 11N; the negative summer Hadley cell from
+        30.25S to 8.25S, centered at 19S; the positive southern Ferrel cell
+        from 40.25S to 30.25S; a negative cell beyond it from 55.25S to
+        40.25S, centered at 48S, stronger than the summer cell; and the
+        negative northern Ferrel cell. Each amplitude is a fraction of the
+        winter cell's. The summer cell, not the stronger cell beyond the
+        Ferrel cell, takes the southern Hadley label, in three cases: both
+        below the strength threshold, where the cell beyond is dropped; both
+        above it; and the cell beyond stronger than the Ferrel cell, which
+        still blocks it. The cell beyond used to take the label in each
+        case, and before the summer cell was exempt from the strength
+        filter, in the second and third. A summer cell below the threshold
+        is kept with a warning. The mirrored case is the southern-winter
+        field.
+        """
+        cells_in = [
+            (-55.25, -40.25, -rival),
+            (-40.25, -30.25, ferrel),
+            (-30.25, -8.25, -summer),
+            (-8.25, 29.75, 1.0),
+            (29.75, 59.75, -0.15),
+        ]
+        centers = [-48.0, -35.0, -19.0, 11.0, 45.0]
+        if rival < 0.05:
+            cells_in, centers = cells_in[1:], centers[1:]
+        labels = [str(i) for i in range(len(centers))]
+        labels[-3:-1] = ["sh_hadley", "nh_hadley"]
+        if mirror:
+            cells_in = _mirror_cells(cells_in)
+            centers = [-c for c in reversed(centers)]
+            labels = [str(i) for i in range(len(centers))]
+            labels[1:3] = ["sh_hadley", "nh_hadley"]
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(_sigma_half_sine_cells(cells_in))
+        assert cells.sel(lat="center").values.tolist() == centers
+        assert list(cells["cell"].values) == labels
+        assert len(_weak_label_messages(record)) == (1 if summer < 0.05 else 0)
+        assert len(record) == len(_weak_label_messages(record))
+
+    def test_cell_below_the_strength_threshold_blocks_nothing(self) -> None:
+        """A cell of the winter cell's sign below the threshold leaves the summer cell.
+
+        The positive winter Hadley cell from 20.25S to 29.75N, centered at
+        5N; south of it a positive cell of 0.02 times its strength, from
+        34.25S to 28.25S, centered at 31S; and beyond that the negative
+        summer Hadley cell, of 0.1, from 50.25S to 34.25S, centered at 42S.
+        The weak cell, below the strength threshold, is dropped and does not
+        block the summer cell, which takes the southern Hadley label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-50.25, -34.25, -0.1),
+                (-34.25, -28.25, 0.02),
+                (-20.25, 29.75, 1.0),
+                (29.75, 59.75, -0.15),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-42.0, 5.0, 45.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2"]
+
+    def test_cell_within_the_summer_cell_blocks_nothing(self) -> None:
+        """A cell lying within the summer Hadley cell's edges does not block it.
+
+        The positive winter Hadley cell, from 23.25S to 29.75N, fills all of
+        sigma and is centered at 3N. The negative summer Hadley cell, of 0.1
+        times its strength, fills sigma 0.1 to 0.5 from 50.25S to 30.25S,
+        centered at 40S. Beneath it a positive cell of 0.1, from 38.25S to
+        32.25S and centered at 35S, lies between the summer cell's edges, so
+        it is dropped and does not block the summer cell, though it lies
+        between the two Hadley cells.
+        """
+        sf = _layered_half_sine_cells(
+            full=[(-23.25, 29.75, 1.0)],
+            upper=[(-50.25, -30.25, -0.1)],
+            lower=[(-38.25, -32.25, 0.1)],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-40.0, 3.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+
+    def test_cell_beneath_the_summer_cell_blocks_nothing(self) -> None:
+        """A cell of the winter cell's sign at the summer cell's latitude blocks nothing.
+
+        The positive winter Hadley cell, from 23.25S to 29.75N, fills all of
+        sigma and is centered at 3N. The negative summer Hadley cell and a
+        positive cell beneath it, each of 0.1 times the winter cell's
+        strength, both span 45.25S to 25.25S, the summer cell above sigma
+        0.53 and the positive cell below 0.57, so both are centered at 35S.
+        Neither lies within the other's edges, which coincide, and the
+        positive cell, at the summer cell's latitude, does not lie between
+        the Hadley cells.
+        """
+        sf = _layered_half_sine_cells(
+            full=[(-23.25, 29.75, 1.0)],
+            upper=[(-45.25, -25.25, -0.1)],
+            lower=[(-45.25, -25.25, 0.1)],
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-35.0, -35.0, 3.0]
+        assert "sh_hadley" in cells["cell"].values
+        summer = cells.sel(cell="sh_hadley")
+        assert summer["cell_strength"].item() < 0
+        assert summer[SIGMA_STR].item() == pytest.approx(0.3)
+
+    def test_cell_of_the_summer_cell_sign_blocks_nothing(self) -> None:
+        """Only cells of the first Hadley cell's sign block the summer cell.
+
+        The positive winter Hadley cell, from 20.25S to 29.75N, centered at
+        5N, and south of it two negative cells, of 0.06 times its strength
+        at 35S and of 0.1 at 47S, with zero between them. The weaker one,
+        nearer, is of the summer cell's sign, so it does not block the
+        stronger one, which takes the southern Hadley label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-52.25, -42.25, -0.1),
+                (-40.25, -30.25, -0.06),
+                (-20.25, 29.75, 1.0),
+                (29.75, 59.75, -0.15),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-47.0, -35.0, 5.0, 45.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "1", "nh_hadley", "3"]
+
+    def test_cell_centered_on_max_center_lat_blocks_nothing(self) -> None:
+        """A cell centered on max_center_lat counts as within it, and blocks nothing.
+
+        The positive winter Hadley cell, from 20.25S to 29.75N, centered at
+        5N; a positive cell of 0.1 times its strength from 37.75S to 22.25S,
+        whose maximum lies on max_center_lat, at 30S; and beyond it a
+        negative cell of 0.1 centered at 45S. A cell centered on the bound
+        counts as within it, as for the first Hadley cell, so the positive
+        cell at 30S blocks nothing, and the cell at 45S takes the southern
+        Hadley label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-52.25, -37.75, -0.1),
+                (-37.75, -22.25, 0.1),
+                (-20.25, 29.75, 1.0),
+                (29.75, 59.75, -0.15),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -30.0, 5.0, 45.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "1", "nh_hadley", "3"]
+
+    def test_weak_label_warning_against_the_strongest_measurable_cell(self) -> None:
+        """The warning's percentage is of the strongest cell whose edges can be measured.
+
+        The field of #139 with a negative cell of 5e11 added at 85S, the
+        grid's first latitude, which joins the southern polar cell; its
+        maximum lies at the end of the grid, so the joined cell cannot be
+        measured and is dropped with a warning. It is the strongest cell,
+        but the summer cell's percentage is of the winter cell, the
+        strongest cell whose edges can be measured: 1.7%, 3e9 / 1.8e11.
+        """
+        sf = _bump_cells_sigma([*_CELLS_139, (-5e11, -85.0, 6.0)])
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == _CENTERS_139[1:]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3", "4"]
+        weak = _weak_label_messages(record)
+        assert len(_dropped_messages(record)) == len(weak) == 1
+        assert ", 1.7% as strong as the strongest cell whose edges" in weak[0]
+
+    @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+    def test_ferrel_cell_split_by_nan_still_blocks(self) -> None:
+        """A Ferrel cell whose edges cannot be measured still blocks the cell beyond.
+
+        The field of test_no_summer_label_beyond_the_ferrel_cell, with the
+        cell beyond the southern Ferrel cell at 7.5% of the winter cell and a
+        column of NaN at 33S splitting the Ferrel cell, whose two parts are
+        dropped with a warning each. They are still cells of the winter
+        cell's sign between it and the cell beyond, which takes no Hadley
+        label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-52.25, -40.25, -0.075),
+                (-40.25, -25.25, 0.1),
+                (-15.25, 29.75, 1.0),
+                (29.75, 59.75, -0.15),
+            ]
+        )
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where(sf[LAT_STR] != -33.0))
+        assert len(_dropped_messages(record)) == 2
+        assert cells.sel(lat="center").values.tolist() == [-46.0, 7.0, 45.0]
+        assert list(cells["cell"].values) == ["0", "nh_hadley", "2"]
+
+    def test_first_hadley_cell_below_the_strength_threshold(self) -> None:
+        """The first Hadley cell is kept and labeled below the strength threshold.
+
+        Ferrel cells of 1 at 45S and of 0.8 at 45N, and Hadley cells of 0.02
+        at 15S and 0.03 at 15N between them, every cell 30 degrees wide.
+        Both Hadley cells fall below 0.05 times the southern Ferrel cell, the
+        strongest cell, and both are kept and labeled, with one warning for
+        the two. They used to be dropped, leaving no cell within
+        max_center_lat to label.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-59.75, -29.75, 1.0),
+                (-29.75, 0.25, -0.02),
+                (0.25, 30.25, 0.03),
+                (30.25, 60.25, -0.8),
+            ]
+        )
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -15.0, 15.0, 45.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
+        messages = _weak_label_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0].startswith(
+            f"cell_edges_sigma gave a Hadley label to 2 cells: {_WEAK_LABEL_REASON}. "
+            "The first is the cell centered at latitude "
+        )
+
+    @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+    def test_weak_hadley_cell_with_a_nan_edge(self) -> None:
+        """A Hadley cell below the threshold and cut by the grid gets both warnings.
+
+        The winter Hadley cell of 1.8e11 at 8N, the summer Hadley cell of
+        -3e9 at 24S, 1.7% of it, and the northern Ferrel cell of -4e10 at
+        45N, on latitudes from 28S to 85N. The summer cell reaches 34S, past
+        the end of the grid, so its southern edge is NaN, with the warning
+        for a cell kept with a NaN edge, besides the warning for a Hadley
+        cell below the strength threshold.
+        """
+        sf = _bump_cells_sigma(
+            [(1.8e11, 8.0, 26.0), (-3e9, -24.0, 10.0), (-4e10, 45.0, 13.0)]
+        ).sel({LAT_STR: slice(-28.0, None)})
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2"]
+        assert cells.sel(lat="center").values.tolist() == [-24.0, 8.0, 45.0]
+        assert np.isnan(cells.sel(cell="sh_hadley", lat="edge_south").item())
+        cut = _cut_messages(record)
+        weak = _weak_label_messages(record)
+        assert len(record) == len(cut) + len(weak) == 2
+        assert cut[0].startswith(
+            "cell_edges_sigma kept, with NaN for an edge, the cell centered at "
+            "latitude -24 and"
+        )
+        assert "its southern edge lies beyond the first latitude of the grid" in cut[0]
+        assert weak[0].startswith(
+            "cell_edges_sigma gave a Hadley label to the cell centered at latitude "
+            "-24 and"
+        )
+
+    def test_one_warning_for_weak_hadley_cells_across_slices(self) -> None:
+        """One warning covers the Hadley cells below the threshold in every slice.
+
+        Two times of the field of #139, the summer Hadley cell of -3e9 at
+        the first and -2e9 at the second, 1.7% and 1.1% of the winter cell.
+        One warning gives both cells and the first, at time 0.
+        """
+        fields = [
+            _bump_cells_sigma([*_CELLS_139[:1], (summer, -24.0, 10.0), *_CELLS_139[2:]])
+            for summer in (-3e9, -2e9)
+        ]
+        sf = xr.concat(fields, dim=TIME_STR).assign_coords({TIME_STR: [0, 1]})
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        assert list(cells["cell"].values) == [
+            "0",
+            "1",
+            "sh_hadley",
+            "nh_hadley",
+            "4",
+            "5",
+        ]
+        messages = _weak_label_messages(record)
+        assert len(record) == len(messages) == 1
+        assert messages[0] == (
+            "cell_edges_sigma gave a Hadley label to 2 cells in 2 of the 2 slices "
+            f"along {TIME_STR}: {_WEAK_LABEL_REASON}. The first is at "
+            f"{TIME_STR}=0, the cell centered at latitude -24 and sigma 0.55, of "
+            "strength -3e+09, 1.7% as strong as the strongest cell whose edges "
+            "can be measured."
+        )
+
+    def test_strength_threshold_from_cells_beyond_max_center_lat(self) -> None:
+        """The strength threshold is set by the strongest cell, Hadley cell or not.
+
+        Ferrel cells of 1 at 45S and 0.8 at 45N, Hadley cells of 0.5 and 0.6,
+        and a northern polar cell of 0.04, 4% of the southern Ferrel cell,
+        which is centered beyond max_center_lat. The polar cell is dropped,
+        without a warning. Were the threshold set by the cells within
+        max_center_lat, the Hadley cells, it would be kept, at 7% of the
+        stronger one.
+        """
+        sf = _sigma_half_sine_cells(
+            [
+                (-59.75, -29.75, 1.0),
+                (-29.75, 0.25, -0.5),
+                (0.25, 30.25, 0.6),
+                (30.25, 60.25, -0.8),
+                (60.25, 85.25, 0.04),
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-45.0, -15.0, 15.0, 45.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley", "3"]
 
     @pytest.mark.parametrize("max_cells_per_sign", [None, 5, 3])
     def test_max_cells_per_sign(self, max_cells_per_sign: int | None) -> None:
