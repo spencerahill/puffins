@@ -95,8 +95,8 @@ def therm_ross_num(
     )
 
 
-# Rows this close to a pole, in degrees, get no relative or absolute
-# vorticity from rel_vort_from_u and abs_vort_vert_comp. Float32
+# Rows this close to a pole, in degrees, are NaN in the output of
+# rel_vort_from_u, abs_vort_vert_comp and zonal_fric_inferred_steady. Float32
 # latitudes are spaced 7.6e-6 degrees apart there, and on any grid with a
 # spacing of 0.01 degrees or more the next row lies at least 0.005 degrees
 # from the pole.
@@ -393,18 +393,21 @@ def zonal_fric_inferred_steady(
     For a time-mean budget, pass time means of the products, so that the
     fluxes include the transient eddies.
 
-    Each derivative is a centered difference inside the grid and a two-point
-    one-sided difference at its two end rows or levels, which is first order
-    there. On a grid reaching toward the poles, the latitude term's error at
-    the few rows nearest each pole is first order in the grid spacing too,
-    since for a smooth flow [u v] cos^2(phi) varies there as the fourth
-    power of the distance from the pole. For u = 20 sin(2 phi) + 5 cos(phi)
-    and v = 2 sin(2 phi), in m/s, on a 1-degree grid whose end rows lie 0.5
-    degrees from the poles, the error is about 4% of the largest |F| at the
-    end rows and about 0.5% at the rows next to them. Values at rows on
-    the poles themselves are meaningless, since cos^2(phi) evaluates there
-    to about 4e-33: for the same flow on a 1-degree grid including the
-    poles, they came to about 4e22 m/s^2 in magnitude.
+    The meridional term is computed in the equivalent form
+    (1/a) d[u v]/dphi - 2 [u v] tan(phi)/a. The latitude derivative of
+    [u v] is a centered difference inside the grid and a three-point
+    one-sided difference at its two end rows, so the meridional term is
+    second order at every row and the latitude dimension needs at least
+    three rows, or a ValueError is raised. The cos^2(phi) form would be
+    first order at the rows nearest each pole on a grid reaching toward the
+    poles, since [u v] cos^2(phi) varies there as the fourth power of the
+    distance from the pole. Rows within 1e-4 degrees of 90 degrees north or
+    south are NaN, since tan(phi) evaluates there to a huge finite value of
+    either sign.
+
+    The pressure derivative is a centered difference inside the grid and a
+    two-point one-sided difference at its top and bottom levels, so it is
+    first order at those two levels.
 
     Parameters
     ----------
@@ -413,7 +416,7 @@ def zonal_fric_inferred_steady(
         winds, in m^2/s^2, with v positive northward. [u v] is the total
         flux, [u][v] plus the eddy flux [u* v*], with no factor of cos(phi).
         Its latitude coordinate, in degrees, is the one used for f and
-        cos(phi).
+        tan(phi).
     u_vert_flux : xarray.DataArray
         [u omega], the zonal mean of the product of the zonal wind and the
         pressure velocity omega, positive downward, in m/s times the
@@ -437,13 +440,14 @@ def zonal_fric_inferred_steady(
         F, the zonal force per unit mass (m/s^2), positive eastward.
     """
     lats = u_merid_flux[lat_str]
-    coslat = cosdeg(lats)
-    duv_dlat_term = lat_deriv(u_merid_flux * coslat**2, lat_str) / (radius * coslat**2)
+    duv_dlat = np.rad2deg(u_merid_flux.differentiate(lat_str, edge_order=2))
+    duv_dlat_term = (duv_dlat - 2 * u_merid_flux * tandeg(lats)) / radius
     duw_dvert_term = u_vert_flux.differentiate(vert_str)
 
     u_flux_div = duv_dlat_term + duw_dvert_term
     cor_param = coriolis_param(lats, rot_rate=rot_rate)
-    return cast(xr.DataArray, u_flux_div - cor_param * vwind)
+    fric = u_flux_div - cor_param * vwind
+    return cast(xr.DataArray, fric.where(np.abs(lats) < 90.0 - _POLE_TOL_DEG))
 
 
 def z_from_hypso(

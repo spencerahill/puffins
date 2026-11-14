@@ -1079,22 +1079,32 @@ def _steady_flow(
 class TestZonalFricInferredSteady:
     """Tests for zonal_fric_inferred_steady."""
 
-    def test_matches_closed_form_given_uv(self) -> None:
-        """Matches the closed-form F given [u v], and not given [u v] cos(phi).
+    @pytest.mark.parametrize(
+        ("grid", "tol"),
+        [("cell_centered", 2e-4), ("gaussian", 3e-4), ("subset_60", 3e-4)],
+    )
+    def test_matches_closed_form_given_uv(self, grid: str, tol: float) -> None:
+        """Within tol of the closed-form F at every row, given [u v].
 
-        On a 0.5-degree grid from 60S to 60N, away from its two end rows,
-        whose one-sided differences are first order. Given [u v], the
-        largest error measured was 5.1e-5 of the largest |F|; given
-        [u v] cos(phi), the convention before issue #145, it is 8.0e-2. Mars's
-        radius and rotation rate check that ``radius`` and ``rot_rate`` are
-        used.
+        tol is a fraction of the largest |F|. The grids: 1 degree from pole
+        to pole with end rows 0.5 degrees from the poles, 128 Gaussian
+        latitudes, and 1 degree from 60S to 60N. Given [u v], the largest
+        errors measured were 8.6e-5, 1.7e-4 and 1.4e-4 of the largest |F|;
+        the cos^2(phi) form of the meridional term is off by 6.8e-2 on the
+        first grid. Given [u v] cos(phi), the convention before issue #145,
+        the error is at least 8.1e-2. Mars's radius and rotation rate check
+        that ``radius`` and ``rot_rate`` are used.
         """
+        lat = {
+            "cell_centered": _cell_centered_lats(1.0),
+            "gaussian": _gaussian_lats(128),
+            "subset_60": _subset_lats(1.0),
+        }[grid]
         uwind, vwind, omega, fric = _steady_flow(
-            _subset_lats(0.5), radius=RAD_MARS, rot_rate=ROT_RATE_MARS
+            lat, radius=RAD_MARS, rot_rate=ROT_RATE_MARS
         )
         coslat = np.cos(np.deg2rad(uwind[LAT_STR]))
         u_vert_flux = (uwind * omega).rename("u_omega")
-        inner = {LAT_STR: slice(1, -1)}
         scale = np.abs(fric.values).max()
         errors = []
         for u_merid_flux in (uwind * vwind, uwind * vwind * coslat):
@@ -1105,10 +1115,62 @@ class TestZonalFricInferredSteady:
                 radius=RAD_MARS,
                 rot_rate=ROT_RATE_MARS,
             )
-            err = (result - fric).isel(inner)
-            errors.append(np.abs(err.values).max() / scale)
-        assert errors[0] < 2e-4
+            errors.append(np.max(np.abs(result.values - fric.values)) / scale)
+        assert errors[0] < tol
         assert errors[1] > 1e-2
+
+    def test_second_order_convergence_at_every_row(self) -> None:
+        """The largest error falls 4-fold from a 2- to a 1-degree grid.
+
+        On grids from pole to pole, end rows included. Measured 4.0; the
+        cos^2(phi) form gives 2.0, first order near the poles. The maximum
+        is NumPy's, so a NaN row fails.
+        """
+        errors = []
+        for dlat in (2.0, 1.0):
+            uwind, vwind, omega, fric = _steady_flow(_cell_centered_lats(dlat))
+            result = zonal_fric_inferred_steady(
+                (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+            )
+            errors.append(np.max(np.abs(result.values - fric.values)))
+        assert errors[0] / errors[1] > 3.0
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_pole_rows_nan(self, dtype: type) -> None:
+        """Rows at exactly 90 degrees are NaN; the others match the closed form."""
+        lats: np.ndarray = np.linspace(-90.0, 90.0, 181)
+        lat = xr.DataArray(lats, coords={LAT_STR: lats.astype(dtype)}, dims=[LAT_STR])
+        uwind, vwind, omega, fric = _steady_flow(lat)
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        is_pole = np.abs(result[LAT_STR].values) == 90.0
+        assert is_pole.sum() == 2
+        assert np.isnan(result.values[is_pole]).all()
+        scale = np.abs(fric.values[~is_pole]).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], fric.values[~is_pole], rtol=0, atol=2e-4 * scale
+        )
+
+    def test_rows_within_tolerance_of_a_pole_nan(self) -> None:
+        """Rows within 1e-4 degrees of a pole are NaN; one 0.01 degrees away is not."""
+        lat = _lat_dataarray([-90 + 5e-5, -89.99, -60.0, 0.0, 60.0, 89.99, 90 - 5e-5])
+        uwind, vwind, omega, _ = _steady_flow(lat)
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        expected = np.array([True, False, False, False, False, False, True])
+        np.testing.assert_array_equal(
+            np.isnan(result.values), np.broadcast_to(expected[:, None], result.shape)
+        )
+
+    def test_fewer_than_three_rows_raises(self) -> None:
+        """The three-point end difference needs three latitude rows."""
+        uwind, vwind, omega, _ = _steady_flow(_lat_dataarray([10.0, 20.0]))
+        with pytest.raises(ValueError, match="at least"):
+            zonal_fric_inferred_steady(
+                (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+            )
 
     def test_custom_dim_names(self) -> None:
         """``lat_str`` and ``vert_str`` set the dimensions differentiated along."""
