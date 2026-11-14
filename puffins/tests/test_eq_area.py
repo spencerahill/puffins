@@ -1839,12 +1839,20 @@ class TestIssueSolves:
         )
 
     def test_converged_flag_at_a_large_residual_raises_runtime_error(self) -> None:
-        """scipy reports convergence at a root whose residuals reach 36 K,
-        with the shared edge beyond the South Pole."""
+        """A root whose residuals reach 36 K, with the shared edge beyond the
+        South Pole, raises RuntimeError, never CellEdgeError.
+
+        On macOS scipy reports convergence there, so the residual check
+        raises; on Linux, where CI runs, scipy reports non-convergence for the
+        same guess (2026-11-14, CI run 43634615353), so the check on scipy's
+        flag raises first. Both messages begin "equal-area solver did not
+        converge". The residual check's message is pinned on mocked roots in
+        TestRootChecks, independent of platform.
+        """
         guess = [-0.95, SINLAT_6, 0.95, 0.99 * ISSUE_THETA_1]
         rce = _rce_lh88_func(SINLAT_6, ISSUE_THETA_REF, ISSUE_DELTA_H)
         del_h_over_ro = 0.5 * ISSUE_DELTA_H / ISSUE_BURG_DELH
-        with pytest.raises(RuntimeError, match="scipy reported success") as excinfo:
+        with pytest.raises(RuntimeError, match="did not converge") as excinfo:
             equal_area_bouss(guess, ISSUE_THETA_REF, del_h_over_ro, rce)
         assert not isinstance(excinfo.value, CellEdgeError)
 
