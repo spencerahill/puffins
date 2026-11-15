@@ -1171,11 +1171,14 @@ def cell_edges_sigma(
       measured, unless it is one of the two Hadley cells identified below.
       The cells stronger than that pass this strength filter;
     - a cell lying entirely between the edges of another cell that passes
-      the strength filter. Where the other cell has NaN for an edge, the
-      edge counts for this test as lying at the last latitude the other cell
-      is known to reach on that side, at the end of the data or where the
-      run of NaN begins, since its true edge lies beyond. A cell with NaN
-      for an edge never counts as lying within another;
+      the strength filter and whose strength, in magnitude, is at least its
+      own, equal strengths included. A cell lying only within weaker cells
+      is kept, as is a cell beneath a weaker layer of the other sign. Where
+      the other cell has NaN for an edge, the edge counts for this test as
+      lying at the last latitude the other cell is known to reach on that
+      side, at the end of the data or where the run of NaN begins, since its
+      true edge lies beyond. A cell with NaN for an edge never counts as
+      lying within another;
     - with a `UserWarning`, a cell whose edges cannot be measured: one whose
       maximum lies at the end of the data, at the first or last latitude of
       the grid or beside NaN that lasts to the grid's end, beyond which it
@@ -1196,13 +1199,13 @@ def cell_edges_sigma(
 
     The two Hadley cells are identified among the cells spanning at least
     `cell_min_sigma_depth`, whose edges can be measured and that lie within
-    no cell passing the strength filter. They are identified before the
-    strength filter and the limit of `max_cells_per_sign` act, and neither
-    drops them, so a summer Hadley cell weaker than `min_frac_strength`
-    times the winter cell, as near a solstice, is kept and labeled. A
-    `UserWarning` reports each Hadley cell kept below the strength threshold,
-    with its strength as a percentage of the strongest cell whose edges can
-    be measured. The Hadley cells are labeled "sh_hadley" and "nh_hadley" by
+    no cell passing the strength filter and at least as strong. They are
+    identified before the strength filter and the limit of
+    `max_cells_per_sign` act, and neither drops them, so a summer Hadley
+    cell weaker than `min_frac_strength` times the winter cell, as near a
+    solstice, is kept and labeled. A `UserWarning` reports each Hadley cell
+    kept below the strength threshold, with its strength as a percentage of
+    the strongest cell whose edges can be measured. The Hadley cells are labeled "sh_hadley" and "nh_hadley" by
     their sense of circulation, which requires the sign that
     `merid_streamfunc` returns: the southern cell negative and the northern
     positive. One Hadley cell is the strongest cell whose maximum lies
@@ -1213,22 +1216,22 @@ def cell_edges_sigma(
     first one's ascending side: north of a negative cell, south of a
     positive one. Between the two Hadley cells there may be no cell of the
     first one's sign that passes the strength filter, lies within no cell
-    passing it and has its maximum beyond `max_center_lat`, such as the
-    Ferrel cell beyond the summer Hadley cell. So a cell beyond that Ferrel
-    cell, such as the polar cell, never takes the summer label. A cell
-    between the Hadley cells, as in a double ITCZ, takes no Hadley label if
-    it is weaker than the summer Hadley cell; one of the summer cell's sign
-    that is stronger takes the summer label in its place. Every other cell
-    is labeled by its position among the cells returned, as a string
-    counting from "0" in the south.
+    passing it and at least as strong, and has its maximum beyond
+    `max_center_lat`, such as the Ferrel cell beyond the summer Hadley cell.
+    So a cell beyond that Ferrel cell, such as the polar cell, never takes
+    the summer label. A cell between the Hadley cells, as in a double ITCZ,
+    takes no Hadley label if it is weaker than the summer Hadley cell; one
+    of the summer cell's sign that is stronger takes the summer label in its
+    place. Every other cell is labeled by its position among the cells
+    returned, as a string counting from "0" in the south.
 
     `had_cells_strength` identifies the Hadley cells by the same rule,
     applied to different cells: every local extremum of the streamfunction.
     Here a local maximum of a region's magnitude is a cell's center only as
     described above, so a Hadley cell it finds can be left unlabeled here,
     as when that cell spans less than `cell_min_sigma_depth`, lies within
-    another cell, lies on the flank of a stronger cell of its region, or has
-    edges that cannot be measured.
+    another cell at least as strong, lies on the flank of a stronger cell of
+    its region, or has edges that cannot be measured.
 
     Where the summer Hadley cell is missing or, for one of those reasons, is
     not identified, the strongest other cell of its sign within those bounds
@@ -1820,13 +1823,15 @@ def _hadley_ferrel_cells(
     reference_max = reference.max()
     strong = strengths > min_frac_strength * reference_max
     # A cell is nested when it lies entirely within the edges of a cell that
-    # passes the strength filter. The containing cell is bounded by its
-    # reach, which for an edge kept as NaN is the last latitude the cell is
-    # known to reach, short of its true edge, and for a cell whose edges
-    # cannot be measured is its center's latitude on both sides, within which
-    # the strict inequalities place no cell. The contained cell is bounded by
-    # its edges, and a NaN edge compares False, so a cell with one never lies
-    # within another.
+    # passes the strength filter and whose strength, in magnitude, is at
+    # least its own. The containing cell is bounded by its reach, which for
+    # an edge kept as NaN is the last latitude the cell is known to reach,
+    # short of its true edge, and for a cell whose edges cannot be measured
+    # is its center's latitude on both sides, within which the strict
+    # inequalities place no cell. The contained cell is bounded by its edges,
+    # and a NaN edge compares False, so a cell with one never lies within
+    # another. Along axis 0 is the contained cell, along axis 1 the
+    # containing one.
     edges_south = cells.sel({lat_str: "edge_south"}).values
     edges_north = cells.sel({lat_str: "edge_north"}).values
     reach_south = np.broadcast_to(cells["reach_south"].values, n_cells)
@@ -1835,6 +1840,7 @@ def _hadley_ferrel_cells(
         (edges_south[:, np.newaxis] > reach_south)
         & (edges_north[:, np.newaxis] < reach_north)
         & strong
+        & (strengths[np.newaxis, :] >= strengths[:, np.newaxis])
     ).any(axis=1)
     # Identify the Hadley cells before the strength filter, so that a summer
     # Hadley cell weaker than min_frac_strength of the winter cell is kept.

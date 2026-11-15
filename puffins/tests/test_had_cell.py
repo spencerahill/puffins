@@ -3612,7 +3612,8 @@ class TestCellEdgesSigmaDroppedCells:
         is weaker than either. The cell beneath the winter cell, on its
         ascending side, is the strongest negative cell there, but the
         summer Hadley cell is sought only among the cells lying within no
-        cell that passes the strength filter, as every cell kept must.
+        cell that passes the strength filter and is at least as strong, as
+        every cell kept must.
         """
         sf = _layered_half_sine_cells(
             full=[(-34.25, -14.25, -0.017)],
@@ -3632,8 +3633,10 @@ class TestCellEdgesSigmaDroppedCells:
         1.7% of the winter cell, fills sigma 0.1 to 0.5, and beneath it a
         positive cell from 30.25S to 20.25S, at 10%, lies between the
         summer cell's edges. Only a cell passing the strength filter can
-        hold another, as before the Hadley cells were exempted from it, so
-        the cell beneath the summer cell is kept.
+        hold another, as before the Hadley cells were exempted from it, and
+        only one at least as strong, so the cell beneath the summer cell is
+        kept on either count. test_summer_cell_within_a_weak_cell_kept tests
+        the first alone.
         """
         sf = _layered_half_sine_cells(
             full=[(-14.25, 30.25, 1.0)],
@@ -3646,6 +3649,40 @@ class TestCellEdgesSigmaDroppedCells:
         assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley"]
         assert cells.sel(cell="0")[SIGMA_STR].item() == pytest.approx(0.8)
         assert cells.sel(cell="sh_hadley")[SIGMA_STR].item() == pytest.approx(0.3)
+
+    @pytest.mark.parametrize(
+        ("container", "labels", "sigma_first"),
+        [(0.03, ["sh_hadley", "nh_hadley"], 0.8), (0.06, ["0", "nh_hadley"], 0.3)],
+    )
+    def test_summer_cell_within_a_weak_cell_kept(
+        self, container: float, labels: list[str], sigma_first: float
+    ) -> None:
+        """A summer Hadley cell within a stronger cell failing the filter is kept.
+
+        A positive winter Hadley cell from 14.25S to 30.25N fills all of
+        sigma. The negative summer Hadley cell, from 34.25S to 20.25S below
+        sigma 0.57, at 1.7% of the winter cell, lies between the edges of a
+        positive cell above it, from 38.25S to 16.25S above sigma 0.53. At
+        3% of the winter cell, the cell above is the stronger, but it fails
+        the strength filter, so the summer cell lies within no cell passing
+        it, and is kept and labeled, with a warning, while the cell above is
+        dropped. At 6% the cell above passes the filter, and the summer
+        cell, within it, is dropped, silently.
+        """
+        sf = _layered_half_sine_cells(
+            full=[(-14.25, 30.25, 1.0)],
+            upper=[(-38.25, -16.25, container)],
+            lower=[(-34.25, -20.25, -0.017)],
+        )
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-27.0, 8.0]
+        assert list(cells["cell"].values) == labels
+        assert cells.isel(cell=0)[SIGMA_STR].item() == pytest.approx(sigma_first)
+        messages = [str(w.message) for w in record if w.category is UserWarning]
+        weak_labels = _weak_label_messages(record)
+        assert len(messages) == len(weak_labels) == int(container < 0.05)
 
     def test_cell_whose_edges_cannot_be_measured_not_a_hadley_cell(self) -> None:
         """A cell dropped for edges that cannot be measured takes no Hadley label.
@@ -3793,9 +3830,10 @@ class TestCellEdgesSigmaDroppedCells:
         sigma and is centered at 3N. The negative summer Hadley cell, of 0.1
         times its strength, fills sigma 0.1 to 0.5 from 50.25S to 30.25S,
         centered at 40S. Beneath it a positive cell of 0.1, from 38.25S to
-        32.25S and centered at 35S, lies between the summer cell's edges, so
-        it is dropped and does not block the summer cell, though it lies
-        between the two Hadley cells.
+        32.25S and centered at 35S, lies between the summer cell's edges. Its
+        gridded maximum, 0.0991, is below the summer cell's, 0.0999, so it is
+        dropped and does not block the summer cell, though it lies between
+        the two Hadley cells.
         """
         sf = _layered_half_sine_cells(
             full=[(-23.25, 29.75, 1.0)],
@@ -4144,14 +4182,14 @@ class TestCellEdgesSigmaDroppedCells:
     def test_cell_within_another_cells_edges(
         self, lower_cell: tuple[float, float], expected: list[tuple[str, float]]
     ) -> None:
-        """A cell lying entirely between another cell's edges is dropped, silently.
+        """A cell lying entirely between a stronger cell's edges is dropped, silently.
 
         A positive cell from 0.25 to 40.25 fills sigma 0.1 to 0.5, and a
         negative cell of half its amplitude fills sigma 0.6 to 1.0, at the
         latitudes given; a southern Hadley cell fills sigma 0.15 to 0.95. The
-        upper cell's edges lie near 1.5N and 39N, so the lower cell is
-        dropped when it spans 10.25 to 30.25 and kept when it spans 30.25 to
-        50.25.
+        upper cell's edges lie near 1.5N and 39N, so the lower cell, the
+        weaker, is dropped when it spans 10.25 to 30.25 and kept when it
+        spans 30.25 to 50.25.
         """
         lats = np.arange(-85.0, 86.0, 1.0)
         sigmas = np.linspace(0.1, 1.0, 19)
@@ -4177,6 +4215,35 @@ class TestCellEdgesSigmaDroppedCells:
             cells = cell_edges_sigma(sf.transpose(SIGMA_STR, LAT_STR))
         assert list(cells["cell"].values) == [label for label, _ in expected]
         assert cells.sel(lat="center").values.tolist() == [c for _, c in expected]
+
+    def test_cell_within_an_equally_strong_cell_dropped(self) -> None:
+        """A cell lying between the edges of a cell as strong is dropped, silently.
+
+        The field of test_cell_within_another_cells_edges with the lower cell
+        from 10.25 to 30.25, between the upper cell's edges, and the upper
+        and lower cells each divided by its own gridded extremum, so that
+        both are exactly 1e10 in magnitude at their maxima, where no other
+        cell is nonzero. A cell counts as lying within another at least as
+        strong, so the lower cell is dropped.
+        """
+        sigma = _grid_sigma()
+        upper = xr.where(sigma < 0.53, np.sin(np.pi * (sigma - 0.05) / 0.5), 0.0)
+        lower = xr.where(sigma > 0.57, np.sin(np.pi * (sigma - 0.55) / 0.5), 0.0)
+        upper_cell = upper * _grid_half_sine(0.25, 40.25)
+        lower_cell = lower * _grid_half_sine(10.25, 30.25)
+        full = np.sin(np.pi * (sigma - 0.1) / 0.9)
+        sf = 1e10 * (
+            -full * _grid_half_sine(-29.75, 0.25)
+            + upper_cell / upper_cell.max()
+            - lower_cell / lower_cell.max()
+        )
+        assert sf.max().item() == -sf.min().item() == 1e10
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf.transpose(SIGMA_STR, LAT_STR))
+        assert cells.sel(lat="center").values.tolist() == [-15.0, 20.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley"]
+        assert cells.sel(cell="nh_hadley")["cell_strength"].item() == 1e10
 
     @pytest.mark.parametrize(
         ("lower_cell", "nan_where", "expected", "nan_edge"),
@@ -4218,10 +4285,10 @@ class TestCellEdgesSigmaDroppedCells:
         and 38.97N, and a negative cell of half its amplitude beneath sigma
         0.57. NaN poleward of 37N at every level leaves the upper cell with
         NaN for its northern edge, and known to reach 37N. The lower cell,
-        from 10.25 to 30.25 with edges at 10.9N and 29.6N, lies within that
-        reach and is dropped, silently, as on the complete field. It used to
-        be returned between the Hadley cells, labeled "1", and the northern
-        Hadley cell was labeled "2" in place of "nh_hadley". With NaN
+        from 10.25 to 30.25 with edges at 10.9N and 29.6N, the weaker, lies
+        within that reach and is dropped, silently, as on the complete field.
+        It used to be returned between the Hadley cells, labeled "1", and
+        the northern Hadley cell was labeled "2" in place of "nh_hadley". With NaN
         poleward of 37N only above sigma 0.53, a lower cell
         from 10.25 to 44.25 has its northern edge at 43.17N, beyond the
         reach, and is kept. A cell with NaN for an edge never lies within
@@ -5484,14 +5551,16 @@ class TestCellEdgesSigmaJoinedCells:
     def test_cell_within_a_layer_cell_dropped(
         self, bottom: float, sigma_third: float
     ) -> None:
-        """A cell lying within the edges of a cell found in a region is dropped.
+        """A cell within the edges of a stronger cell found in a region is dropped.
 
         The field of test_maximum_in_a_thin_layer, with a negative cell of
-        0.1e10 beneath the layer, below sigma 0.57 from 30.25N to 40.25N,
-        its edges near 30.7N and 39.9N. With the layer spanning sigma 0.1 to
-        0.45, the layer is a cell, with edges near 25.9N and 44.6N, and the
-        negative cell lies within them and is dropped, silently. With the
-        layer too thin to be a cell, the negative cell is kept.
+        0.1e10 beneath the layer, below sigma 0.57 from 30.25N to 40.25N, of
+        strength 1.0e9, its edges near 30.7N and 39.9N. With the layer
+        spanning sigma 0.1 to 0.45, the layer is a cell, of strength 2.0e9,
+        with edges near 25.9N and 44.6N. The negative cell lies within them,
+        and the layer is the stronger, so the negative cell is dropped,
+        silently. With the layer too thin to be a cell, the negative cell is
+        kept.
         """
         sf = _layer_atop_a_cell(bottom, beneath=-0.1)
         with warnings.catch_warnings():
@@ -5500,6 +5569,53 @@ class TestCellEdgesSigmaJoinedCells:
         assert cells.sel(lat="center").values.tolist() == [-15.0, 15.0, 35.0]
         assert cells.sel(cell="2")[SIGMA_STR].item() == pytest.approx(sigma_third)
         assert (cells.sel(cell="2")["cell_strength"].item() > 0) == (bottom > 0.4)
+
+    @pytest.mark.parametrize(
+        ("bottom", "layer_amp"), [(0.45, 0.2), (0.5, 0.1)], ids=["0.2", "0.1"]
+    )
+    def test_cell_within_a_weaker_layer_cell_kept(
+        self, bottom: float, layer_amp: float
+    ) -> None:
+        """A cell within the edges of a weaker cell found in a region is kept.
+
+        The field of test_cell_within_a_layer_cell_dropped, with the
+        negative cell beneath the layer at -0.3e10, and a layer of 0.2e10
+        filling sigma 0.1 to 0.45 or of 0.1e10 filling sigma 0.1 to 0.5. The
+        layer is a cell, of strength 2.0e9 or 1.0e9, with edges near 25.9N
+        and 44.6N. The negative cell, of strength 3.0e9, lies within them,
+        but is the stronger, and is kept; it used to be dropped, silently.
+        Its maximum, at 35N and sigma 0.8, where no other cell is nonzero, is
+        its half sine's gridded peak, and its northern edge lies where that
+        half sine falls to 0.1 of it. Its southern edge is interpolated
+        between 31N, inside its half sine, and 30N, where only the northern
+        Hadley cell, of the other sign, is nonzero.
+        """
+        sf = _layer_atop_a_cell(bottom, beneath=-0.3, layer_amp=layer_amp)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-15.0, 15.0, 35.0, 35.0]
+        assert list(cells["cell"].values) == ["sh_hadley", "nh_hadley", "2", "3"]
+        np.testing.assert_allclose(cells[SIGMA_STR].values[2:], [0.8, 0.1])
+        layer = cells.sel(cell="3")
+        assert layer["cell_strength"].item() == pytest.approx(
+            layer_amp * 1e10 * np.sin(np.pi * 9.75 / 20.0), rel=1e-12
+        )
+        lower = cells.sel(cell="2")
+        sigma = np.linspace(0.1, 1.0, 19)[14]
+        vert = np.sin(np.pi * (sigma - 0.55) / 0.5)
+        peak = 3e9 * np.sin(np.pi * 4.75 / 10.0) * vert
+        assert lower["cell_strength"].item() == pytest.approx(-peak, rel=1e-12)
+        inset = 10.0 / np.pi * np.arcsin(0.1 * np.sin(np.pi * 4.75 / 10.0))
+        assert lower.sel(lat="edge_north").item() == pytest.approx(
+            40.25 - inset, abs=0.005
+        )
+        at_31n = 3e9 * np.sin(np.pi * 0.75 / 10.0) * vert / peak
+        hadley_30n = 1e10 * np.sin(np.pi * 29.75 / 30.0)
+        at_30n = -hadley_30n * np.sin(np.pi * (sigma - 0.1) / 0.9) / peak
+        assert lower.sel(lat="edge_south").item() == pytest.approx(
+            31.0 - (at_31n - 0.1) / (at_31n - at_30n), rel=1e-12
+        )
 
     @pytest.mark.parametrize(
         ("min_frac_strength", "centers"),
