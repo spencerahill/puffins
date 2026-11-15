@@ -1117,15 +1117,16 @@ def cell_edges_sigma(
     the streamfunction is positive, or where it is negative, between sigma
     `center_min_sigma` and `center_max_sigma`. A NaN is neither, so a column
     of NaN splits a region in two. Each cell is centered at a local maximum
-    of its region's magnitude, a value no smaller than any of the eight
-    values around it, those outside the region counting as zero. A cell's
-    edges are where, at the level of its center and going outward from it,
-    the streamfunction falls to `frac_thresh` of its value at the center;
-    with `cos_factor`, where the streamfunction divided by cos(latitude)
-    falls to `frac_thresh` of that at the center. Where a cell is still
-    above that fraction at the end of the grid, and the grid's last latitude
-    on that side lies within one grid spacing of the pole, the edge is
-    interpolated between that latitude and a value of zero at the pole.
+    of its region's magnitude, a value no smaller than any of the values
+    around it: eight of them, or five on an edge of the grid and three at a
+    corner, those outside the region counting as zero. A cell's edges are
+    where, at the level of its center and going outward from it, the
+    streamfunction falls to `frac_thresh` of its value at the center; with
+    `cos_factor`, where the streamfunction divided by cos(latitude) falls to
+    `frac_thresh` of that at the center. Where a cell is still above that
+    fraction at the end of the grid, and the grid's last latitude on that
+    side lies within one grid spacing of the pole, the edge is interpolated
+    between that latitude and a value of zero at the pole.
 
     One region can contain several cells, as when a thin layer of one sign
     joins two cells of that sign across the top of a cell of the other
@@ -1134,21 +1135,21 @@ def cell_edges_sigma(
     local maxima are taken from the strongest down, and each is the center
     of a cell of its own unless:
 
-    - its latitude lies between the edges of a cell already taken from the
-      region;
+    - its latitude lies at or between the edges of a cell already taken
+      from the region;
     - the region's values through it, along its own column of sigma, span
       less than `cell_min_sigma_depth`;
     - or its own edges take in the center of a cell already taken from the
       region.
 
-    Where either cell has NaN for an edge, the edge counts for these tests
-    as lying at the last latitude that cell is known to reach on that side,
-    as described below for cells lying within others, and a cell whose edges
-    cannot be measured takes in nothing. So a local maximum on the flank of
-    a stronger one, or between its edges at another level, belongs to the
-    stronger one's cell, and two maxima are separate cells when their edges,
-    each measured at its own level, place each one's center outside the
-    other's edges.
+    Where a cell has NaN for an edge, the edge counts for these tests as
+    lying at the last latitude that cell is known to reach on that side, as
+    described below for cells lying within others. A cell whose edges cannot
+    be measured counts for them as reaching the latitude of its center
+    alone, so another maximum at that latitude, at any level, is no cell of
+    its own. The tests compare latitudes only, each cell's edges measured at
+    the level of its own center, so a maximum between the edges of a cell
+    already taken is no cell of its own, whatever its level.
 
     A cell whose edge on one side lies beyond the end of the data, or in a
     run of NaN, is kept, with NaN for that edge and with a `UserWarning`. On
@@ -1157,9 +1158,9 @@ def cell_edges_sigma(
     latitudes or a single hemisphere, or where a run of NaN begins that
     reaches the end of the grid, as for data masked poleward of some
     latitude. An edge lies in a run of NaN beside the cell when the
-    streamfunction beyond the run is below `frac_thresh` of the cell's
-    maximum, each divided by cos(latitude) with `cos_factor`, so that it
-    falls to that fraction within the run.
+    streamfunction beyond the run is below `frac_thresh` of its value at the
+    cell's center, each divided by cos(latitude) with `cos_factor`, so that
+    it falls to that fraction within the run.
 
     Cells are dropped, in this order:
 
@@ -1180,8 +1181,8 @@ def cell_edges_sigma(
       the grid or beside NaN that lasts to the grid's end, beyond which it
       may peak, and one with an edge that cannot be found because, beyond a
       run of NaN beside the cell, the streamfunction is still at least
-      `frac_thresh` of the cell's maximum, as when a column of NaN splits a
-      cell;
+      `frac_thresh` of its value at the cell's center, as when a column of
+      NaN splits a cell;
     - with a `UserWarning`, the cells of either sign beyond the
       `max_cells_per_sign` strongest of that sign, other than the Hadley
       cells. A Hadley cell not among them is kept as well.
@@ -1371,7 +1372,8 @@ def _region_cells(
 
     A region spanning less than `cell_min_sigma_depth` in sigma has none.
     Otherwise each cell is centered at a local maximum of the region's
-    magnitude, a value no smaller than any of the eight around it, values
+    magnitude, a value no smaller than any of the values around it, eight
+    of them, or five on an edge of the grid and three at a corner, values
     outside the region counting as zero. The region's largest magnitude is
     always a cell. The other local maxima are taken from the strongest down,
     and each is a cell of its own unless its latitude lies within the reach
@@ -1379,7 +1381,8 @@ def _region_cells(
     column of sigma span less than `cell_min_sigma_depth`, or its own reach
     takes in the center of a cell already taken. A cell's reach is its
     edges, or on a side with a NaN edge, the last latitude it is known to
-    reach.
+    reach; for a cell whose edges cannot be measured, it is the latitude of
+    its center alone.
     """
     cell_sign = int(np.sign(n))
     sf_region = _single_cell(streamfunc, labels, n) * cell_sign
@@ -1421,7 +1424,7 @@ def _region_cells(
 
 
 def _within_reach(lat: float, cell: xr.DataArray) -> bool:
-    """Whether `lat` lies within the cell's reach, False where the reach is NaN."""
+    """Whether `lat` lies within the cell's reach, its bounds included."""
     return bool(cell["reach_south"].item() <= lat <= cell["reach_north"].item())
 
 
@@ -1456,12 +1459,14 @@ def _cell_edges_from_center(
     # Retain this region and the cells of the other sign.
     sf_and_opp_sign = _cell_and_opp_sign_cells(sf_at_max, labels, n, sigma_str)
     # A cell whose edges cannot be measured gets NaN edges and the reason,
-    # and `_hadley_ferrel_cells` drops it with a warning. A cell with an edge
-    # that lies beyond the end of the data or in a run of NaN gets NaN for
-    # that edge and the reason, and is kept with a warning. Each side's reach
-    # is the edge where it was found, and otherwise the last latitude the
-    # cell is known to reach, which bounds the edge in the test for one cell
-    # lying within another.
+    # and `_hadley_ferrel_cells` drops it with a warning. Its reach is its
+    # center's latitude alone, so that another maximum of its region at that
+    # latitude is no second cell, and no cell lies within it. A cell with an
+    # edge that lies beyond the end of the data or in a run of NaN gets NaN
+    # for that edge and the reason, and is kept with a warning. Each side's
+    # reach is the edge where it was found, and otherwise the last latitude
+    # the cell is known to reach, which bounds the edge in the test for one
+    # cell lying within another.
     skip_reason = _cell_skip_reason(
         sf_max,
         streamfunc[lat_str],
@@ -1471,7 +1476,7 @@ def _cell_edges_from_center(
         lat_str=lat_str,
     )
     cut_reason = ""
-    reach = [np.nan, np.nan]
+    reach = [lat_center, lat_center]
     if skip_reason:
         no_edge = sf_max[lat_str] * np.nan
         edges = [no_edge, no_edge]
@@ -1504,8 +1509,8 @@ def _cell_edges_from_center(
                 f"its {' and '.join(split)} "
                 f"{'edge' if len(split) == 1 else 'edges'} could not be "
                 "found: beyond a run of NaN beside the cell, the streamfunction "
-                "is still at least frac_thresh of the cell's maximum, as when a "
-                "column of NaN splits a cell"
+                "is still at least frac_thresh of its value at the cell's "
+                "center, as when a column of NaN splits a cell"
             )
         else:
             cut_reason = "; ".join(reason for reason, _ in nan_edges.values())
@@ -1671,7 +1676,8 @@ def _nan_edge(
     elif defined[0] < frac_thresh:
         reason = (
             f"its {side} edge lies in a run of NaN beside the cell, beyond which "
-            "the streamfunction is below frac_thresh of the cell's maximum"
+            "the streamfunction is below frac_thresh of its value at the cell's "
+            "center"
         )
     else:
         reason = ""
@@ -1816,9 +1822,11 @@ def _hadley_ferrel_cells(
     # A cell is nested when it lies entirely within the edges of a cell that
     # passes the strength filter. The containing cell is bounded by its
     # reach, which for an edge kept as NaN is the last latitude the cell is
-    # known to reach, short of its true edge. The contained cell is bounded
-    # by its edges, and a NaN edge compares False, so a cell with one never
-    # lies within another.
+    # known to reach, short of its true edge, and for a cell whose edges
+    # cannot be measured is its center's latitude on both sides, within which
+    # the strict inequalities place no cell. The contained cell is bounded by
+    # its edges, and a NaN edge compares False, so a cell with one never lies
+    # within another.
     edges_south = cells.sel({lat_str: "edge_south"}).values
     edges_north = cells.sel({lat_str: "edge_north"}).values
     reach_south = np.broadcast_to(cells["reach_south"].values, n_cells)

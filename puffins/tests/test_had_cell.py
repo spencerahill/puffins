@@ -3187,7 +3187,8 @@ class TestCellEdgesSigmaDroppedCells:
         assert f"at latitude {center:g} and sigma 0.55" in messages[0]
         assert messages[0].endswith(
             f": its {side} edge lies in a run of NaN beside the cell, beyond which "
-            "the streamfunction is below frac_thresh of the cell's maximum."
+            "the streamfunction is below frac_thresh of its value at the cell's "
+            "center."
         )
 
     @pytest.mark.parametrize("cos_factor", [False, True])
@@ -3885,11 +3886,17 @@ class TestCellEdgesSigmaDroppedCells:
         """The warning's percentage is of the strongest cell whose edges can be measured.
 
         The field of #139 with a negative cell of 5e11 added at 85S, the
-        grid's first latitude, which joins the southern polar cell; its
-        maximum lies at the end of the grid, so the joined cell cannot be
-        measured and is dropped with a warning. It is the strongest cell,
-        but the summer cell's percentage is of the winter cell, the
-        strongest cell whose edges can be measured: 1.7%, 3e9 / 1.8e11.
+        grid's first latitude, which joins the southern polar cell into one
+        region. The region's maximum lies at 85S, at the end of the grid, so
+        that cell cannot be measured and is dropped with a warning; it
+        reaches 85S alone. The polar cell's maximum, at 74S, is a local
+        maximum of the region, but south of it, toward the far stronger cell
+        at 85S, the streamfunction never falls to 0.1 of its value at 74S.
+        So its southern edge lies beyond the grid's first latitude, and its
+        reach runs to 85S, taking in, at its end, the dropped cell's center:
+        it is no cell of its own. The dropped cell is the strongest, but the
+        summer cell's percentage is of the winter cell, the strongest cell
+        whose edges can be measured: 1.7%, 3e9 / 1.8e11.
         """
         sf = _bump_cells_sigma([*_CELLS_139, (-5e11, -85.0, 6.0)])
         with pytest.warns(UserWarning) as record:
@@ -5075,15 +5082,18 @@ def _upper_and_lower_cells(lower: tuple[float, float, float]) -> xr.DataArray:
     return cast(xr.DataArray, (1e10 * sf).transpose(SIGMA_STR, LAT_STR))
 
 
-def _layer_atop_a_cell(bottom: float, beneath: float = 0.0) -> xr.DataArray:
+def _layer_atop_a_cell(
+    bottom: float, beneath: float = 0.0, layer_amp: float = 0.2
+) -> xr.DataArray:
     """Hadley cells and a thin positive layer joined to the northern one.
 
     In units of 1e10 kg/s: cells of -1 from 29.75S to 0.25N and of 1 from
     0.25N to 30.25N, filling all of sigma as sin(pi * (sigma - 0.1) / 0.9);
-    a layer of 0.2 from 25.25N to 45.25N filling sigma 0.1 to ``bottom`` as
-    1.1 - sigma, joined to the northern cell where the two overlap in
-    latitude; and beneath the layer a lower cell of ``beneath`` from 30.25N
-    to 40.25N below sigma 0.57, as in ``_layered_half_sine_cells``.
+    a layer of ``layer_amp`` from 25.25N to 45.25N filling sigma 0.1 to
+    ``bottom`` as 1.1 - sigma, joined to the northern cell where the two
+    overlap in latitude; and beneath the layer a lower cell of ``beneath``
+    from 30.25N to 40.25N below sigma 0.57, as in
+    ``_layered_half_sine_cells``.
     """
     sigma = _grid_sigma()
     whole = np.sin(np.pi * (sigma - 0.1) / 0.9)
@@ -5092,7 +5102,7 @@ def _layer_atop_a_cell(bottom: float, beneath: float = 0.0) -> xr.DataArray:
     sf = (
         -whole * _grid_half_sine(-29.75, 0.25)
         + whole * _grid_half_sine(0.25, 30.25)
-        + 0.2 * layer * _grid_half_sine(25.25, 45.25)
+        + layer_amp * layer * _grid_half_sine(25.25, 45.25)
         + beneath * lower * _grid_half_sine(30.25, 40.25)
     )
     return cast(xr.DataArray, (1e10 * sf).transpose(SIGMA_STR, LAT_STR))
@@ -5101,10 +5111,11 @@ def _layer_atop_a_cell(bottom: float, beneath: float = 0.0) -> xr.DataArray:
 class TestCellEdgesSigmaJoinedCells:
     """Several cells within one connected region of one sign (#140)."""
 
+    @pytest.mark.parametrize("cos_factor", [False, True])
     @pytest.mark.parametrize("mirror", [False, True], ids=["nh_winter", "sh_winter"])
     @pytest.mark.parametrize("layer", [0.05, 0.1, 0.15, 0.2])
     def test_summer_cell_joined_to_the_polar_cell(
-        self, layer: float, mirror: bool
+        self, layer: float, mirror: bool, cos_factor: bool
     ) -> None:
         """A summer Hadley cell joined to the polar cell by a thin layer is a cell.
 
@@ -5125,6 +5136,16 @@ class TestCellEdgesSigmaJoinedCells:
         centered at 12.5N, equally far from 12N and 13N, so its gridded
         maximum is the first of those two in the grid's order: 12N, or
         mirrored, 13S.
+
+        With cos_factor, the summer cell's edges lie where its half sine
+        divided by cos(latitude) falls to 0.1 of that at 23S, and the polar
+        cell, which divided by cos(latitude) does not fall that far before
+        the end of the grid, is kept with NaN for its poleward edge and a
+        warning, as without the layer. Were the division by cos(latitude)
+        normalized at the largest value at sigma 0.55 in the summer cell's
+        region, the polar cell's at 73S, in place of the summer cell's
+        center, the summer cell's edges would differ from those without the
+        layer.
         """
         sf, alone = _issue_140_streamfunc(layer), _issue_140_streamfunc(0.0)
         labels, sign = ["0", "1", "sh_hadley", "nh_hadley"], 1.0
@@ -5133,10 +5154,22 @@ class TestCellEdgesSigmaJoinedCells:
             sf, alone = _mirrored(sf), _mirrored(alone)
             labels, sign = ["sh_hadley", "nh_hadley", "2", "3"], -1.0
             centers = [-13.0, 23.0, 50.0, 73.0]
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            cells = cell_edges_sigma(sf)
-            cells_alone = cell_edges_sigma(alone)
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always", UserWarning)
+            cells = cell_edges_sigma(sf, cos_factor=cos_factor)
+        with warnings.catch_warnings(record=True) as record_alone:
+            warnings.simplefilter("always", UserWarning)
+            cells_alone = cell_edges_sigma(alone, cos_factor=cos_factor)
+        messages = [str(w.message) for w in record if w.category is UserWarning]
+        assert messages == [
+            str(w.message) for w in record_alone if w.category is UserWarning
+        ]
+        assert len(messages) == int(cos_factor)
+        if cos_factor:
+            assert messages[0].startswith(
+                "cell_edges_sigma kept, with NaN for an edge, the cell centered at "
+                f"latitude {-73.0 * sign:g} and sigma 0.55"
+            )
         assert list(cells["cell"].values) == labels
         assert cells.sel(lat="center").values.tolist() == centers
         summer = cells.sel(cell="nh_hadley" if mirror else "sh_hadley")
@@ -5145,9 +5178,17 @@ class TestCellEdgesSigmaJoinedCells:
         assert summer["cell_strength"].item() == pytest.approx(
             -3e9 * sign * _SUMMER_140_PEAK, rel=1e-12
         )
-        edges = sorted(
-            [sign * (-40.25 + _SUMMER_140_INSET), sign * (-5.25 - _SUMMER_140_INSET)]
-        )
+        if cos_factor:
+            at_center = _SUMMER_140_PEAK / np.cos(np.deg2rad(23.0))
+
+            def excess(lat: float) -> float:
+                half_sine = np.sin(np.pi * (lat + 40.25) / 35.0)
+                return float(half_sine / np.cos(np.deg2rad(lat)) / at_center - 0.1)
+
+            south, north = brentq(excess, -40.25, -23.0), brentq(excess, -23.0, -5.25)
+        else:
+            south, north = -40.25 + _SUMMER_140_INSET, -5.25 - _SUMMER_140_INSET
+        edges = sorted([sign * south, sign * north])
         assert summer.sel(lat="edge_south").item() == pytest.approx(edges[0], abs=0.005)
         assert summer.sel(lat="edge_north").item() == pytest.approx(edges[1], abs=0.005)
         np.testing.assert_array_equal(cells.values, cells_alone.values)
@@ -5156,29 +5197,43 @@ class TestCellEdgesSigmaJoinedCells:
         )
         assert list(cells_alone["cell"].values) == labels
 
-    @pytest.mark.parametrize("order", ["latitude_first", "sigma_descending"])
+    @pytest.mark.parametrize(
+        "order", ["latitude_first", "sigma_descending", "latitude_descending"]
+    )
     def test_order_of_the_grid(self, order: str) -> None:
-        """The cells of a region are found whatever the order of the grid.
+        """The cells of a region are the same in each order of the grid tested.
 
         The field of issue #140, with the layer at 0.1e10, given with
-        latitude as its first dimension, or with sigma descending.
+        latitude as its first dimension, with sigma descending, or with
+        latitude descending. In the last, the winter cell's center moves
+        from 12N to 13N, the first in that order of its two equal maxima.
         """
         sf = _issue_140_streamfunc(0.1)
         cells = cell_edges_sigma(sf)
         if order == "latitude_first":
             reordered = cell_edges_sigma(sf.transpose(LAT_STR, SIGMA_STR))
-        else:
+        elif order == "sigma_descending":
             reordered = cell_edges_sigma(sf.isel({SIGMA_STR: slice(None, None, -1)}))
+        else:
+            reordered = cell_edges_sigma(sf.isel({LAT_STR: slice(None, None, -1)}))
+            assert reordered.sel(cell="nh_hadley", lat="center").item() == 13.0
+            cells.loc[{"cell": "nh_hadley", LAT_STR: "center"}] = 13.0
         assert list(reordered["cell"].values) == ["0", "1", "sh_hadley", "nh_hadley"]
         np.testing.assert_array_equal(reordered.values, cells.values)
         for coord in ("cell_strength", SIGMA_STR):
             np.testing.assert_array_equal(reordered[coord].values, cells[coord].values)
 
     @pytest.mark.parametrize(
-        ("frac_thresh", "centers"), [(0.1, [-15.0, 20.0]), (0.5, [-15.0, 20.0, 35.0])]
+        ("frac_thresh", "beyond", "centers"),
+        [
+            (0.1, False, [-15.0, 20.0]),
+            (0.5, False, [-15.0, 20.0, 35.0]),
+            (0.1, True, [-15.0, 20.0, 60.0]),
+        ],
+        ids=["default", "frac_thresh_0.5", "stronger_cell_beyond"],
     )
     def test_maximum_within_a_stronger_cells_edges(
-        self, frac_thresh: float, centers: list[float]
+        self, frac_thresh: float, beyond: bool, centers: list[float]
     ) -> None:
         """A maximum lying between a stronger cell's edges is part of its cell.
 
@@ -5192,9 +5247,17 @@ class TestCellEdgesSigmaJoinedCells:
         zero, lie 0.64 degrees inside its nodes and do not take in 20N. At
         frac_thresh 0.5 the upper cell's edges lie 6.67 degrees
         inside its nodes, at 6.92N and 33.58N, and the lower cell, its own
-        edges at 28.58N and 41.92N, is a cell.
+        edges at 28.58N and 41.92N, is a cell. With a stronger cell of 1.5
+        from 45.25N to 75.25N, filling all of sigma and joined to the lower
+        cell, the region's largest value is that cell's maximum, at 60N, and
+        the upper cell is the second cell taken; the lower cell's maximum
+        lies between the upper cell's edges, though beyond the 60N cell's,
+        and is still not a cell of its own.
         """
         sf = _upper_and_lower_cells((25.25, 45.25, 0.5))
+        if beyond:
+            stronger = _sigma_half_sine_cells([(45.25, 75.25, 1.5)])
+            sf = (sf + stronger).transpose(SIGMA_STR, LAT_STR)
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             cells = cell_edges_sigma(sf, frac_thresh=frac_thresh)
@@ -5206,7 +5269,7 @@ class TestCellEdgesSigmaJoinedCells:
         assert upper.sel(lat="edge_north").item() == pytest.approx(
             40.25 - inset, abs=0.01
         )
-        if len(centers) == 3:
+        if 35.0 in centers:
             lower = cells.isel(cell=2)
             assert lower[SIGMA_STR].item() == pytest.approx(0.75)
             assert lower["cell_strength"].item() == pytest.approx(
@@ -5294,12 +5357,13 @@ class TestCellEdgesSigmaJoinedCells:
         """A maximum two gridpoints from a larger value of its region is a cell.
 
         Beside the Hadley cells, all of sigma, a positive cell of 0.4 from
-        35.5N to 37.5N, its gridded maxima at 36N and 37N of 0.4 * sin(pi /
-        4) = 0.283, and one of 0.25 from 38.5N to 39.5N, its only gridpoint
-        39N, the streamfunction zero at 38N between them. A layer of 0.02
-        from 35.25N to 40.25N at sigma 0.15 to 0.25 joins them. The maximum
-        at 39N is no smaller than any of the eight values around it, though
-        the one at 37N, two gridpoints away, is larger, and it is a cell. Its
+        35.75N to 37.75N, its gridded values 0.4 * sin(pi / 8) = 0.153 at 36N
+        and 0.4 * sin(5 * pi / 8) = 0.370 at 37N, and one of 0.25 from 38.5N
+        to 39.5N, its only gridpoint 39N, the streamfunction zero at 38N
+        between them. A layer of 0.02 from 35.25N to 40.25N at sigma 0.15 to
+        0.25 joins them. The maximum at 39N is no smaller than any of the
+        eight values around it, though the one at 37N, two gridpoints away,
+        is larger, and it is a cell. Its
         edges lie 0.9 degrees from 39N, where the streamfunction falls
         linearly from its maximum to zero at 38N and 40N. With no minimum
         depth, the zeros outside each region are no cell's center, though no
@@ -5312,7 +5376,7 @@ class TestCellEdgesSigmaJoinedCells:
                 [
                     (-29.75, 0.25, -1.0),
                     (0.25, 30.25, 1.0),
-                    (35.5, 37.5, 0.4),
+                    (35.75, 37.75, 0.4),
                     (38.5, 39.5, 0.25),
                 ]
             )
@@ -5332,36 +5396,58 @@ class TestCellEdgesSigmaJoinedCells:
         assert narrow.sel(lat="edge_north").item() == pytest.approx(39.9, rel=1e-12)
 
     @pytest.mark.parametrize(
-        ("bottom", "min_depth", "kept"),
+        ("bottom", "layer_amp", "min_depth", "descending", "kept"),
         [
-            (0.35, None, False),
-            (0.45, None, True),
-            (0.4, "exact", True),
-            (0.35, 0.2, True),
-            (0.45, 0.4, False),
+            (0.35, 0.2, None, False, False),
+            (0.45, 0.2, None, False, True),
+            (0.4, 0.2, "exact", False, True),
+            (0.4, 0.2, "exact", True, True),
+            (0.35, 0.2, 0.2, False, True),
+            (0.45, 0.2, 0.4, False, False),
+            (0.35, 1.5, None, False, True),
         ],
-        ids=["below", "above", "at", "below_lowered", "above_raised"],
+        ids=[
+            "below",
+            "above",
+            "at",
+            "at_sigma_descending",
+            "below_lowered",
+            "above_raised",
+            "region_maximum",
+        ],
     )
     def test_maximum_in_a_thin_layer(
-        self, bottom: float, min_depth: float | str | None, kept: bool
+        self,
+        bottom: float,
+        layer_amp: float,
+        min_depth: float | str | None,
+        descending: bool,
+        kept: bool,
     ) -> None:
         """A maximum in a thin part of a deep region is a cell only if deep enough.
 
-        Hadley cells fill all of sigma, and a positive layer from 25.25N to
-        45.25N fills sigma 0.1 to ``bottom``, joined to the northern Hadley
-        cell where the two overlap. The region's depth passes the check, but
-        the layer's maximum, at 35N and sigma 0.1, is a cell's center only
-        where the region's values through it along its column, sigma 0.1 to
-        ``bottom``, span at least cell_min_sigma_depth: 0.25 at the default
-        0.3 does not, and 0.35 does; a span equal to it does; and 0.25
-        passes 0.2, while 0.35 does not pass 0.4. Only the layer is at sigma
-        0.1, where the Hadley cells are zero, so its strength is 0.2e10 times
-        its half sine's gridded peak, and its northern edge lies where that
-        half sine falls to 0.1 of it. Its southern edge is interpolated
-        between 26N, inside the half sine, and 25N, beyond its node, where
-        the streamfunction is zero.
+        Hadley cells fill all of sigma, and a positive layer of 0.2 from
+        25.25N to 45.25N fills sigma 0.1 to ``bottom``, joined to the
+        northern Hadley cell where the two overlap. The region's depth
+        passes the check, but the layer's maximum, at 35N and sigma 0.1, is
+        a cell's center only where the region's values through it along its
+        column, sigma 0.1 to ``bottom``, span at least cell_min_sigma_depth:
+        0.25 at the default 0.3 does not, and 0.35 does; a span equal to it
+        does, with sigma ascending or descending, where the layer's column
+        runs to the last row of the grid; and 0.25 passes 0.2, while 0.35
+        does not pass 0.4. The column test does not apply to the region's
+        largest value, which is always a cell's center: a layer of 1.5,
+        stronger than the Hadley cell, spanning sigma 0.1 to 0.35, is a
+        cell, and so is the Hadley cell, outside its edges. Only the layer
+        is at sigma 0.1, where the Hadley cells are zero, so its strength is
+        its amplitude, in units of 1e10, times its half sine's gridded peak,
+        and its northern edge lies where that half sine falls to 0.1 of it.
+        Its southern edge is interpolated between 26N, inside the half sine,
+        and 25N, beyond its node, where the streamfunction is zero.
         """
-        sf = _layer_atop_a_cell(bottom)
+        sf = _layer_atop_a_cell(bottom, layer_amp=layer_amp)
+        if descending:
+            sf = sf.isel({SIGMA_STR: slice(None, None, -1)})
         kwargs: dict[str, Any] = {}
         if min_depth == "exact":
             sigmas = _grid_sigma().values
@@ -5375,11 +5461,13 @@ class TestCellEdgesSigmaJoinedCells:
             [-15.0, 15.0, 35.0] if kept else [-15.0, 15.0]
         )
         if kept:
-            layer = cells.sel(cell="2")
+            layer = cells.isel(cell=2)
             peak = np.sin(np.pi * 9.75 / 20.0)
             inset = 20.0 / np.pi * np.arcsin(0.1 * peak)
             assert layer[SIGMA_STR].item() == pytest.approx(0.1)
-            assert layer["cell_strength"].item() == pytest.approx(2e9 * peak, rel=1e-12)
+            assert layer["cell_strength"].item() == pytest.approx(
+                layer_amp * 1e10 * peak, rel=1e-12
+            )
             at_26n = np.sin(np.pi * 0.75 / 20.0) / peak
             assert layer.sel(lat="edge_south").item() == pytest.approx(
                 26.0 - (at_26n - 0.1) / at_26n, rel=1e-12
@@ -5502,32 +5590,154 @@ class TestCellEdgesSigmaJoinedCells:
         assert list(cells["cell"].values) == labels
 
     @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
-    def test_cell_found_in_a_region_with_a_nan_edge(self) -> None:
+    @pytest.mark.parametrize(("cut", "cos_factor"), [(-10.0, False), (-7.0, True)])
+    def test_cell_found_in_a_region_with_a_nan_edge(
+        self, cut: float, cos_factor: bool
+    ) -> None:
         """A cell found beside a stronger one is measured from its own center.
 
-        The field of issue #140, with the layer at 0.05e10, NaN north of 10S.
-        The summer cell, still above 0.1 of its maximum at 10S, is kept with
-        NaN for its northern edge, with a warning, and its southern edge as
-        on the complete field. Measured from the region's maximum, the
-        polar cell's, its northern edge would lie at the polar cell's.
+        The field of issue #140, with the layer at 0.05e10, NaN north of 10S,
+        or with cos_factor, north of 7S. The summer cell, still above 0.1 of
+        its value at its center there, is kept with NaN for its northern
+        edge, with a warning, and its southern edge as on the complete
+        field. Measured from the region's maximum, the polar cell's, its
+        northern edge would lie at the polar cell's. With cos_factor, were
+        the summer cell's profile beside the NaN normalized by the polar
+        cell's maximum, or divided by cos(latitude) normalized at it, it
+        would fall below 0.1 by 7S, short of the NaN, and the warning would
+        give another reason. With cos_factor, the polar cell, as on the
+        complete field, is kept with NaN for its southern edge, with a
+        warning of its own.
         """
         sf = _issue_140_streamfunc(0.05)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            full = cell_edges_sigma(sf, cos_factor=cos_factor)
         with pytest.warns(UserWarning) as record:
-            cells = cell_edges_sigma(sf.where(sf[LAT_STR] <= -10.0))
+            cells = cell_edges_sigma(
+                sf.where(sf[LAT_STR] <= cut), cos_factor=cos_factor
+            )
         assert cells.sel(lat="center").values.tolist() == [-73.0, -50.0, -23.0]
         assert list(cells["cell"].values) == ["0", "1", "sh_hadley"]
         summer = cells.sel(cell="sh_hadley")
         assert np.isnan(summer.sel(lat="edge_north").item())
-        assert summer.sel(lat="edge_south").item() == pytest.approx(
-            -40.25 + _SUMMER_140_INSET, abs=0.005
-        )
-        messages = _cut_messages(record)
-        assert len(record) == len(messages) == 1
-        assert messages[0] == (
+        south = summer.sel(lat="edge_south").item()
+        assert south == full.sel(cell="sh_hadley", lat="edge_south").item()
+        if not cos_factor:
+            assert south == pytest.approx(-40.25 + _SUMMER_140_INSET, abs=0.005)
+        expected = [
             "cell_edges_sigma kept, with NaN for an edge, the cell centered at "
             "latitude -23 and sigma 0.55, of strength -3e+09: its northern edge "
             "lies where the streamfunction is NaN, from beside the cell to the "
             "last latitude of the grid."
+        ]
+        if cos_factor:
+            expected.append(
+                "cell_edges_sigma kept, with NaN for an edge, the cell centered at "
+                "latitude -73 and sigma 0.55, of strength -5e+09: its southern edge "
+                "lies beyond the first latitude of the grid, which is more than one "
+                "grid spacing from the pole."
+            )
+        messages = _cut_messages(record)
+        assert len(record) == len(messages)
+        assert sorted(messages) == sorted(expected)
+
+    @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+    @pytest.mark.parametrize("cut", [37.0, 35.0])
+    def test_maximum_within_the_reach_of_a_cell_with_a_nan_edge(
+        self, cut: float
+    ) -> None:
+        """A maximum within the reach of a cell with a NaN edge is part of it.
+
+        The field of test_maximum_within_a_stronger_cells_edges, NaN north of
+        37N or of 35N. The upper cell, still above 0.1 of its value at its
+        center there, is kept with NaN for its northern edge and a warning,
+        and reaches that latitude. The lower cell's maximum, at 35N, lies
+        within that reach, at its end in the second case, and is not a cell
+        of its own. Were it one, it would be kept with NaN for its northern
+        edge, or, beside NaN that lasts to the end of the grid, dropped, with
+        a warning either way.
+        """
+        sf = _upper_and_lower_cells((25.25, 45.25, 0.5))
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf.where(sf[LAT_STR] <= cut))
+        assert cells.sel(lat="center").values.tolist() == [-15.0, 20.0]
+        assert np.isnan(cells.sel(cell="nh_hadley", lat="edge_north").item())
+        messages = [str(w.message) for w in record if w.category is UserWarning]
+        assert messages == [
+            "cell_edges_sigma kept, with NaN for an edge, the cell centered at "
+            "latitude 20 and sigma 0.35, of strength 1e+10: its northern edge "
+            "lies where the streamfunction is NaN, from beside the cell to the "
+            "last latitude of the grid."
+        ]
+
+    @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
+    @pytest.mark.parametrize("cut", ["band_from_65S", "nan_column_at_66S"])
+    def test_second_maximum_at_the_latitude_of_a_cell_not_measured(
+        self, cut: str
+    ) -> None:
+        """A second maximum at the latitude of a cell not measured is no cell.
+
+        The field of issue #140, with the layer at 0.1e10, on latitudes from
+        65S, or with a column of NaN at 66S. The part of the polar cell north
+        of 66S peaks at 65S and sigma 0.55, where its edges cannot be
+        measured: on the band, its maximum lies at the grid's first latitude,
+        and beside the NaN, beyond which the streamfunction is still above
+        0.1 of its value at 65S, its southern edge cannot be found. It is
+        dropped with a warning, and reaches 65S alone. At 65S the layer makes
+        a second local maximum, at sigma 0.25, which is no cell of its own.
+        It used to be measured as a second cell whose edges cannot be
+        measured, and the warning reported two cells dropped. With the NaN
+        column, the polar cell's part south of it, centered at 73S, is
+        dropped as well, with a warning of its own, as its northern edge
+        cannot be found. The summer Hadley cell is found at 23S either way.
+        """
+        sf = _issue_140_streamfunc(0.1)
+        if cut == "band_from_65S":
+            sf, dropped = sf.sel({LAT_STR: slice(-65.0, None)}), [-65.0]
+        else:
+            sf, dropped = sf.where(sf[LAT_STR] != -66.0), [-73.0, -65.0]
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        assert cells.sel(lat="center").values.tolist() == [-50.0, -23.0, 12.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley"]
+        messages = [str(w.message) for w in record if w.category is UserWarning]
+        assert len(messages) == len(_dropped_messages(record)) == len(dropped)
+        for center in dropped:
+            prefix = (
+                "cell_edges_sigma dropped the cell centered at latitude "
+                f"{center:g} and sigma 0.55,"
+            )
+            assert sum(m.startswith(prefix) for m in messages) == 1
+
+    def test_cell_beside_a_region_maximum_not_measured(self) -> None:
+        """A cell beside a region's maximum whose edges cannot be measured is found.
+
+        The field of issue #140, with the layer at 0.1e10 and the polar cell
+        replaced by one of -0.6e10 from 110.25S to 60.25S, peaking beyond
+        the grid's first latitude, 85S. That cell's maximum on the grid, at
+        85S, is the largest value in the summer cell's region, and its edges
+        cannot be measured: it is dropped with a warning. It reaches 85S
+        alone, so the summer cell, at 23S, is a cell, and every cell is as
+        without the layer.
+        """
+        polar = (-110.25, -60.25, -0.6)
+        sf = _issue_140_streamfunc(0.1, polar=0.0, extra=(polar,))
+        alone = _issue_140_streamfunc(0.0, polar=0.0, extra=(polar,))
+        with pytest.warns(UserWarning) as record:
+            cells = cell_edges_sigma(sf)
+        with pytest.warns(UserWarning) as record_alone:
+            cells_alone = cell_edges_sigma(alone)
+        assert cells.sel(lat="center").values.tolist() == [-50.0, -23.0, 12.0]
+        assert list(cells["cell"].values) == ["0", "sh_hadley", "nh_hadley"]
+        np.testing.assert_array_equal(cells.values, cells_alone.values)
+        messages = [str(w.message) for w in record if w.category is UserWarning]
+        assert messages == [
+            str(w.message) for w in record_alone if w.category is UserWarning
+        ]
+        assert len(messages) == 1
+        assert messages[0].startswith(
+            "cell_edges_sigma dropped the cell centered at latitude -85 and sigma 0.55,"
         )
 
 
