@@ -1037,12 +1037,14 @@ class _NoCellError(ValueError):
 
 _DROPPED = "dropped"
 _KEPT_CUT = "kept, with NaN for an edge,"
+_LABELED_WEAK = "gave a Hadley label to"
 _NO_CELL = "no cell"
 
 
 @dataclasses.dataclass
 class _CellReport:
-    """The cells one `cell_edges_sigma` call dropped or could not fully measure.
+    """The cells one `cell_edges_sigma` call dropped, could not fully measure, or
+    labeled as Hadley cells below the strength threshold.
 
     A call covers one slice for each value of the dimensions besides latitude
     and sigma. The notes are gathered across every slice, and `warn` issues
@@ -1077,8 +1079,12 @@ class _CellReport:
         cell: xr.DataArray | None = None,
         lat_str: str = LAT_STR,
         sigma_str: str = SIGMA_STR,
+        detail: str = "",
     ) -> None:
-        """Note that `cell` was dropped or kept with a NaN edge, or none remains."""
+        """Note what was done with `cell` and why, or that no cell remains.
+
+        `detail`, if given, is appended to the description of the cell.
+        """
         cell_desc = ""
         if cell is not None:
             cell_desc = (
@@ -1086,6 +1092,8 @@ class _CellReport:
                 f"and sigma {cell[sigma_str].item():g}, of strength "
                 f"{cell['cell_strength'].item():.3g}"
             )
+            if detail:
+                cell_desc = f"{cell_desc}, {detail}"
         self.notes.setdefault((action, reason), []).append(
             (self.slice_index, self.slice_desc, cell_desc)
         )
@@ -1234,13 +1242,14 @@ def cell_edges_sigma(
     - a cell spanning less than `cell_min_sigma_depth` in sigma;
     - a cell no stronger than `min_frac_strength` times the strongest cell
       whose edges can be measured, a cell kept with a NaN edge counting as
-      measured;
-    - a cell lying entirely between the edges of another cell. Where the
-      other cell has NaN for an edge, the edge counts for this test as lying
-      at the last latitude the other cell is known to reach on that side, at
-      the end of the data or where the run of NaN begins, since its true
-      edge lies beyond. A cell with NaN for an edge never counts as lying
-      within another;
+      measured, unless it is one of the two Hadley cells identified below.
+      The cells stronger than that pass this strength filter;
+    - a cell lying entirely between the edges of another cell that passes
+      the strength filter. Where the other cell has NaN for an edge, the
+      edge counts for this test as lying at the last latitude the other cell
+      is known to reach on that side, at the end of the data or where the
+      run of NaN begins, since its true edge lies beyond. A cell with NaN
+      for an edge never counts as lying within another;
     - with a `UserWarning`, a cell whose edges cannot be measured: one whose
       maximum lies at the end of the data, at the first or last latitude of
       the grid or beside NaN that lasts to the grid's end, beyond which it
@@ -1249,44 +1258,63 @@ def cell_edges_sigma(
       `frac_thresh` of the cell's maximum, as when a column of NaN splits a
       cell;
     - with a `UserWarning`, the cells of either sign beyond the
-      `max_cells_per_sign` strongest of that sign.
+      `max_cells_per_sign` strongest of that sign, other than the Hadley
+      cells. A Hadley cell not among them is kept as well.
 
-    Each warning covers every cell dropped, or kept with a NaN edge, for one
-    reason in the whole call. It gives how many such cells there were, in
-    how many of the slices described below, and the first of them.
+    Each warning covers every cell dropped, kept with a NaN edge, or given a
+    Hadley label below the strength threshold, for one reason in the whole
+    call. It gives how many such cells there were, in how many of the slices
+    described below, and the first of them.
 
     A `ValueError` is raised when no cell remains.
 
-    The two Hadley cells are labeled "sh_hadley" and "nh_hadley" by their
-    sense of circulation, which requires the sign that `merid_streamfunc`
-    returns: the southern cell negative and the northern positive. One
-    Hadley cell is the strongest cell whose maximum lies within
-    `max_center_lat` degrees of the equator, 30 by default; of cells equally
-    strong, the one nearer the equator, then the southern one. The other is
-    the strongest cell of the opposite sign whose maximum lies within
-    `max_partner_lat` degrees of the equator, 50 by default, on the first
-    one's ascending side: north of a negative cell, south of a positive one.
-    So weaker cells between the Hadley cells, as in a double ITCZ, take no
-    Hadley label, and neither does the polar cell beyond a weak summer
-    Hadley cell. Every other cell is labeled by its position among the cells
-    returned, as a string counting from "0" in the south.
+    The two Hadley cells are identified among the cells spanning at least
+    `cell_min_sigma_depth`, whose edges can be measured and that lie within
+    no cell passing the strength filter. They are identified before the
+    strength filter and the limit of `max_cells_per_sign` act, and neither
+    drops them, so a summer Hadley cell weaker than `min_frac_strength`
+    times the winter cell, as near a solstice, is kept and labeled. A
+    `UserWarning` reports each Hadley cell kept below the strength threshold,
+    with its strength as a percentage of the strongest cell whose edges can
+    be measured. The Hadley cells are labeled "sh_hadley" and "nh_hadley" by
+    their sense of circulation, which requires the sign that
+    `merid_streamfunc` returns: the southern cell negative and the northern
+    positive. One Hadley cell is the strongest cell whose maximum lies
+    within `max_center_lat` degrees of the equator, 30 by default; of cells
+    equally strong, the one nearer the equator, then the southern one. The
+    other is the strongest cell of the opposite sign whose maximum lies
+    within `max_partner_lat` degrees of the equator, 50 by default, on the
+    first one's ascending side: north of a negative cell, south of a
+    positive one. Between the two Hadley cells there may be no cell of the
+    first one's sign that passes the strength filter, lies within no cell
+    passing it and has its maximum beyond `max_center_lat`, such as the
+    Ferrel cell beyond the summer Hadley cell. So a cell beyond that Ferrel
+    cell, such as the polar cell, never takes the summer label. A cell
+    between the Hadley cells, as in a double ITCZ, takes no Hadley label if
+    it is weaker than the summer Hadley cell; one of the summer cell's sign
+    that is stronger takes the summer label in its place. Every other cell
+    is labeled by its position among the cells returned, as a string
+    counting from "0" in the south.
 
     `had_cells_strength` identifies the Hadley cells by the same rule,
     applied to different cells: the local extrema of the streamfunction.
     So a Hadley cell it finds can be left unlabeled here, as when that cell
-    has been dropped by one of the filters above.
+    spans less than `cell_min_sigma_depth`, lies within another cell or has
+    edges that cannot be measured.
 
-    Where no cell of the opposite sign lies within `max_partner_lat` on the
-    ascending side, as when the summer Hadley cell is missing or has been
-    dropped, only one cell takes a Hadley label, and where no cell lies
+    Where the summer Hadley cell is missing or, for one of those reasons, is
+    not identified, the strongest other cell of its sign within those bounds
+    takes the summer label, such as a shallow cell beside the ITCZ, with the
+    warning above if it is below the strength threshold. Where no such cell
+    exists, only one cell takes a Hadley label, and where no cell lies
     within `max_center_lat`, none does. A cell centered within
     `max_center_lat` and stronger than both Hadley cells takes a Hadley
-    label. So lower `max_center_lat` for narrow Hadley cells beside stronger
-    Ferrel cells centered within 30 degrees of the equator. For Hadley cells
-    centered beyond `max_center_lat`, a weaker cell within it takes a Hadley
-    label; raise `max_center_lat` for those, and `max_partner_lat` too if
-    they lie beyond it. A streamfunction of the opposite sign gets wrong
-    labels, without a warning.
+    label. So lower `max_center_lat` for narrow Hadley cells beside
+    stronger Ferrel cells centered within 30 degrees of the equator. For
+    Hadley cells centered beyond `max_center_lat`, a weaker cell within it
+    takes a Hadley label; raise `max_center_lat` for those, and
+    `max_partner_lat` too if they lie beyond it. A streamfunction of the
+    opposite sign gets wrong labels, without a warning.
 
     Every dimension besides latitude and sigma, such as time, model or
     ensemble member, is handled separately at each of its values and kept in
@@ -1756,31 +1784,66 @@ def _hadley_ferrel_cells(
 ) -> xr.DataArray:
     """From identified cell edges, keep only the Hadley and Ferrel cells.
 
+    The two Hadley cells are identified before any of these cells is
+    dropped, and are exempt from the strength filter and the limit of
+    `max_cells_per_sign`. Each one kept below the strength threshold is
+    noted for a warning.
+
     TODO: In a very few cases, the polar cell in one hemisphere is stronger
     than the ferrel cell in the opposite hemisphere.  As such, it gets kept
     rather than this weaker Ferrel cell.  This needs to be fixed.
 
     """
-    # Discard cells weaker than a given fraction of the strongest cell whose
-    # edges could be measured, or of the strongest cell if none could.
-    strengths = np.abs(np.broadcast_to(cells["cell_strength"].values, len(cells)))
-    measurable = np.broadcast_to(cells["skip_reason"].values, len(cells)) == ""
+    # xr.concat leaves the strength a scalar coordinate when every cell's is
+    # the same, as with one cell, which the sorting for max_cells_per_sign
+    # cannot use. Make it a coordinate along the cells.
+    n_cells = cells.sizes["cell"]
+    signed_strengths = np.broadcast_to(cells["cell_strength"].values, n_cells)
+    cells = cells.assign_coords(cell_strength=("cell", signed_strengths))
+    # The strength filter keeps the cells stronger than a given fraction of
+    # the strongest cell whose edges could be measured, or of the strongest
+    # cell if none could.
+    strengths = np.abs(signed_strengths)
+    measurable = np.broadcast_to(cells["skip_reason"].values, n_cells) == ""
     reference = strengths[measurable] if measurable.any() else strengths
-    cells = cells.isel(cell=strengths > min_frac_strength * reference.max())
-    # Discard cells that are entirely within the edges of another cell. The
-    # containing cell is bounded by its reach, which for an edge kept as NaN
-    # is the last latitude the cell is known to reach, short of its true
-    # edge. The contained cell is bounded by its edges, and a NaN edge
-    # compares False, so a cell with one never lies within another.
+    reference_max = reference.max()
+    strong = strengths > min_frac_strength * reference_max
+    # A cell is nested when it lies entirely within the edges of a cell that
+    # passes the strength filter. The containing cell is bounded by its
+    # reach, which for an edge kept as NaN is the last latitude the cell is
+    # known to reach, short of its true edge. The contained cell is bounded
+    # by its edges, and a NaN edge compares False, so a cell with one never
+    # lies within another.
     edges_south = cells.sel({lat_str: "edge_south"}).values
     edges_north = cells.sel({lat_str: "edge_north"}).values
-    reach_south = np.broadcast_to(cells["reach_south"].values, cells.sizes["cell"])
-    reach_north = np.broadcast_to(cells["reach_north"].values, cells.sizes["cell"])
+    reach_south = np.broadcast_to(cells["reach_south"].values, n_cells)
+    reach_north = np.broadcast_to(cells["reach_north"].values, n_cells)
     nested = (
         (edges_south[:, np.newaxis] > reach_south)
         & (edges_north[:, np.newaxis] < reach_north)
+        & strong
     ).any(axis=1)
-    cells = cells.isel(cell=~nested).drop_vars(["reach_south", "reach_north"])
+    # Identify the Hadley cells before the strength filter, so that a summer
+    # Hadley cell weaker than min_frac_strength of the winter cell is kept.
+    # They are sought among the cells that the other filters would keep
+    # whatever their strength: those whose edges could be measured and that
+    # are not nested. The cells that can block the summer Hadley cell are
+    # those passing the strength filter that are not nested.
+    hadley = _hadley_labels(
+        measurable & ~nested,
+        strong & ~nested,
+        signed_strengths,
+        cells.sel({lat_str: "center"}).values,
+        max_center_lat=max_center_lat,
+        max_partner_lat=max_partner_lat,
+    )
+    # Discard the cells that fail the strength filter, the Hadley cells
+    # excepted, and the nested cells.
+    cells = (
+        cells.assign_coords(hadley_label=("cell", hadley), weak=("cell", ~strong))
+        .isel(cell=(strong | (hadley != "")) & ~nested)
+        .drop_vars(["reach_south", "reach_north"])
+    )
     # Drop, with a warning, each cell whose edges could not be measured.
     skip_reasons = np.broadcast_to(cells["skip_reason"].values, cells.sizes["cell"])
     for i in np.flatnonzero(skip_reasons != ""):
@@ -1788,14 +1851,19 @@ def _hadley_ferrel_cells(
     cells = cells.isel(cell=skip_reasons == "").drop_vars("skip_reason")
     if cells.sizes["cell"] == 0:
         raise _NoCellError("no cell remains whose edges could be measured")
-    # Restrict candidates to the strongest few of each sign.
+    # Restrict candidates to the strongest few of each sign, and the Hadley
+    # cells.
     if len(cells["cell"]) > max_cells_per_sign:
         cells_pos = cells.where(cells["cell_strength"] > 0, drop=True)
         cells_pos = cells_pos.sortby(cells_pos["cell_strength"], ascending=False)
         cells_neg = cells.where(cells["cell_strength"] < 0, drop=True)
         cells_neg = cells_neg.sortby(cells_neg["cell_strength"], ascending=True)
+        limited = []
         for weaker in (cells_pos, cells_neg):
-            for k in range(max_cells_per_sign, weaker.sizes["cell"]):
+            keep = (np.arange(weaker.sizes["cell"]) < max_cells_per_sign) | (
+                weaker["hadley_label"].values != ""
+            )
+            for k in np.flatnonzero(~keep):
                 report.add(
                     _DROPPED,
                     f"more than {max_cells_per_sign} cells of its sign remain, and "
@@ -1805,46 +1873,93 @@ def _hadley_ferrel_cells(
                     lat_str,
                     sigma_str,
                 )
-        cells_pos = cells_pos.isel(cell=slice(0, max_cells_per_sign))
-        cells_neg = cells_neg.isel(cell=slice(0, max_cells_per_sign))
-        cells = xr.concat([cells_pos, cells_neg], dim="cell")
+            limited.append(weaker.isel(cell=keep))
+        cells = xr.concat(limited, dim="cell")
     # Note each cell kept with a NaN edge beyond the end of the data.
     cut_reasons = np.broadcast_to(cells["cut_reason"].values, cells.sizes["cell"])
     for i in np.flatnonzero(cut_reasons != ""):
         report.add(_KEPT_CUT, cut_reasons[i], cells.isel(cell=i), lat_str, sigma_str)
     cells = cells.drop_vars("cut_reason")
-    # Sort from south to north.
-    cells = cells.sortby(cells.sel({lat_str: "center"}))
-    # Label the Hadley cells by their sense of circulation, the southern cell
-    # negative and the northern positive. One is the strongest cell centered
-    # within max_center_lat of the equator. The other is the strongest cell
-    # of the opposite sign centered within max_partner_lat on the first one's
-    # ascending side, north of a negative cell and south of a positive one.
-    #
-    # The strength is a scalar coordinate when every cell's is the same, as
-    # with only one cell.
-    strengths = np.broadcast_to(cells["cell_strength"].values, cells.sizes["cell"])
-    centers = cells.sel({lat_str: "center"}).values
-    labels = [str(i) for i in range(len(cells))]
-    near = np.abs(centers) <= max_center_lat
-    if near.any():
-        i_first = _strongest_cell(np.flatnonzero(near), strengths, centers)
-        sign = np.sign(strengths[i_first])
-        labels[i_first] = "sh_hadley" if sign < 0 else "nh_hadley"
-        if sign < 0:
-            ascending_side = centers > centers[i_first]
-        else:
-            ascending_side = centers < centers[i_first]
-        partners = np.flatnonzero(
-            (np.abs(centers) <= max_partner_lat)
-            & ascending_side
-            & (strengths * sign < 0)
+    # Note each Hadley cell kept below the strength threshold.
+    weak_hadley = (cells["hadley_label"].values != "") & cells["weak"].values
+    for i in np.flatnonzero(weak_hadley):
+        cell = cells.isel(cell=i)
+        fraction = abs(cell["cell_strength"].item()) / reference_max
+        report.add(
+            _LABELED_WEAK,
+            f"a cell no stronger than min_frac_strength={min_frac_strength:g} "
+            "times the strongest cell whose edges can be measured is kept only "
+            "as a Hadley cell",
+            cell,
+            lat_str,
+            sigma_str,
+            detail=(
+                f"{100 * fraction:.2g}% as strong as the strongest cell whose "
+                "edges can be measured"
+            ),
         )
-        if partners.size:
-            i_other = _strongest_cell(partners, strengths, centers)
-            labels[i_other] = "nh_hadley" if sign < 0 else "sh_hadley"
-    cells["cell"] = labels
+    # Sort from south to north, and label every cell but the Hadley cells by
+    # its position.
+    cells = cells.sortby(cells.sel({lat_str: "center"}))
+    hadley = cells["hadley_label"].values
+    cells = cells.drop_vars(["hadley_label", "weak"])
+    cells["cell"] = [label or str(i) for i, label in enumerate(hadley)]
     return cells
+
+
+def _hadley_labels(
+    eligible: np.ndarray,
+    blocking: np.ndarray,
+    strengths: np.ndarray,
+    centers: np.ndarray,
+    max_center_lat: float,
+    max_partner_lat: float,
+) -> np.ndarray:
+    """Each cell's Hadley label, "sh_hadley", "nh_hadley" or "" for neither.
+
+    Only the cells where `eligible` is True are considered. One Hadley cell
+    is the strongest cell centered within `max_center_lat` of the equator.
+    The other is the strongest cell of the opposite sign centered within
+    `max_partner_lat` on the first one's ascending side, north of a negative
+    cell and south of a positive one, with no cell centered between the two
+    that is of the first one's sign, centered beyond `max_center_lat` and
+    True in `blocking`. Each is labeled by its sense of circulation, the
+    southern cell negative and the northern positive. `strengths` are
+    signed.
+    """
+    labels = np.full(strengths.shape, "", dtype=object)
+    near = eligible & (np.abs(centers) <= max_center_lat)
+    if not near.any():
+        return labels
+    i_first = _strongest_cell(np.flatnonzero(near), strengths, centers)
+    sign = np.sign(strengths[i_first])
+    labels[i_first] = "sh_hadley" if sign < 0 else "nh_hadley"
+    # Each cell's distance from the first cell toward its ascending side,
+    # north of a negative cell and south of a positive one.
+    beyond = -sign * (centers - centers[i_first])
+    ascending_side = beyond > 0
+    # The partner lies no farther than the nearest blocking cell of the first
+    # cell's sign beyond max_center_lat on that side, such as a Ferrel cell,
+    # so that none is centered between the two. A cell between two ITCZs is
+    # within max_center_lat, and blocks nothing.
+    blockers = (
+        blocking
+        & ascending_side
+        & (strengths * sign > 0)
+        & (np.abs(centers) > max_center_lat)
+    )
+    reach = beyond[blockers].min(initial=np.inf)
+    partners = np.flatnonzero(
+        eligible
+        & (np.abs(centers) <= max_partner_lat)
+        & ascending_side
+        & (beyond <= reach)
+        & (strengths * sign < 0)
+    )
+    if partners.size:
+        i_other = _strongest_cell(partners, strengths, centers)
+        labels[i_other] = "nh_hadley" if sign < 0 else "sh_hadley"
+    return labels
 
 
 def _strongest_cell(
