@@ -55,6 +55,37 @@ def _cell_centered_lats(dlat: float) -> xr.DataArray:
     return _lat_dataarray(np.arange(-90.0 + dlat / 2, 90.0, dlat))
 
 
+def _gaussian_lats(nlat: int) -> xr.DataArray:
+    """Gaussian latitudes, south to north."""
+    nodes = np.polynomial.legendre.leggauss(nlat)[0]
+    return _lat_dataarray(np.sort(np.rad2deg(np.arcsin(nodes))))
+
+
+def _subset_lats(dlat: float) -> xr.DataArray:
+    """Latitudes from 60S to 60N whose end rows lie dlat/2 inside 60 degrees."""
+    return _lat_dataarray(np.arange(-60.0 + dlat / 2, 60.0, dlat))
+
+
+def _near_pole_lats() -> tuple[np.ndarray, np.ndarray]:
+    """Latitudes close to both poles, and which of them are within 1e-4 degrees.
+
+    Rows 5e-5 and exactly 1e-4 degrees from a pole are within the pole
+    tolerance; rows 2e-4, 0.005 and 0.01 degrees away are not. A mask of
+    abs(lat) < 90 - tol matches only for tol from 1e-4 up to 2e-4 degrees,
+    and a mask using <= fails at the row exactly 1e-4 degrees away.
+    """
+    offsets = np.array([5e-5, 1e-4, 2e-4, 5e-3, 1e-2])
+    within = offsets <= 1e-4
+    lats = np.concatenate(
+        [-(90.0 - offsets), [-60.0, 0.0, 60.0], (90.0 - offsets)[::-1]]
+    )
+    expected = np.concatenate([within, [False, False, False], within[::-1]])
+    return lats, expected
+
+
+_NEAR_POLE_LATS = _near_pole_lats()
+
+
 # Zonal winds u(phi) with their analytic derivatives du/dphi, phi in radians.
 # Both vanish only as fast as cos(phi) toward the poles, so both have nonzero
 # vorticity at the poles, which the cos(phi) form of the relative vorticity
@@ -447,6 +478,163 @@ class TestAbsVortVertComp:
         np.testing.assert_allclose(
             result.values[2:-2], expected.values[2:-2], rtol=1e-2
         )
+
+    @pytest.mark.parametrize("profile", sorted(_U_PROFILES))
+    @pytest.mark.parametrize(
+        ("grid", "tol"),
+        [
+            ("cell_centered", 2e-3),
+            ("north_to_south", 2e-3),
+            ("gaussian", 3e-3),
+            ("subset_60", 1e-3),
+        ],
+    )
+    def test_matches_closed_form_at_every_row(
+        self, profile: str, grid: str, tol: float
+    ) -> None:
+        """Within tol of the exact absolute vorticity at every row, end rows included.
+
+        The exact eta is 2 Omega sin(phi) + (-du/dphi + u tan(phi)) / a, with
+        du/dphi written out analytically, and tol is a fraction of the
+        largest |eta|. The grids: 1 degree from pole to pole with end rows
+        0.5 degrees from the poles, in both orders; 128 Gaussian latitudes;
+        and 1 degree from 60S to 60N. The largest errors measured were
+        1.2e-3, 1.9e-3 and 4.8e-4 of the largest |eta|. The two-point end
+        difference this replaced (issue #144) is off at the end rows by 1.0,
+        0.65 and 9.5e-3 of it. Mars's radius and rotation rate check that
+        ``radius`` is used.
+        """
+        lat = {
+            "cell_centered": _cell_centered_lats(1.0),
+            "north_to_south": _cell_centered_lats(1.0).isel(
+                {LAT_STR: slice(None, None, -1)}
+            ),
+            "gaussian": _gaussian_lats(128),
+            "subset_60": _subset_lats(1.0),
+        }[grid]
+        u_fn, du_fn = _U_PROFILES[profile]
+        phi = np.deg2rad(lat)
+        uwind = u_fn(phi).rename("uwind")
+        exact = (
+            2 * ROT_RATE_MARS * np.sin(phi)
+            + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_MARS
+        )
+        m = abs_ang_mom(uwind, radius=RAD_MARS, rot_rate=ROT_RATE_MARS)
+        result = abs_vort_vert_comp(m, radius=RAD_MARS)
+        assert np.array_equal(result[LAT_STR].values, lat.values)
+        scale = np.abs(exact.values).max()
+        np.testing.assert_allclose(
+            result.values, exact.values, rtol=0, atol=tol * scale
+        )
+
+    def test_second_order_end_rows_on_a_subset(self) -> None:
+        """On a grid stopping at 60 degrees, the end-row error falls 4-fold per halving.
+
+        Measured 4.01 from 1 to 0.5 degrees; the two-point end difference
+        gives 1.94, first order.
+        """
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        errors = []
+        for dlat in (1.0, 0.5):
+            phi = np.deg2rad(_subset_lats(dlat))
+            exact = (
+                2 * ROT_RATE_EARTH * np.sin(phi)
+                + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+            )
+            result = abs_vort_vert_comp(abs_ang_mom(u_fn(phi).rename("uwind")))
+            err = np.abs(result.values - exact.values)
+            errors.append(max(err[0], err[-1]))
+        assert errors[0] / errors[1] > 3.0
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_pole_rows_nan(self, dtype: type) -> None:
+        """Rows at exactly 90 degrees are NaN; the others match the closed form.
+
+        Unmasked, the pole rows come to about 1e7 per second for float64
+        latitudes and 0.02 per second, of the wrong sign, for float32,
+        against an exact 1.6e-4 per second.
+        """
+        lats: np.ndarray = np.linspace(-90.0, 90.0, 181).astype(dtype)
+        lat = xr.DataArray(lats, coords={LAT_STR: lats}, dims=[LAT_STR])
+        u_fn, du_fn = _U_PROFILES["sin2phi"]
+        phi = np.deg2rad(lat.astype(np.float64))
+        uwind = u_fn(phi).rename("uwind")
+        result = abs_vort_vert_comp(abs_ang_mom(uwind))
+        is_pole = np.abs(lats) == 90.0
+        assert is_pole.sum() == 2
+        assert np.isnan(result.values[is_pole]).all()
+        exact = (
+            2 * ROT_RATE_EARTH * np.sin(phi)
+            + (-du_fn(phi) + u_fn(phi) * np.tan(phi)) / RAD_EARTH
+        ).values
+        scale = np.abs(exact[~is_pole]).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], exact[~is_pole], rtol=0, atol=5e-4 * scale
+        )
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_rows_within_tolerance_of_a_pole_nan(self, dtype: type) -> None:
+        """Rows within 1e-4 degrees of a pole are NaN.
+
+        _NEAR_POLE_LATS puts rows 5e-5 and exactly 1e-4 degrees from each
+        pole, which are NaN, and rows 2e-4, 0.005 and 0.01 degrees away,
+        which are not.
+        """
+        lats, expected = _NEAR_POLE_LATS
+        uwind = xr.DataArray(
+            20.0 * np.sin(2 * np.deg2rad(lats)),
+            coords={LAT_STR: lats.astype(dtype)},
+            dims=[LAT_STR],
+            name="uwind",
+        )
+        result = abs_vort_vert_comp(abs_ang_mom(uwind))
+        np.testing.assert_array_equal(np.isnan(result.values), expected)
+
+    def test_latitude_first_two_dimensional_input(self) -> None:
+        """An M with dimensions (lat, plev) is NaN at the pole rows of every level.
+
+        The other rows match each level's closed-form eta, for a wind with
+        vertical shear, u = 20 sin(2 phi) (1 - 0.5 p/p0), and the result
+        keeps M's dimension order.
+        """
+        lats = np.linspace(-90.0, 90.0, 181)
+        lat = _lat_dataarray(lats)
+        levs = np.linspace(1e4, 1e5, 4)
+        plev = xr.DataArray(levs, coords={LEV_STR: levs}, dims=[LEV_STR])
+        phi = np.deg2rad(lat)
+        shear = 1 - 0.5 * plev / _P0
+        uwind = (20.0 * np.sin(2 * phi) * shear).transpose(LAT_STR, LEV_STR)
+        du_dphi = 40.0 * np.cos(2 * phi) * shear
+        exact = (
+            2 * ROT_RATE_EARTH * np.sin(phi)
+            + (-du_dphi + uwind * np.tan(phi)) / RAD_EARTH
+        )
+        result = abs_vort_vert_comp(abs_ang_mom(uwind.rename("uwind")))
+        assert result.dims == (LAT_STR, LEV_STR)
+        is_pole = np.abs(lats) == 90.0
+        assert np.isnan(result.values[is_pole]).all()
+        exact_off_pole = exact.transpose(LAT_STR, LEV_STR).values[~is_pole]
+        scale = np.abs(exact_off_pole).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], exact_off_pole, rtol=0, atol=5e-4 * scale
+        )
+
+    def test_custom_dim_name(self) -> None:
+        """``lat_str`` sets the dimension differentiated along and masked."""
+        u_fn, _ = _U_PROFILES["sin2phi"]
+        lat = _lat_dataarray(np.linspace(-90.0, 90.0, 37))
+        m = abs_ang_mom(u_fn(np.deg2rad(lat)).rename("uwind"))
+        expected = abs_vort_vert_comp(m)
+        result = abs_vort_vert_comp(m.rename({LAT_STR: "latitude"}), lat_str="latitude")
+        assert result.dims == ("latitude",)
+        np.testing.assert_array_equal(result.values, expected.values)
+        assert np.isnan(result.values[[0, -1]]).all()
+
+    def test_fewer_than_three_rows_raises(self) -> None:
+        """The three-point end difference needs three latitude rows."""
+        uwind = _uwind_dataarray([10.0, 12.0], [10.0, 20.0])
+        with pytest.raises(ValueError, match="at least"):
+            abs_vort_vert_comp(abs_ang_mom(uwind))
 
 
 # ---------------------------------------------------------------------------
@@ -919,8 +1107,204 @@ class TestRossbyRadius:
 # ---------------------------------------------------------------------------
 
 
+def _steady_flow(
+    lat: xr.DataArray,
+    radius: float = RAD_EARTH,
+    rot_rate: float = ROT_RATE_EARTH,
+    names: tuple[str, str] = (LAT_STR, LEV_STR),
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+    """u, v, omega and the friction F of a steady, zonally uniform flow.
+
+    With phi the latitude in radians and p the pressure in Pa, on 10 levels
+    from 100 to 1000 hPa: u = (20 sin(2 phi) + 5 cos(phi)) (1 - 0.5 p/p0),
+    with p0 = 1000 hPa, and v = 2 sin(2 phi), uniform in pressure, both in
+    m/s; and omega = -2 p (3 cos(2 phi) - 1) / a in Pa/s. Continuity holds
+    exactly: (1/(a cos(phi))) d(v cos(phi))/dphi is
+    (2/a)(3 cos(2 phi) - 1), which is -d(omega)/dp. The steady budget in
+    advective form gives F = (v/a) du/dphi + omega du/dp
+    - (f + u tan(phi)/a) v = -eta v + omega du/dp, with eta each level's
+    absolute vorticity 2 Omega sin(phi) + (-du/dphi + u tan(phi)) / a, and
+    du/dphi and du/dp written out analytically. u omega is quadratic in
+    pressure, so its centered difference is exact at the inner levels and
+    its two-point difference at the top and bottom levels is not; tests
+    against F use the inner levels, and
+    test_pressure_derivative_two_point_at_end_levels covers the end levels.
+    """
+    lat_str, lev_str = names
+    lat = lat.rename({LAT_STR: lat_str})
+    levs = np.linspace(1e4, 1e5, 10)
+    plev = xr.DataArray(levs, coords={lev_str: levs}, dims=[lev_str])
+    phi = np.deg2rad(lat)
+    shear = 1 - 0.5 * plev / _P0
+    uwind = (20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi)) * shear
+    du_dphi = (40.0 * np.cos(2 * phi) - 5.0 * np.sin(phi)) * shear
+    du_dp = -0.5 * (20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi)) / _P0
+    vwind = 2.0 * np.sin(2 * phi) + 0.0 * plev
+    omega = -2.0 * plev * (3 * np.cos(2 * phi) - 1) / radius
+    eta = 2 * rot_rate * np.sin(phi) + (-du_dphi + uwind * np.tan(phi)) / radius
+    fric = -eta * vwind + omega * du_dp
+    return (
+        uwind.transpose(lat_str, lev_str).rename("uwind"),
+        vwind.transpose(lat_str, lev_str).rename("vwind"),
+        omega.transpose(lat_str, lev_str).rename("omega"),
+        fric.transpose(lat_str, lev_str).rename("fric"),
+    )
+
+
+# The levels of _steady_flow at which d(u omega)/dp is exact.
+_INNER_LEVELS = {LEV_STR: slice(1, -1)}
+
+
 class TestZonalFricInferredSteady:
     """Tests for zonal_fric_inferred_steady."""
+
+    @pytest.mark.parametrize(
+        ("grid", "tol"),
+        [("cell_centered", 2e-4), ("gaussian", 3e-4), ("subset_60", 3e-4)],
+    )
+    def test_matches_closed_form_given_uv(self, grid: str, tol: float) -> None:
+        """Within tol of the closed-form F at every row, given [u v].
+
+        At the inner levels, where d(u omega)/dp is exact. tol is a fraction
+        of the largest |F|. The grids: 1 degree from pole to pole with end
+        rows 0.5 degrees from the poles, 128 Gaussian latitudes, and 1
+        degree from 60S to 60N. Given [u v], the largest errors measured
+        were 7.7e-5, 1.5e-4 and 1.3e-4 of the largest |F|; the cos^2(phi)
+        form of the meridional term is off by 6.1e-2 on the first grid.
+        Given [u v] cos(phi), the convention before issue #145, the error is
+        at least 7.3e-2. Mars's radius and rotation rate check that
+        ``radius`` and ``rot_rate`` are used.
+        """
+        lat = {
+            "cell_centered": _cell_centered_lats(1.0),
+            "gaussian": _gaussian_lats(128),
+            "subset_60": _subset_lats(1.0),
+        }[grid]
+        uwind, vwind, omega, fric = _steady_flow(
+            lat, radius=RAD_MARS, rot_rate=ROT_RATE_MARS
+        )
+        coslat = np.cos(np.deg2rad(uwind[LAT_STR]))
+        u_vert_flux = (uwind * omega).rename("u_omega")
+        fric = fric.isel(_INNER_LEVELS)
+        scale = np.abs(fric.values).max()
+        errors = []
+        for u_merid_flux in (uwind * vwind, uwind * vwind * coslat):
+            result = zonal_fric_inferred_steady(
+                u_merid_flux.rename("uv"),
+                u_vert_flux,
+                vwind,
+                radius=RAD_MARS,
+                rot_rate=ROT_RATE_MARS,
+            ).isel(_INNER_LEVELS)
+            errors.append(np.max(np.abs(result.values - fric.values)) / scale)
+        assert errors[0] < tol
+        assert errors[1] > 1e-2
+
+    def test_second_order_convergence_at_every_row(self) -> None:
+        """The largest error falls 4-fold from a 2- to a 1-degree grid.
+
+        On grids from pole to pole, end rows included, at the inner levels.
+        Measured 4.0; the cos^2(phi) form gives 2.0, first order near the
+        poles. The maximum is NumPy's, so a NaN row fails.
+        """
+        errors = []
+        for dlat in (2.0, 1.0):
+            uwind, vwind, omega, fric = _steady_flow(_cell_centered_lats(dlat))
+            result = zonal_fric_inferred_steady(
+                (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+            )
+            err = (result - fric).isel(_INNER_LEVELS)
+            errors.append(np.max(np.abs(err.values)))
+        assert errors[0] / errors[1] > 3.0
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_pole_rows_nan(self, dtype: type) -> None:
+        """Rows at exactly 90 degrees are NaN; the others match the closed form."""
+        lats: np.ndarray = np.linspace(-90.0, 90.0, 181)
+        lat = xr.DataArray(lats, coords={LAT_STR: lats.astype(dtype)}, dims=[LAT_STR])
+        uwind, vwind, omega, fric = _steady_flow(lat)
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        is_pole = np.abs(result[LAT_STR].values) == 90.0
+        assert is_pole.sum() == 2
+        assert np.isnan(result.values[is_pole]).all()
+        result = result.isel(_INNER_LEVELS)
+        fric = fric.isel(_INNER_LEVELS)
+        scale = np.abs(fric.values[~is_pole]).max()
+        np.testing.assert_allclose(
+            result.values[~is_pole], fric.values[~is_pole], rtol=0, atol=2e-4 * scale
+        )
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_rows_within_tolerance_of_a_pole_nan(self, dtype: type) -> None:
+        """Rows within 1e-4 degrees of a pole are NaN, at every level.
+
+        _NEAR_POLE_LATS puts rows 5e-5 and exactly 1e-4 degrees from each
+        pole, which are NaN, and rows 2e-4, 0.005 and 0.01 degrees away,
+        which are not.
+        """
+        lats, expected = _NEAR_POLE_LATS
+        lat = xr.DataArray(lats, coords={LAT_STR: lats.astype(dtype)}, dims=[LAT_STR])
+        uwind, vwind, omega, _ = _steady_flow(lat)
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        np.testing.assert_array_equal(
+            np.isnan(result.values), np.broadcast_to(expected[:, None], result.shape)
+        )
+
+    def test_pressure_derivative_two_point_at_end_levels(self) -> None:
+        """d[u omega]/dp is centered inside and two-point at the top and bottom.
+
+        With [u v] and [v] zero and [u omega] = c p^2, F is the pressure
+        derivative of c p^2. The centered difference is exact, 2 c p, at the
+        inner levels; at the top and bottom levels the two-point difference
+        is c times the sum of the two end pressures. For c = 1e-15 on 10
+        levels from 1e4 to 1e5 Pa, that is 3.0e-11 at the top, against an
+        exact 2.0e-11.
+        """
+        lat = _lat_dataarray([-30.0, 0.0, 30.0])
+        levs = np.linspace(1e4, 1e5, 10)
+        plev = xr.DataArray(levs, coords={LEV_STR: levs}, dims=[LEV_STR])
+        c = 1e-15
+        u_vert_flux = (c * plev**2 + 0.0 * lat).transpose(LAT_STR, LEV_STR)
+        zeros = xr.zeros_like(u_vert_flux)
+        result = zonal_fric_inferred_steady(
+            zeros.rename("uv"), u_vert_flux.rename("u_omega"), zeros.rename("vwind")
+        )
+        expected = 2 * c * levs
+        expected[0] = c * (levs[0] + levs[1])
+        expected[-1] = c * (levs[-2] + levs[-1])
+        np.testing.assert_allclose(
+            result.values, np.broadcast_to(expected, result.shape), rtol=1e-12
+        )
+
+    def test_fewer_than_three_rows_raises(self) -> None:
+        """The three-point end difference needs three latitude rows."""
+        uwind, vwind, omega, _ = _steady_flow(_lat_dataarray([10.0, 20.0]))
+        with pytest.raises(ValueError, match="at least"):
+            zonal_fric_inferred_steady(
+                (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+            )
+
+    def test_custom_dim_names(self) -> None:
+        """``lat_str`` and ``vert_str`` set the dimensions differentiated along."""
+        lat = _subset_lats(1.0)
+        uwind, vwind, omega, _ = _steady_flow(lat)
+        expected = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"), (uwind * omega).rename("u_omega"), vwind
+        )
+        uwind, vwind, omega, _ = _steady_flow(lat, names=("latitude", "pfull"))
+        result = zonal_fric_inferred_steady(
+            (uwind * vwind).rename("uv"),
+            (uwind * omega).rename("u_omega"),
+            vwind,
+            vert_str="pfull",
+            lat_str="latitude",
+        )
+        assert result.dims == ("latitude", "pfull")
+        np.testing.assert_array_equal(result.values, expected.values)
 
     def test_zero_inputs(self) -> None:
         """Zero fluxes and wind give zero friction."""
