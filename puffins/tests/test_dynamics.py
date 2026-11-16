@@ -607,11 +607,16 @@ class TestAbsVortVertComp:
         plev = xr.DataArray(levs, coords={LEV_STR: levs}, dims=[LEV_STR])
         phi = np.deg2rad(lat)
         shear = 1 - 0.5 * plev / _P0
-        uwind = (20.0 * np.sin(2 * phi) * shear).transpose(LAT_STR, LEV_STR)
+        # numpy 2.5's stubs type uwind and exact as ndarrays; at runtime
+        # DataArray.__array_ufunc__ makes each a DataArray.
+        uwind = cast(xr.DataArray, 20.0 * np.sin(2 * phi) * shear).transpose(
+            LAT_STR, LEV_STR
+        )
         du_dphi = 40.0 * np.cos(2 * phi) * shear
-        exact = (
+        exact = cast(
+            xr.DataArray,
             2 * ROT_RATE_EARTH * np.sin(phi)
-            + (-du_dphi + uwind * np.tan(phi)) / RAD_EARTH
+            + (-du_dphi + uwind * np.tan(phi)) / RAD_EARTH,
         )
         result = abs_vort_vert_comp(abs_ang_mom(uwind.rename("uwind")))
         assert result.dims == (LAT_STR, LEV_STR)
@@ -1140,13 +1145,15 @@ def _steady_flow(
     plev = xr.DataArray(levs, coords={lev_str: levs}, dims=[lev_str])
     phi = np.deg2rad(lat)
     shear = 1 - 0.5 * plev / _P0
-    uwind = (20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi)) * shear
+    # numpy 2.5's stubs type uwind, vwind and fric as ndarrays; at runtime
+    # DataArray.__array_ufunc__ makes each a DataArray.
+    uwind = cast(xr.DataArray, (20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi)) * shear)
     du_dphi = (40.0 * np.cos(2 * phi) - 5.0 * np.sin(phi)) * shear
     du_dp = -0.5 * (20.0 * np.sin(2 * phi) + 5.0 * np.cos(phi)) / _P0
-    vwind = 2.0 * np.sin(2 * phi) + 0.0 * plev
+    vwind = cast(xr.DataArray, 2.0 * np.sin(2 * phi) + 0.0 * plev)
     omega = -2.0 * plev * (3 * np.cos(2 * phi) - 1) / radius
     eta = 2 * rot_rate * np.sin(phi) + (-du_dphi + uwind * np.tan(phi)) / radius
-    fric = -eta * vwind + omega * du_dp
+    fric = cast(xr.DataArray, -eta * vwind + omega * du_dp)
     return (
         uwind.transpose(lat_str, lev_str).rename("uwind"),
         vwind.transpose(lat_str, lev_str).rename("vwind"),
