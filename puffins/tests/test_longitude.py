@@ -1,9 +1,15 @@
 """Tests for longitude module."""
 
+import math
+import operator
+import warnings
+from collections.abc import Callable
+from decimal import Decimal
 from fractions import Fraction
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -11,6 +17,69 @@ from puffins.longitude import Longitude, lon_to_0360, lon_to_pm180
 
 # The float64 just below 180.
 _BELOW_180 = float(np.nextafter(180.0, 0.0))
+
+# Each of the six comparison operators, paired with what it returns for two
+# floats when either is NaN.
+_COMPARISONS: list[tuple[Callable[[Any, Any], Any], bool]] = [
+    (operator.lt, False),
+    (operator.le, False),
+    (operator.gt, False),
+    (operator.ge, False),
+    (operator.eq, False),
+    (operator.ne, True),
+]
+
+# Integer dtypes whose every value is tested, and those tested at their
+# extremes, with the dtype each gives back: int64 for unsigned and 8-bit
+# input (issue #148), the input's own dtype otherwise.
+_INT_DTYPES_EVERY_VALUE = [
+    (np.int8, np.int64),
+    (np.uint8, np.int64),
+    (np.int16, np.int16),
+    (np.uint16, np.int64),
+]
+_INT_DTYPES_EXTREMES = [
+    (np.int32, np.int32),
+    (np.uint32, np.int64),
+    (np.int64, np.int64),
+    (np.uint64, np.int64),
+]
+
+# An infinity and 10 in containers whose own arithmetic does not silence
+# NumPy's "invalid value" warning for the infinity.  NumPy on macOS warns for
+# a longdouble infinity in % and fmod, and NumPy on Linux, where CI runs, for
+# a float64 infinity as well.
+_INFINITY_CONTAINERS = [
+    np.array([np.inf, 10.0], dtype=np.longdouble),
+    xr.DataArray(np.array([np.inf, 10.0], dtype=np.longdouble), dims="x", name="lons"),
+    pd.Series([np.inf, 10.0]),
+]
+
+# Whether longdouble is finer than float64, as on x86 Linux and macOS.
+_LONGDOUBLE_IS_WIDER = np.finfo(np.longdouble).eps < np.finfo(np.float64).eps
+
+
+def _int_extremes(dtype: Any) -> list[int]:
+    """The ends of ``dtype``'s range, the meridians, and 2**31, 2**32, 2**63."""
+    info = np.iinfo(dtype)
+    near = [-361, -360, -181, -180, -179, -1, 0, 1, 179, 180, 181, 359, 360, 361]
+    near += [2**31 - 1, 2**31, 2**32 - 1, 2**32, 2**63 - 1, 2**63, 2**63 + 1]
+    ends = [int(info.min) + k for k in range(3)] + [int(info.max) - k for k in range(3)]
+    return sorted({v for v in near + ends if info.min <= v <= info.max})
+
+
+def _exact_pm180(lons: np.ndarray) -> np.ndarray:
+    """``lons`` reduced into [-180, 180) by exact rational arithmetic.
+
+    The reduced value is representable in ``lons``'s dtype, so it is returned
+    in that dtype with no rounding, which the function checks.  Its remainder
+    is taken on exact fractions, so the reference shares no floating-point
+    remainder or floor division with the code under test.
+    """
+    exact = [(Fraction(float(x)) + 180) % 360 - 180 for x in lons]
+    ref = np.array([float(r) for r in exact]).astype(lons.dtype)
+    assert all(Fraction(float(r)) == e for r, e in zip(ref, exact, strict=True))
+    return ref
 
 
 def _wrap_points_and_neighbors(dtype: Any) -> np.ndarray:
@@ -61,10 +130,80 @@ class TestLonTo0360:
 
     @pytest.mark.parametrize("dtype", [np.uint16, np.uint32, np.uint64])
     def test_unsigned_array(self, dtype: Any) -> None:
+        """Unsigned input comes back as int64, as lon_to_pm180's does (#148)."""
         result = lon_to_0360(np.array([0, 180, 359, 360, 720], dtype=dtype))
         assert isinstance(result, np.ndarray)
-        assert result.dtype == dtype
+        assert result.dtype == np.int64
         np.testing.assert_array_equal(result, [0, 180, 359, 0, 0])
+
+    @pytest.mark.parametrize(("dtype", "out_dtype"), _INT_DTYPES_EVERY_VALUE)
+    def test_every_value_of_narrow_int_dtypes(self, dtype: Any, out_dtype: Any) -> None:
+        """Every int8, uint8, int16 and uint16 value gives its exact remainder."""
+        info = np.iinfo(dtype)
+        lons = np.arange(int(info.min), int(info.max) + 1).astype(dtype)
+        result = lon_to_0360(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == out_dtype
+        expected = [v % 360 for v in range(int(info.min), int(info.max) + 1)]
+        np.testing.assert_array_equal(result, expected)
+
+    @pytest.mark.parametrize(("dtype", "out_dtype"), _INT_DTYPES_EXTREMES)
+    def test_extremes_of_wide_int_dtypes(self, dtype: Any, out_dtype: Any) -> None:
+        """The ends of the 32- and 64-bit ranges, uint64 above 2**63 included."""
+        values = _int_extremes(dtype)
+        result = lon_to_0360(np.array(values, dtype=dtype))
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == out_dtype
+        np.testing.assert_array_equal(result, [v % 360 for v in values])
+
+    @pytest.mark.parametrize(
+        ("dtype", "out_dtype"), _INT_DTYPES_EVERY_VALUE + _INT_DTYPES_EXTREMES
+    )
+    def test_int_numpy_scalars(self, dtype: Any, out_dtype: Any) -> None:
+        """A NumPy integer scalar gives a scalar, int64 for unsigned and 8-bit."""
+        for value in (np.iinfo(dtype).min, np.iinfo(dtype).max, 90):
+            result = lon_to_0360(dtype(value))
+            assert type(result) is out_dtype
+            assert result == int(value) % 360
+
+    @pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.uint16, np.uint64])
+    def test_int_dataarray_keeps_coords_name_and_attrs(self, dtype: Any) -> None:
+        info = np.iinfo(dtype)
+        values = [0, 90, int(info.max), int(info.min)]
+        arr = xr.DataArray(
+            np.array(values, dtype=dtype),
+            dims=["x"],
+            coords={"x": [5.0, 6.0, 7.0, 8.0]},
+            name="lons",
+            attrs={"units": "degrees_east"},
+        )
+        result = lon_to_0360(arr)
+        assert isinstance(result, xr.DataArray)
+        assert result.dtype == np.int64
+        assert result.name == "lons"
+        assert result.attrs == {"units": "degrees_east"}
+        np.testing.assert_array_equal(result["x"].values, [5.0, 6.0, 7.0, 8.0])
+        np.testing.assert_array_equal(result.values, [v % 360 for v in values])
+
+    def test_nan_and_infinity_give_nan(self) -> None:
+        """NaN passes through and an infinity gives NaN, with no warning.
+
+        NumPy warns "invalid value encountered" for the remainder of an
+        infinity on some platforms and for some dtypes (float64 on Linux, where
+        CI runs), so lon_to_0360 silences it.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = lon_to_0360(np.array([np.nan, np.inf, -np.inf, 10.0]))
+            assert isinstance(result, np.ndarray)
+            np.testing.assert_array_equal(result, [np.nan, np.nan, np.nan, 10.0])
+            for value in (math.nan, math.inf, np.float32(np.nan), np.float32(np.inf)):
+                scalar = lon_to_0360(value)
+                assert type(scalar) is type(value)
+                assert math.isnan(scalar)
+            for wrapped in _INFINITY_CONTAINERS:
+                out = np.asarray(lon_to_0360(wrapped), dtype=float)
+                np.testing.assert_array_equal(out, [np.nan, 10.0])
 
     def test_large_positive(self) -> None:
         assert lon_to_0360(720) == 0
@@ -263,23 +402,239 @@ class TestLonToPm180:
         assert type(result) is type(value)
         assert result == -170
 
-    def test_tiny_negative_gives_zero(self) -> None:
-        """A negative lon that rounds onto 360 gives 0, not 360 (issue #83)."""
-        result = lon_to_pm180(-1e-14)
+    @pytest.mark.parametrize("lon", [-1e-14, -(2.0**-45), -5e-324, -3e-14])
+    def test_tiny_negative_returned_exactly(self, lon: float) -> None:
+        """A tiny negative lon comes back unchanged, never 0 or 360 (#83, #149)."""
+        result = lon_to_pm180(lon)
         assert type(result) is float
-        assert result == 0
+        assert result == lon
 
     @pytest.mark.parametrize("dtype", [np.float32, np.float64])
     def test_wrap_points_in_range_and_exact(self, dtype: Any) -> None:
-        """At the wrap points, the exact remainder in [0, 360) minus 360 if 180 up."""
+        """At the wrap points, the exact value in [-180, 180), unrounded."""
         lons = _wrap_points_and_neighbors(dtype)
         result = lon_to_pm180(lons)
         assert isinstance(result, np.ndarray)
         assert result.dtype == dtype
         assert np.all((result >= -180) & (result < 180))
-        ref = _exact_0360(lons)
-        expected = np.where(ref >= 180, ref - 360, ref).astype(dtype)
+        np.testing.assert_array_equal(result, _exact_pm180(lons))
+
+    @pytest.mark.parametrize(
+        ("dtype", "uint"), [(np.float32, np.uint32), (np.float64, np.uint64)]
+    )
+    def test_western_tenths_returned_exactly(self, dtype: Any, uint: Any) -> None:
+        """Every one of -0.1, -0.2, ..., -180.0 comes back bit for bit (#149).
+
+        Through ``lon % 360`` and back, 928 of the 1,800 float64 values came
+        back changed, by up to 2**-45.
+        """
+        lons = (-np.arange(1, 1801) / 10.0).astype(dtype)
+        result = lon_to_pm180(lons)
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_array_equal(result.view(uint), lons.view(uint))
+
+    def test_python_float_negative_returned_exactly(self) -> None:
+        result = lon_to_pm180(-0.1)
+        assert type(result) is float
+        assert result == -0.1
+
+    def test_sel_on_converted_coordinate(self) -> None:
+        """An exact .sel finds -0.1 on a coordinate passed through (#149)."""
+        west = -np.arange(1, 1801) / 10.0
+        arr = xr.DataArray(
+            np.arange(west.size), dims="lon", coords={"lon": west}, name="vals"
+        )
+        converted = arr.assign_coords(lon=lon_to_pm180(arr["lon"]))
+        assert converted.sel(lon=-0.1).item() == 0
+        assert converted.sel(lon=-179.9).item() == 1798
+
+    @pytest.mark.parametrize(
+        "lon",
+        [
+            np.float32(-134218448.0),
+            np.float32(1.01331035e17),
+            np.float64(2.0**60),
+            np.float64(-3.818876831979843e34),
+            np.float64(-1e300),
+        ],
+    )
+    def test_huge_magnitude_gives_exact_value(self, lon: Any) -> None:
+        """Far past any physical longitude, still the exact value."""
+        result = lon_to_pm180(lon)
+        assert type(result) is type(lon)
+        assert result == _exact_pm180(np.array([lon]))[0]
+
+    @pytest.mark.parametrize(
+        "lon", [2.0**60, -3.818876831979843e34, 1.01331035e17, -1e300]
+    )
+    def test_huge_python_float_gives_exact_value(self, lon: float) -> None:
+        """A Python float far past any longitude gives the exact value, a float.
+
+        2.0**60 gives 136.0, and returning it unreduced would give 128.0.
+        """
+        result = lon_to_pm180(lon)
+        assert type(result) is float
+        assert result == _exact_pm180(np.array([lon]))[0]
+
+    @pytest.mark.parametrize(
+        "lon", [2**53 + 1, 10**20 + 190, 2**70 + 1, -(10**20 + 190)]
+    )
+    def test_huge_python_int_gives_exact_value(self, lon: int) -> None:
+        """A Python int of any size gives the exact value, an int.
+
+        2**53 + 1 gives 33; reducing it through a float would give 32.
+        """
+        result = lon_to_pm180(lon)
+        assert type(result) is int
+        assert result == (lon + 180) % 360 - 180
+
+    @pytest.mark.parametrize(
+        "lon",
+        [
+            Fraction(-1, 3),
+            Fraction(721, 2),
+            Fraction(361, 2),
+            Fraction(-541),
+            Fraction(-(10**30), 7),
+        ],
+    )
+    def test_fraction_gives_exact_value(self, lon: Any) -> None:
+        """A Fraction comes back as the exact Fraction in [-180, 180)."""
+        result = lon_to_pm180(lon)
+        assert type(result) is type(lon)
+        assert result == (lon + 180) % 360 - 180
+
+    @pytest.mark.parametrize(
+        ("lon", "expected"),
+        [
+            ("190.5", "-169.5"),
+            ("-190.5", "169.5"),
+            ("-180", "-180"),
+            ("180", "-180"),
+            ("540", "-180"),
+            ("-539.5", "-179.5"),
+            ("-0.1", "-0.1"),
+            ("-360", "0"),
+        ],
+    )
+    def test_decimal_gives_exact_value(self, lon: str, expected: str) -> None:
+        """A Decimal, whose % takes the sign of lon, is reduced exactly too."""
+        value: Any = Decimal(lon)
+        result = lon_to_pm180(value)
+        assert type(result) is Decimal
+        assert result == Decimal(expected)
+
+    def test_object_array_of_exact_numbers(self) -> None:
+        """Each element of an object array is reduced exactly, in its own type."""
+        lons = np.array(
+            [10**30, -5, 190, Fraction(-1, 3), Decimal("-190.5")], dtype=object
+        )
+        expected = [-80, -5, -170, Fraction(-1, 3), Decimal("169.5")]
+        result = lon_to_pm180(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == object
+        assert [type(r) for r in result] == [type(e) for e in expected]
+        assert list(result) == expected
+
+    def test_signed_zeros_give_positive_zero(self) -> None:
+        """-0.0 and the negative multiples of 360 give 0.0, never -0.0."""
+        lons = np.array([-0.0, -360.0, -720.0, 0.0, 360.0])
+        for dtype in (np.float32, np.float64):
+            result = lon_to_pm180(lons.astype(dtype))
+            assert isinstance(result, np.ndarray)
+            np.testing.assert_array_equal(np.signbit(result), False)
+        for value in (-0.0, -360.0, np.float64(-0.0), np.float32(-360.0)):
+            scalar = lon_to_pm180(value)
+            assert type(scalar) is type(value)
+            assert scalar == 0
+            assert not np.signbit(scalar)
+
+    def test_nan_and_infinity_give_nan(self) -> None:
+        """NaN passes through and an infinity gives NaN, with no warning.
+
+        NumPy warns "invalid value encountered" for fmod of an infinity on some
+        platforms and for some dtypes (float64 on Linux, where CI runs, and
+        longdouble on macOS), so lon_to_pm180 silences it.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = lon_to_pm180(np.array([np.nan, np.inf, -np.inf, 190.0]))
+            assert isinstance(result, np.ndarray)
+            np.testing.assert_array_equal(result, [np.nan, np.nan, np.nan, -170.0])
+            values = (math.nan, math.inf, -math.inf, np.float32(np.nan))
+            for value in (*values, np.float32(np.inf)):
+                scalar = lon_to_pm180(value)
+                assert type(scalar) is type(value)
+                assert math.isnan(scalar)
+            for wrapped in _INFINITY_CONTAINERS:
+                out = np.asarray(lon_to_pm180(wrapped), dtype=float)
+                np.testing.assert_array_equal(out, [np.nan, 10.0])
+
+    @pytest.mark.parametrize(("dtype", "out_dtype"), _INT_DTYPES_EVERY_VALUE)
+    def test_every_value_of_narrow_int_dtypes(self, dtype: Any, out_dtype: Any) -> None:
+        """Every int8, uint8, int16 and uint16 value gives its exact value (#148).
+
+        uint16 180 and 270 gave 65356 and 65446 before, and int8 and uint8
+        raised OverflowError.
+        """
+        info = np.iinfo(dtype)
+        lons = np.arange(int(info.min), int(info.max) + 1).astype(dtype)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = lon_to_pm180(lons)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == out_dtype
+        expected = [(v + 180) % 360 - 180 for v in range(info.min, info.max + 1)]
         np.testing.assert_array_equal(result, expected)
+
+    @pytest.mark.parametrize(("dtype", "out_dtype"), _INT_DTYPES_EXTREMES)
+    def test_extremes_of_wide_int_dtypes(self, dtype: Any, out_dtype: Any) -> None:
+        """The ends of the 32- and 64-bit ranges, uint64 above 2**63 included."""
+        values = _int_extremes(dtype)
+        result = lon_to_pm180(np.array(values, dtype=dtype))
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == out_dtype
+        np.testing.assert_array_equal(result, [(v + 180) % 360 - 180 for v in values])
+
+    @pytest.mark.parametrize(
+        ("dtype", "out_dtype"), _INT_DTYPES_EVERY_VALUE + _INT_DTYPES_EXTREMES
+    )
+    def test_int_numpy_scalars(self, dtype: Any, out_dtype: Any) -> None:
+        """A NumPy integer scalar gives a scalar, int64 for unsigned and 8-bit."""
+        for value in (np.iinfo(dtype).min, np.iinfo(dtype).max, 90):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                result = lon_to_pm180(dtype(value))
+            assert type(result) is out_dtype
+            assert result == (int(value) + 180) % 360 - 180
+
+    def test_uint16_180_gives_minus_180(self) -> None:
+        """The issue's case: 65356 with an overflow warning before (#148)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = lon_to_pm180(np.uint16(180))
+        assert type(result) is np.int64
+        assert result == -180
+
+    @pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.uint16, np.uint64])
+    def test_int_dataarray_keeps_coords_name_and_attrs(self, dtype: Any) -> None:
+        info = np.iinfo(dtype)
+        values = [0, 90, int(info.max), int(info.min)]
+        arr = xr.DataArray(
+            np.array(values, dtype=dtype),
+            dims=["x"],
+            coords={"x": [5.0, 6.0, 7.0, 8.0]},
+            name="lons",
+            attrs={"units": "degrees_east"},
+        )
+        result = lon_to_pm180(arr)
+        assert isinstance(result, xr.DataArray)
+        assert result.dtype == np.int64
+        assert result.name == "lons"
+        assert result.attrs == {"units": "degrees_east"}
+        np.testing.assert_array_equal(result["x"].values, [5.0, 6.0, 7.0, 8.0])
+        expected = [(v + 180) % 360 - 180 for v in values]
+        np.testing.assert_array_equal(result.values, expected)
 
 
 class TestLongitudeInit:
@@ -310,17 +665,121 @@ class TestLongitudeInit:
         assert obj.longitude == lon
         assert obj.hemisphere == hem
 
-    def test_tiny_negative_is_zero_east(self) -> None:
-        """-1e-14 gives 0E, not 360W, outside 0 to 180 (issue #83)."""
-        obj = Longitude(-1e-14)
-        assert obj.longitude == 0
-        assert obj.hemisphere == "E"
+    @pytest.mark.parametrize("value", [-1e-14, -5e-324, -3e-14, -0.1, -179.9])
+    def test_negative_is_west_with_its_own_magnitude(self, value: float) -> None:
+        """A negative number is that many degrees west, however small (#149).
 
-    def test_negative_just_past_band_stays_west(self) -> None:
-        """-3e-14 rounds to the float below 360, so 2**-44 degrees west."""
-        obj = Longitude(-3e-14)
+        -1e-14 gave 0E before, and -3e-14 gave 2**-44 degrees west.
+        """
+        obj = Longitude(value)
         assert obj.hemisphere == "W"
-        assert obj.longitude == 2.0**-44
+        assert obj.longitude == -value
+
+    def test_huge_float_reduced_exactly(self) -> None:
+        """2.0**60 is 136 degrees east, its exact remainder modulo 360."""
+        obj = Longitude(2.0**60)
+        assert obj.hemisphere == "E"
+        assert obj.longitude == 136
+
+    @pytest.mark.parametrize("value", [-0.0, -360.0, np.float32(-0.0)])
+    def test_negative_zero_is_zero_east(self, value: float) -> None:
+        assert repr(Longitude(value)) == "Longitude('0.0E')"
+
+    def test_negative_tenths_equal_west_strings(self) -> None:
+        """Longitude(-k/10) equals Longitude('{k/10}w') for k = 1 to 1800."""
+        unequal = [
+            k for k in range(1, 1801) if Longitude(-k / 10) != Longitude(f"{k / 10}w")
+        ]
+        assert unequal == []
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            math.nan,
+            math.inf,
+            -math.inf,
+            np.float32(np.nan),
+            np.float64(np.inf),
+            "nan",
+            "inf",
+            "-inf",
+            "nanw",
+            "nane",
+            "NaNW",
+            "-nanw",
+            "infe",
+            "infw",
+            "-infw",
+            np.longdouble("inf"),
+            Decimal("Infinity"),
+            Decimal("NaN"),
+        ],
+    )
+    def test_non_finite_raises(self, value: float | str) -> None:
+        """NaN and infinity raise, as a number or a string (issue #150)."""
+        with pytest.raises(ValueError, match="must be finite"):
+            Longitude(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            2**53 + 1,
+            -(2**53 + 1),
+            10**30 + 190,
+            2**2000,
+            np.int64(2**63 - 1),
+            np.uint64(2**64 - 1),
+        ],
+    )
+    def test_integer_reduced_exactly(self, value: int) -> None:
+        """An integer is reduced as an integer, before becoming a float.
+
+        Through float64, 2**53 + 1 gave 32E, 2**63 - 1 gave 8E and 2**64 - 1
+        gave 16E, where the exact values are 33E, 7E and 15E.
+        """
+        exact = (int(value) + 180) % 360 - 180
+        obj = Longitude(value)
+        assert obj.hemisphere == ("W" if exact < 0 else "E")
+        assert obj.longitude == abs(exact)
+
+    @pytest.mark.parametrize(
+        ("value", "lon", "hem"),
+        [
+            (Fraction(-1, 3), 1 / 3, "W"),
+            (Decimal("-190.5"), 169.5, "E"),
+            (Decimal("-180"), 180.0, "W"),
+        ],
+    )
+    def test_fraction_and_decimal(self, value: Any, lon: float, hem: str) -> None:
+        obj = Longitude(value)
+        assert obj.longitude == lon
+        assert obj.hemisphere == hem
+
+    @pytest.mark.skipif(
+        not _LONGDOUBLE_IS_WIDER, reason="longdouble is no finer than float64"
+    )
+    def test_longdouble_reduced_in_its_own_precision(self) -> None:
+        """A longdouble just west of -1080 stays west, by its own remainder.
+
+        Through float64 it rounded onto -1080, which gave 0E.
+        """
+        value: Any = np.longdouble("-1080.0000000000000001")
+        exact = Fraction(*value.as_integer_ratio()) + 1080
+        assert exact < 0
+        obj = Longitude(value)
+        assert obj.hemisphere == "W"
+        assert obj.longitude == float(-exact)
+
+    def test_largest_longdouble_is_finite(self) -> None:
+        """The largest longdouble is a longitude, where float() made it infinite."""
+        value: Any = np.finfo(np.longdouble).max
+        exact = (Fraction(*value.as_integer_ratio()) + 180) % 360 - 180
+        assert Longitude(value).to_pm180() == float(exact)
+
+    def test_empty_string_raises(self) -> None:
+        """An empty string raises ValueError, where it raised IndexError."""
+        with pytest.raises(ValueError, match="end in 'e' or 'w'"):
+            Longitude("")
 
     @pytest.mark.parametrize("value", ["0w", "0W", "-0w", "-0e", "0e", "0.0w"])
     def test_string_prime_meridian_is_zero_east(self, value: str) -> None:
@@ -464,9 +923,181 @@ class TestLongitudeComparisons:
         assert Longitude("180e") <= Longitude("170e")
         assert not Longitude("180e") >= Longitude("170e")
 
+    def test_dataarray_with_nan_issue_output(self) -> None:
+        """The issue's comparisons give what they gave before the raise (#150)."""
+        arr = xr.DataArray([np.nan, 10.0, 30.0], dims="x", name="lons")
+        np.testing.assert_array_equal((arr < Longitude("20e")).values, [0, 1, 0])
+        np.testing.assert_array_equal((arr == Longitude("20e")).values, [0, 0, 0])
+
+    @pytest.mark.parametrize("lon", ["20e", "20w"])
+    @pytest.mark.parametrize(("op", "nan_result"), _COMPARISONS)
+    def test_dataarray_with_non_finite_elements(
+        self, op: Callable[[Any, Any], Any], nan_result: bool, lon: str
+    ) -> None:
+        """A non-finite element compares as NaN does, either side, with no warning.
+
+        The finite elements, which include 20E and 20W themselves, compare as
+        Longitudes.
+        """
+        values = [np.nan, np.inf, -np.inf, 10.0, 20.0, 30.0, 340.0]
+        arr = xr.DataArray(values, dims="x", name="lons")
+        expected = [nan_result] * 3 + [
+            op(Longitude(v), Longitude(lon)) for v in values[3:]
+        ]
+        expected_flip = [nan_result] * 3 + [
+            op(Longitude(lon), Longitude(v)) for v in values[3:]
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = op(arr, Longitude(lon))
+            assert isinstance(result, xr.DataArray)
+            np.testing.assert_array_equal(result.values, expected)
+            flipped = op(Longitude(lon), arr)
+            assert isinstance(flipped, xr.DataArray)
+            np.testing.assert_array_equal(flipped.values, expected_flip)
+
+    @pytest.mark.parametrize("lon", ["20e", "20w"])
+    @pytest.mark.parametrize(
+        "other", [math.nan, math.inf, -math.inf, np.float32(np.nan)]
+    )
+    @pytest.mark.parametrize(("op", "nan_result"), _COMPARISONS)
+    def test_scalar_non_finite(
+        self, op: Callable[[Any, Any], Any], nan_result: bool, other: Any, lon: str
+    ) -> None:
+        """Against a non-finite number, False, or True for !=, either side.
+
+        Before, a western Longitude compared as west of NaN, so for example
+        Longitude('20w') < math.nan was True.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert bool(op(Longitude(lon), other)) is nan_result
+            assert bool(op(other, Longitude(lon))) is nan_result
+
+    @pytest.mark.parametrize("other", ["abc", None, "nan", "inf", "nanw", "infe", ""])
+    def test_non_numeric_scalar(self, other: Any) -> None:
+        """== is False and != True; an ordering raises TypeError (#150).
+
+        That holds for strings that spell NaN or infinity too, which float()
+        accepts.  Before, 'abc', None and 'infe' raised RecursionError, 'nan'
+        and 'inf' compared as NaN, 'nanw' as a western longitude, and '' raised
+        IndexError.
+        """
+        lon = Longitude("20e")
+        assert (lon == other) is False
+        assert (other == lon) is False
+        assert (lon != other) is True
+        for op in (operator.lt, operator.le, operator.gt, operator.ge):
+            with pytest.raises(TypeError):
+                op(lon, other)
+            with pytest.raises(TypeError):
+                op(other, lon)
+
+    @pytest.mark.parametrize("container", [list, np.array])
+    def test_list_with_nan(self, container: Callable[[list[float]], Any]) -> None:
+        """A list or array is compared element by element, NaN giving False."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = Longitude("20e") < container([np.nan, 10.0, 30.0])
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_array_equal(result, [False, False, True])
+
+    def test_dataset_with_nan(self) -> None:
+        """A Dataset is compared variable by variable, either side."""
+        ds = xr.Dataset({"lons": ("x", [np.nan, 10.0, 30.0])})
+        expected = xr.Dataset({"lons": ("x", [False, True, False])})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            xr.testing.assert_identical(ds < Longitude("20e"), expected)
+            xr.testing.assert_identical(Longitude("20e") > ds, expected)
+
+    @pytest.mark.parametrize("zero_dim", [xr.DataArray(np.nan), np.array(np.nan)])
+    def test_zero_dim_nan_gives_false(self, zero_dim: Any) -> None:
+        """A 0-d array of NaN gives False, a bool, as a 0-d array of 10 gives True."""
+        assert (Longitude("20e") > zero_dim) is False
+        assert (Longitude("20e") > np.array(10.0)) is True
+
+    @pytest.mark.parametrize(
+        "container",
+        [list, tuple, np.array, lambda v: xr.DataArray(v, dims="x", name="lons")],
+        ids=["list", "tuple", "ndarray", "DataArray"],
+    )
+    def test_ne_element_by_element(
+        self, container: Callable[[list[float]], Any]
+    ) -> None:
+        """!= gives an array, True for NaN, with the Longitude on either side.
+
+        With the Longitude on the left it raised ValueError before, since
+        Python took != as ``not (Longitude('20e') == values)``.
+        """
+        values = [np.nan, 10.0, 20.0, 200.0]
+        expected = [True, True, False, True]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            left = Longitude("20e") != container(values)
+            right = container(values) != Longitude("20e")
+        np.testing.assert_array_equal(np.asarray(left), expected)
+        np.testing.assert_array_equal(np.asarray(right), expected)
+
+    def test_ne_scalar(self) -> None:
+        assert (Longitude("20e") != Longitude("20e")) is False
+        assert (Longitude("20e") != Longitude("20w")) is True
+        assert (Longitude("20e") != 20) is False
+        assert (Longitude("20e") != 380.0) is False
+
 
 class TestLongitudeArithmetic:
     """Tests for Longitude arithmetic operators."""
+
+    @pytest.mark.parametrize(
+        ("value", "lon"), [(-0.1, 0.1), (-1e-300, 1e-300), (-179.9, 179.9)]
+    )
+    def test_add_or_sub_zero_keeps_west(self, value: float, lon: float) -> None:
+        """Adding or subtracting 0 gives the same western longitude back.
+
+        Through to_0360, Longitude(-0.1) + Longitude(0) gave 0.10000000000002274
+        degrees west, and Longitude(-1e-300) + Longitude(0) gave 0 east.
+        """
+        for result in (
+            Longitude(value) + Longitude(0),
+            Longitude(value) - Longitude(0),
+        ):
+            assert result.hemisphere == "W"
+            assert result.longitude == lon
+
+    def test_add_or_sub_zero_is_identity(self) -> None:
+        """Longitude(v) + Longitude(0) and - Longitude(0) equal Longitude(v)."""
+        rng = np.random.default_rng(154)
+        lons = rng.uniform(-180, 180, 2000)
+        failed = [
+            v
+            for v in lons
+            if Longitude(v) + Longitude(0) != Longitude(v)
+            or Longitude(v) - Longitude(0) != Longitude(v)
+        ]
+        assert failed == []
+
+    def test_add_and_sub_within_one_rounding_of_exact(self) -> None:
+        """a + b and a - b are within half a float spacing at 360 of exact.
+
+        The values have full 53-bit significands, spread over magnitudes from
+        1e-6 to 540, so the sums and differences need rounding.  The one
+        rounding left, of the sum or difference itself, is at most 2**-45.
+        """
+        rng = np.random.default_rng(1540)
+        mags = 10.0 ** rng.uniform(-6, np.log10(540), (2, 2000))
+        vals = mags * rng.choice([-1.0, 1.0], mags.shape)
+        worst = Fraction(0)
+        for a, b in zip(vals[0], vals[1], strict=True):
+            lon_a, lon_b = Longitude(a), Longitude(b)
+            exact_a, exact_b = Fraction(lon_a.to_pm180()), Fraction(lon_b.to_pm180())
+            for result, exact in (
+                (lon_a + lon_b, exact_a + exact_b),
+                (lon_a - lon_b, exact_a - exact_b),
+            ):
+                error = (Fraction(result.to_pm180()) - exact + 180) % 360 - 180
+                worst = max(worst, abs(error))
+        assert worst <= Fraction(2) ** -45
 
     def test_add_longitudes(self) -> None:
         result = Longitude(90) + Longitude(45)
