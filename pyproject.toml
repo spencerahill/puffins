@@ -82,10 +82,9 @@ requires-pixi = ">=0.81.0"
 [tool.pixi.dependencies]
 eofs = "*"
 matplotlib-base = ">=3.11"
-# Capped below 2.5 for mypy, until issue #101 lifts the cap: with numpy 2.5.4,
-# mypy 1.19.1 and 1.20.2 stop on a `type` statement in numpy's stubs under
-# python_version 3.11, and mypy 2.4.0 reports 29 errors (2026-10-25).
-numpy = "<2.5"
+# Unbounded since issue #101. py311 locks to numpy 2.4, since conda-forge has
+# no Python 3.11 build of numpy 2.5; the other environments lock to 2.5.
+numpy = "*"
 pymannkendall = "*"
 scikit-learn = "*"
 scipy = "*"
@@ -100,7 +99,9 @@ windspharm = "*"
 
 [tool.pixi.feature.dev.dependencies]
 cftime = "*"
-# Pinned to 1.19 for the reason given at the numpy cap above (issue #101).
+# Pinned to 1.19: mypy 2.4.1 reports 4 errors, each an unused
+# `# type: ignore[misc]` in test_enso.py or test_dynamics.py whose message gives
+# `[call-arg]` as the narrower code (2026-11-14, numpy 2.5.4).
 mypy = "1.19.*"
 pre-commit = "*"
 pytest = "*"
@@ -180,7 +181,11 @@ addopts = "-v --tb=short"
 
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12, not 3.11, the oldest Python puffins supports: numpy 2.5's stubs use the
+# `type` statement, and under python_version 3.11 mypy stops at it in numpy's
+# __init__.pyi. Under 3.12, mypy 1.19.1 reports no errors with numpy 2.5.4 or
+# 2.4.6 (2026-11-14). The py311 environment still runs the tests on 3.11.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

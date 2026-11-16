@@ -15,7 +15,7 @@ Run the tests in the default environment (Python 3.14):
 pixi run pytest
 ```
 
-CI runs the tests in the `py311` to `py314` environments, ruff and mypy in `default`, the docs in `docs`, and the release build in `build`; select one with `-e`, e.g. `pixi run -e py311 pytest`. For mypy's sake, `pyproject.toml` requires numpy below 2.5 and mypy 1.19; its comments give the measurements.
+CI runs the tests in the `py311` to `py314` environments, ruff and mypy in `default`, the docs in `docs`, and the release build in `build`; select one with `-e`, e.g. `pixi run -e py311 pytest`. For mypy's sake, `[tool.mypy]` targets Python 3.12, not 3.11, and `pyproject.toml` pins mypy to 1.19; its comments give the measurements. conda-forge has no Python 3.11 build of numpy 2.5, so the tests run on numpy 2.4 in the `py311` environment and on 2.5 in the others.
 
 Dependabot updates only the GitHub Actions versions. `.github/workflows/pixi-update.yml` runs `pixi update` monthly and opens a PR, whose CI runs start only once someone presses "Approve workflows to run" on it.
 
